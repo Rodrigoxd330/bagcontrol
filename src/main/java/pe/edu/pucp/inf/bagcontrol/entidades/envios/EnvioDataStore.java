@@ -10,43 +10,46 @@ import java.util.TreeMap;
 
 @Component
 public class EnvioDataStore {
-    // ⚽ TreeMap mantiene los envíos ordenados cronológicamente por su fecha de registro.
-    // Usamos una lista como valor por si llegan múltiples pedidos en el mismo segundo.
+
+    // TreeMap mantiene los envíos ordenados cronológicamente por fecha y hora.
     private final TreeMap<LocalDateTime, List<Envio>> enviosPorTiempo = new TreeMap<>();
 
     /**
-     * Agrega un envío al índice temporal. Usado principalmente por el EnvioLoader.
+     * Agrega un envío al índice temporal.
+     * Se sincroniza para evitar conflictos si hay accesos concurrentes.
      */
-    public void agregarEnvio(Envio envio) {
+    public synchronized void agregarEnvio(Envio envio) {
         enviosPorTiempo
                 .computeIfAbsent(envio.getFechaHora(), k -> new ArrayList<>())
                 .add(envio);
     }
 
     /**
-     * Función clave para la simulación:
-     * Extrae todos los envíos que se encuentran dentro de una ventana de tiempo específica.
-     * @param inicio Tiempo actual de la simulación.
-     * @param fin Tiempo actual + (Sa * K).
+     * Extrae todos los envíos dentro de una ventana de tiempo.
+     * Se trabaja sobre una copia del submapa para evitar ConcurrentModificationException.
      */
-    public List<Envio> obtenerEnviosEnVentana(LocalDateTime inicio, LocalDateTime fin) {
-        // subMap es ultra eficiente (O(log n)) para obtener el rango.
-        SortedMap<LocalDateTime, List<Envio>> subMapa = enviosPorTiempo.subMap(inicio, fin);
+    public synchronized List<Envio> obtenerEnviosEnVentana(LocalDateTime inicio, LocalDateTime fin) {
+        SortedMap<LocalDateTime, List<Envio>> subMapa = new TreeMap<>(enviosPorTiempo.subMap(inicio, fin));
 
         List<Envio> resultado = new ArrayList<>();
-        subMapa.values().forEach(resultado::addAll);
+        for (List<Envio> lista : subMapa.values()) {
+            resultado.addAll(new ArrayList<>(lista));
+        }
 
         return resultado;
     }
 
     /**
-     * Opcional: Elimina datos ya procesados para optimizar el uso de RAM.
+     * Elimina datos previos a un límite dado.
      */
-    public void purgarDatosPasados(LocalDateTime limite) {
+    public synchronized void purgarDatosPasados(LocalDateTime limite) {
         enviosPorTiempo.headMap(limite).clear();
     }
 
-    public int getTotalEnviosCargados() {
+    /**
+     * Retorna el total de envíos cargados.
+     */
+    public synchronized int getTotalEnviosCargados() {
         return enviosPorTiempo.values().stream().mapToInt(List::size).sum();
     }
 }
