@@ -4,19 +4,21 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
-import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.Vuelo;
+import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 public class Movimiento {
     private Envio envio;
-    private Vuelo vueloAnterior;
-    private Vuelo vueloNuevo;
+    private VueloInstanciado vueloAnterior;
+    private VueloInstanciado vueloNuevo;
 
     public String getIdMovimientoTabu() {
-        String anterior = vueloAnterior != null ? vueloAnterior.getCodigo().toString() : "null";
-        String nuevo = vueloNuevo != null ? vueloNuevo.getCodigo().toString() : "null";
-        return envio.getIdPedido() + ":" + anterior + "->" + nuevo;
+        String idEnvio = envio != null ? envio.getIdPedido() : "SIN_ENVIO";
+        String anterior = vueloAnterior != null ? String.valueOf(vueloAnterior.getCodigoBase()) : "SIN_ANTERIOR";
+        String nuevo = vueloNuevo != null ? String.valueOf(vueloNuevo.getCodigoBase()) : "SIN_NUEVO";
+
+        return idEnvio + "-" + anterior + "-" + nuevo;
     }
 }

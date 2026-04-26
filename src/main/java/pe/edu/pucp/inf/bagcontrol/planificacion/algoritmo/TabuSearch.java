@@ -4,13 +4,17 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
-import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.Vuelo;
+import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.evaluacion.FitnessEvaluator;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.Movimiento;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.utils.PlanificadorUtils;
 
-import java.util.*;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Random;
+import java.util.Set;
 
 @Component
 @RequiredArgsConstructor
@@ -18,14 +22,13 @@ public class TabuSearch {
 
     private final FitnessEvaluator fitnessEvaluator;
 
-    public SolucionRuta ejecutar(List<Envio> envios, List<Vuelo> vuelos, List<Aeropuerto> aeropuertos) {
+    public SolucionRuta ejecutar(List<Envio> envios, List<VueloInstanciado> vuelos, List<Aeropuerto> aeropuertos) {
 
         int iteraciones = 100;
         int tenure = 10;
 
         Set<String> listaTabu = new HashSet<>();
 
-        // Solución inicial
         SolucionRuta actual = generarSolucionInicial(envios, vuelos);
         fitnessEvaluator.evaluar(actual, aeropuertos, vuelos);
 
@@ -34,7 +37,6 @@ public class TabuSearch {
         for (int i = 0; i < iteraciones; i++) {
 
             List<Movimiento> vecinos = PlanificadorUtils.generarVecindario(actual, vuelos);
-
             vecinos = vecinos.subList(0, Math.min(50, vecinos.size()));
 
             SolucionRuta mejorVecino = null;
@@ -49,7 +51,6 @@ public class TabuSearch {
 
                 fitnessEvaluator.evaluar(candidata, aeropuertos, vuelos);
 
-                // criterio tabu
                 if (listaTabu.contains(id) && candidata.getFitness() >= mejor.getFitness()) {
                     continue;
                 }
@@ -60,7 +61,9 @@ public class TabuSearch {
                 }
             }
 
-            if (mejorVecino == null) break;
+            if (mejorVecino == null) {
+                break;
+            }
 
             actual = mejorVecino;
 
@@ -68,7 +71,6 @@ public class TabuSearch {
                 mejor = actual.clonar();
             }
 
-            // actualizar lista tabu
             if (mejorMovimiento != null) {
                 listaTabu.add(mejorMovimiento.getIdMovimientoTabu());
 
@@ -83,12 +85,12 @@ public class TabuSearch {
         return mejor;
     }
 
-    private SolucionRuta generarSolucionInicial(List<Envio> envios, List<Vuelo> vuelos) {
+    private SolucionRuta generarSolucionInicial(List<Envio> envios, List<VueloInstanciado> vuelos) {
         SolucionRuta solucion = new SolucionRuta();
         Random random = new Random();
 
         for (Envio envio : envios) {
-            List<Vuelo> posibles = PlanificadorUtils.buscarVuelosPosiblesParaEnvio(envio, vuelos);
+            List<VueloInstanciado> posibles = PlanificadorUtils.buscarVuelosPosiblesParaEnvio(envio, vuelos);
 
             if (posibles.isEmpty()) {
                 solucion.agregarAsignacion(envio, null);

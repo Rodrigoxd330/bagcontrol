@@ -52,4 +52,21 @@ public class ConsultaOperativaService {
                 ))
                 .toList();
     }
+    public List<EnvioDTO> obtenerEnviosPorDias(LocalDate fechaInicio, int dias) {
+        LocalDateTime inicio = fechaInicio.atStartOfDay();
+        LocalDateTime fin = fechaInicio.plusDays(dias).atStartOfDay();
+
+        var envios = envioDataStore.obtenerEnviosEnVentana(inicio, fin);
+
+        return envios.stream()
+                .map(envio -> new EnvioDTO(
+                        envio.getIdPedido(),
+                        envio.getOrigenIata(),
+                        envio.getDestinoIata(),
+                        envio.getFechaHora().toString(),
+                        envio.getCantidadMaletas(),
+                        envio.getIdCliente()
+                ))
+                .toList();
+    }
 }

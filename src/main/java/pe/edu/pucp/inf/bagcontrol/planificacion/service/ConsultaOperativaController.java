@@ -38,4 +38,14 @@ public class ConsultaOperativaController {
     ) {
         return consultaOperativaService.obtenerVuelosInstanciados(fecha);
     }
+    @GetMapping("/api/envios/rango-dias")
+    public List<EnvioDTO> obtenerEnviosPorDias(
+            @RequestParam("fechaInicio")
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate fechaInicio,
+            @RequestParam("dias")
+            int dias
+    ) {
+        return consultaOperativaService.obtenerEnviosPorDias(fechaInicio, dias);
+    }
 }

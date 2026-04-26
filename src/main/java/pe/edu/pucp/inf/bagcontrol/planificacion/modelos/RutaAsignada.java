@@ -4,12 +4,12 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
-import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.Vuelo;
+import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 public class RutaAsignada {
     private Envio envio;
-    private Vuelo vuelo;
+    private VueloInstanciado vuelo;
 }

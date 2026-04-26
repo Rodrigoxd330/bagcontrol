@@ -2,7 +2,7 @@ package pe.edu.pucp.inf.bagcontrol.planificacion.utils;
 
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
-import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.Vuelo;
+import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.Movimiento;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 
@@ -14,10 +14,10 @@ import java.util.Map;
 
 public class PlanificadorUtils {
 
-    public static List<Vuelo> buscarVuelosPosiblesParaEnvio(Envio envio, List<Vuelo> vuelos) {
-        List<Vuelo> posibles = new ArrayList<>();
+    public static List<VueloInstanciado> buscarVuelosPosiblesParaEnvio(Envio envio, List<VueloInstanciado> vuelos) {
+        List<VueloInstanciado> posibles = new ArrayList<>();
 
-        for (Vuelo vuelo : vuelos) {
+        for (VueloInstanciado vuelo : vuelos) {
             if (vuelo.isEstaCancelado()) continue;
 
             boolean coincideOrigen = vuelo.getOrigenIata().equalsIgnoreCase(envio.getOrigenIata());
@@ -31,20 +31,14 @@ public class PlanificadorUtils {
         return posibles;
     }
 
-    public static double calcularDuracionVueloHoras(Vuelo vuelo) {
-        Duration duracion = Duration.between(vuelo.getHoraSalida(), vuelo.getHoraLlegada());
-        long minutos = duracion.toMinutes();
-
-        // si cruza medianoche
-        if (minutos < 0) {
-            minutos += 24 * 60;
-        }
-
-        return minutos / 60.0;
+    public static double calcularDuracionVueloHoras(VueloInstanciado vuelo) {
+        Duration duracion = Duration.between(vuelo.getFechaHoraSalida(), vuelo.getFechaHoraLlegada());
+        return duracion.toMinutes() / 60.0;
     }
 
-    public static boolean excedePlazoMaximo(Envio envio, Vuelo vuelo, List<Aeropuerto> aeropuertos) {
+    public static boolean excedePlazoMaximo(Envio envio, VueloInstanciado vuelo, List<Aeropuerto> aeropuertos) {
         Map<String, Aeropuerto> mapa = new HashMap<>();
+
         for (Aeropuerto aeropuerto : aeropuertos) {
             mapa.put(aeropuerto.getCodigoIata(), aeropuerto);
         }
@@ -58,34 +52,43 @@ public class PlanificadorUtils {
 
         boolean mismoContinente = origen.getContinente().equalsIgnoreCase(destino.getContinente());
 
-        double duracion = calcularDuracionVueloHoras(vuelo);
+        Duration tiempoTotal = Duration.between(envio.getFechaHora(), vuelo.getFechaHoraLlegada());
+        double horasTotales = tiempoTotal.toMinutes() / 60.0;
 
-        // Regla simple para esta primera iteración:
-        // mismo continente: máximo 24 h
-        // distinto continente: máximo 48 h
+        if (horasTotales < 0) {
+            return true;
+        }
+
         if (mismoContinente) {
-            return duracion > 24.0;
+            return horasTotales > 24.0;
         } else {
-            return duracion > 48.0;
+            return horasTotales > 48.0;
         }
     }
 
-    public static List<Movimiento> generarVecindario(SolucionRuta solucion, List<Vuelo> vuelosDisponibles) {
+    public static List<Movimiento> generarVecindario(SolucionRuta solucion, List<VueloInstanciado> vuelosDisponibles) {
         List<Movimiento> movimientos = new ArrayList<>();
 
         for (var asignacion : solucion.getAsignaciones()) {
             var envio = asignacion.getEnvio();
             var vueloActual = asignacion.getVuelo();
 
-            List<Vuelo> alternativas = buscarVuelosPosiblesParaEnvio(envio, vuelosDisponibles);
+            List<VueloInstanciado> alternativas = buscarVuelosPosiblesParaEnvio(envio, vuelosDisponibles);
 
-            for (Vuelo vueloNuevo : alternativas) {
-                if (vueloActual == null || !vueloNuevo.getCodigo().equals(vueloActual.getCodigo())) {
+            for (VueloInstanciado vueloNuevo : alternativas) {
+                if (vueloActual == null || !esMismoVueloInstanciado(vueloActual, vueloNuevo)) {
                     movimientos.add(new Movimiento(envio, vueloActual, vueloNuevo));
                 }
             }
         }
 
         return movimientos;
+    }
+
+    private static boolean esMismoVueloInstanciado(VueloInstanciado a, VueloInstanciado b) {
+        if (a == null || b == null) return false;
+
+        return a.getCodigoBase().equals(b.getCodigoBase())
+                && a.getFechaHoraSalida().equals(b.getFechaHoraSalida());
     }
 }
