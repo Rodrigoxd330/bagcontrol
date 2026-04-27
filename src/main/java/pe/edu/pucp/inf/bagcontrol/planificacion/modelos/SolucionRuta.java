@@ -51,4 +51,13 @@ public class SolucionRuta {
             }
         }
     }
+
+    public void deshacerMovimiento(Movimiento movimiento) {
+        for (RutaAsignada asignacion : asignaciones) {
+            if (asignacion.getEnvio().getIdPedido().equals(movimiento.getEnvio().getIdPedido())) {
+                asignacion.setVuelo(movimiento.getVueloAnterior());
+                return;
+            }
+        }
+    }
 }

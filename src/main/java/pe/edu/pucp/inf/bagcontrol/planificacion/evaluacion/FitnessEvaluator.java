@@ -8,7 +8,6 @@ import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.utils.PlanificadorUtils;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 @Component
@@ -16,13 +15,16 @@ public class FitnessEvaluator {
 
     private static final double PENALIZACION_EXTREMA = 999999.0;
 
-    public double evaluar(SolucionRuta solucion, List<Aeropuerto> aeropuertos, List<VueloInstanciado> vuelos) {
+    public double evaluar(SolucionRuta solucion, Map<String, Aeropuerto> mapaAeropuertos) {
         double fitness = 0.0;
 
-        Map<String, Integer> cargaPorVuelo = new HashMap<>();
+        // 🔥 Usamos el objeto VueloInstanciado directamente como llave para tener su capacidad a la mano
+        Map<VueloInstanciado, Integer> cargaPorVuelo = new HashMap<>();
         Map<String, Integer> cargaPorAeropuerto = new HashMap<>();
 
+        // ================= RECORRER ASIGNACIONES =================
         for (RutaAsignada asignacion : solucion.getAsignaciones()) {
+
             if (asignacion.getVuelo() == null) {
                 fitness += PENALIZACION_EXTREMA;
                 continue;
@@ -31,33 +33,30 @@ public class FitnessEvaluator {
             VueloInstanciado vuelo = asignacion.getVuelo();
             var envio = asignacion.getEnvio();
 
-            double duracion = PlanificadorUtils.calcularDuracionVueloHoras(vuelo);
-            fitness += duracion;
+            // Duración del vuelo
+            fitness += PlanificadorUtils.calcularDuracionVueloHoras(vuelo);
 
-            if (PlanificadorUtils.excedePlazoMaximo(envio, vuelo, aeropuertos)) {
+            // Verificación SLA ultra rápida usando el mapa ya procesado
+            if (PlanificadorUtils.excedePlazoMaximo(envio, vuelo, mapaAeropuertos)) {
                 fitness += PENALIZACION_EXTREMA;
             }
 
-            String claveVuelo = vuelo.getCodigoBase() + "-" + vuelo.getFechaHoraSalida();
-            cargaPorVuelo.merge(claveVuelo, envio.getCantidadMaletas(), Integer::sum);
-
+            // Acumular cargas
+            cargaPorVuelo.merge(vuelo, envio.getCantidadMaletas(), Integer::sum);
             cargaPorAeropuerto.merge(vuelo.getDestinoIata(), envio.getCantidadMaletas(), Integer::sum);
         }
 
-        for (VueloInstanciado vuelo : vuelos) {
-            String claveVuelo = vuelo.getCodigoBase() + "-" + vuelo.getFechaHoraSalida();
-            int carga = cargaPorVuelo.getOrDefault(claveVuelo, 0);
+        // ================= CAPACIDAD DE VUELOS (Solo los usados) =================
+        for (Map.Entry<VueloInstanciado, Integer> entry : cargaPorVuelo.entrySet()) {
+            VueloInstanciado vuelo = entry.getKey();
+            int cargaActual = entry.getValue();
 
-            if (carga > vuelo.getCapacidadMax()) {
-                fitness += PENALIZACION_EXTREMA + (carga - vuelo.getCapacidadMax()) * 1000.0;
+            if (cargaActual > vuelo.getCapacidadMax()) {
+                fitness += PENALIZACION_EXTREMA + (cargaActual - vuelo.getCapacidadMax()) * 1000.0;
             }
         }
 
-        Map<String, Aeropuerto> mapaAeropuertos = new HashMap<>();
-        for (Aeropuerto aeropuerto : aeropuertos) {
-            mapaAeropuertos.put(aeropuerto.getCodigoIata(), aeropuerto);
-        }
-
+        // ================= CAPACIDAD DE AEROPUERTOS =================
         for (Map.Entry<String, Integer> entry : cargaPorAeropuerto.entrySet()) {
             Aeropuerto aeropuerto = mapaAeropuertos.get(entry.getKey());
 

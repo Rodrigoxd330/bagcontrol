@@ -10,11 +10,8 @@ import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.Movimiento;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.utils.PlanificadorUtils;
 
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Random;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Component
 @RequiredArgsConstructor
@@ -22,80 +19,92 @@ public class TabuSearch {
 
     private final FitnessEvaluator fitnessEvaluator;
 
-    public SolucionRuta ejecutar(List<Envio> envios, List<VueloInstanciado> vuelos, List<Aeropuerto> aeropuertos) {
+    public SolucionRuta ejecutar(List<Envio> envios, Map<String, List<VueloInstanciado>> vuelosPorRuta, List<Aeropuerto> aeropuertos) {
+        return ejecutarConParametros(envios, vuelosPorRuta, aeropuertos, 120, 12, 50);
+    }
 
-        int iteraciones = 100;
-        int tenure = 10;
-
+    public SolucionRuta ejecutarConParametros(
+            List<Envio> envios,
+            Map<String, List<VueloInstanciado>> vuelosPorRuta,
+            List<Aeropuerto> aeropuertos,
+            int iteraciones,
+            int tenure,
+            int maxVecinos
+    ) {
         Set<String> listaTabu = new HashSet<>();
 
-        SolucionRuta actual = generarSolucionInicial(envios, vuelos);
-        fitnessEvaluator.evaluar(actual, aeropuertos, vuelos);
+        Map<String, Aeropuerto> mapaAeropuertos = aeropuertos.stream()
+                .collect(Collectors.toMap(Aeropuerto::getCodigoIata, a -> a));
+
+        SolucionRuta actual = generarSolucionInicial(envios, vuelosPorRuta);
+        double actualFitness = fitnessEvaluator.evaluar(actual, mapaAeropuertos);
 
         SolucionRuta mejor = actual.clonar();
+        double mejorFitnessGlobal = actualFitness;
 
         for (int i = 0; i < iteraciones; i++) {
+            List<Movimiento> vecinos = PlanificadorUtils.generarVecindario(actual, vuelosPorRuta, maxVecinos);
 
-            List<Movimiento> vecinos = PlanificadorUtils.generarVecindario(actual, vuelos);
-            vecinos = vecinos.subList(0, Math.min(50, vecinos.size()));
-
-            SolucionRuta mejorVecino = null;
             Movimiento mejorMovimiento = null;
+            double mejorFitnessVecino = Double.MAX_VALUE;
 
             for (Movimiento mov : vecinos) {
-
                 String id = mov.getIdMovimientoTabu();
 
-                SolucionRuta candidata = actual.clonar();
-                candidata.aplicarMovimientoDefinitivo(mov);
+                // 🔥 PATRÓN APPLY & REVERT (SIN CLONAR)
+                actual.aplicarMovimientoDefinitivo(mov);
+                double fitnessCandidato = fitnessEvaluator.evaluar(actual, mapaAeropuertos);
 
-                fitnessEvaluator.evaluar(candidata, aeropuertos, vuelos);
+                boolean esMejorGlobal = fitnessCandidato < mejorFitnessGlobal;
 
-                if (listaTabu.contains(id) && candidata.getFitness() >= mejor.getFitness()) {
-                    continue;
+                // Verificamos si es un movimiento válido (No Tabú, o Tabú pero mejor global)
+                if (!listaTabu.contains(id) || esMejorGlobal) {
+                    if (fitnessCandidato < mejorFitnessVecino) {
+                        mejorFitnessVecino = fitnessCandidato;
+                        mejorMovimiento = mov;
+                    }
                 }
 
-                if (mejorVecino == null || candidata.getFitness() < mejorVecino.getFitness()) {
-                    mejorVecino = candidata;
-                    mejorMovimiento = mov;
-                }
+                // Siempre deshacemos el movimiento en este bucle interno para probar el siguiente
+                actual.deshacerMovimiento(mov);
+                actual.setFitness(actualFitness);
             }
 
-            if (mejorVecino == null) {
-                break;
+            if (mejorMovimiento == null) break;
+
+            // Ahora aplicamos el MEJOR movimiento de forma definitiva a la solución 'actual'
+            actual.aplicarMovimientoDefinitivo(mejorMovimiento);
+            actualFitness = fitnessEvaluator.evaluar(actual, mapaAeropuertos);
+
+            // Actualizamos la mejor solución global si aplica
+            if (actualFitness < mejorFitnessGlobal) {
+                mejor = actual.clonar(); // Aquí SÍ clonamos, porque es un nuevo hito global (ocurre raramente)
+                mejorFitnessGlobal = actualFitness;
             }
 
-            actual = mejorVecino;
-
-            if (actual.getFitness() < mejor.getFitness()) {
-                mejor = actual.clonar();
-            }
-
-            if (mejorMovimiento != null) {
-                listaTabu.add(mejorMovimiento.getIdMovimientoTabu());
-
-                if (listaTabu.size() > tenure) {
-                    Iterator<String> it = listaTabu.iterator();
-                    it.next();
-                    it.remove();
-                }
+            // Actualizar Lista Tabú
+            listaTabu.add(mejorMovimiento.getIdMovimientoTabu());
+            if (listaTabu.size() > tenure) {
+                Iterator<String> it = listaTabu.iterator();
+                it.next();
+                it.remove();
             }
         }
 
         return mejor;
     }
 
-    private SolucionRuta generarSolucionInicial(List<Envio> envios, List<VueloInstanciado> vuelos) {
+    private SolucionRuta generarSolucionInicial(List<Envio> envios, Map<String, List<VueloInstanciado>> vuelosPorRuta) {
         SolucionRuta solucion = new SolucionRuta();
-        Random random = new Random();
 
         for (Envio envio : envios) {
-            List<VueloInstanciado> posibles = PlanificadorUtils.buscarVuelosPosiblesParaEnvio(envio, vuelos);
+            String key = envio.getOrigenIata() + "-" + envio.getDestinoIata();
+            List<VueloInstanciado> posibles = vuelosPorRuta.getOrDefault(key, Collections.emptyList());
 
             if (posibles.isEmpty()) {
                 solucion.agregarAsignacion(envio, null);
             } else {
-                solucion.agregarAsignacion(envio, posibles.get(random.nextInt(posibles.size())));
+                solucion.agregarAsignacion(envio, posibles.get(0));
             }
         }
 

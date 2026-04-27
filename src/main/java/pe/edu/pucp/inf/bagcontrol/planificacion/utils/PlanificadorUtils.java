@@ -4,19 +4,16 @@ import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.Movimiento;
+import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 public class PlanificadorUtils {
 
     public static List<VueloInstanciado> buscarVuelosPosiblesParaEnvio(Envio envio, List<VueloInstanciado> vuelos) {
         List<VueloInstanciado> posibles = new ArrayList<>();
-
         for (VueloInstanciado vuelo : vuelos) {
             if (vuelo.isEstaCancelado()) continue;
 
@@ -27,7 +24,6 @@ public class PlanificadorUtils {
                 posibles.add(vuelo);
             }
         }
-
         return posibles;
     }
 
@@ -36,52 +32,60 @@ public class PlanificadorUtils {
         return duracion.toMinutes() / 60.0;
     }
 
-    public static boolean excedePlazoMaximo(Envio envio, VueloInstanciado vuelo, List<Aeropuerto> aeropuertos) {
-        Map<String, Aeropuerto> mapa = new HashMap<>();
+    public static boolean excedePlazoMaximo(
+            Envio envio,
+            VueloInstanciado vuelo,
+            Map<String, Aeropuerto> mapaAeropuertos
+    ) {
+        Aeropuerto origen = mapaAeropuertos.get(envio.getOrigenIata());
+        Aeropuerto destino = mapaAeropuertos.get(envio.getDestinoIata());
 
-        for (Aeropuerto aeropuerto : aeropuertos) {
-            mapa.put(aeropuerto.getCodigoIata(), aeropuerto);
-        }
+        if (origen == null || destino == null) return true;
 
-        Aeropuerto origen = mapa.get(envio.getOrigenIata());
-        Aeropuerto destino = mapa.get(envio.getDestinoIata());
+        boolean mismoContinente =
+                origen.getContinente().equalsIgnoreCase(destino.getContinente());
 
-        if (origen == null || destino == null) {
-            return true;
-        }
+        Duration tiempoTotal =
+                Duration.between(envio.getFechaHora(), vuelo.getFechaHoraLlegada());
 
-        boolean mismoContinente = origen.getContinente().equalsIgnoreCase(destino.getContinente());
-
-        Duration tiempoTotal = Duration.between(envio.getFechaHora(), vuelo.getFechaHoraLlegada());
         double horasTotales = tiempoTotal.toMinutes() / 60.0;
 
-        if (horasTotales < 0) {
-            return true;
-        }
+        if (horasTotales < 0) return true;
 
-        if (mismoContinente) {
-            return horasTotales > 24.0;
-        } else {
-            return horasTotales > 48.0;
-        }
+        return mismoContinente
+                ? horasTotales > 24.0
+                : horasTotales > 48.0;
     }
 
-    public static List<Movimiento> generarVecindario(SolucionRuta solucion, List<VueloInstanciado> vuelosDisponibles) {
+    public static List<Movimiento> generarVecindario(
+            SolucionRuta solucion,
+            Map<String, List<VueloInstanciado>> vuelosPorRuta,
+            int maxVecinos
+    ) {
         List<Movimiento> movimientos = new ArrayList<>();
 
-        for (var asignacion : solucion.getAsignaciones()) {
+        List<RutaAsignada> asignaciones = new ArrayList<>(solucion.getAsignaciones());
+        Collections.shuffle(asignaciones);
+
+        for (RutaAsignada asignacion : asignaciones) {
             var envio = asignacion.getEnvio();
             var vueloActual = asignacion.getVuelo();
-
-            List<VueloInstanciado> alternativas = buscarVuelosPosiblesParaEnvio(envio, vuelosDisponibles);
-
+            String key = envio.getOrigenIata() + "-" + envio.getDestinoIata();
+            List<VueloInstanciado> alternativas =
+                    vuelosPorRuta.getOrDefault(key, Collections.emptyList());
             for (VueloInstanciado vueloNuevo : alternativas) {
-                if (vueloActual == null || !esMismoVueloInstanciado(vueloActual, vueloNuevo)) {
+                if (vueloActual == null ||
+                        !esMismoVueloInstanciado(vueloActual, vueloNuevo)) {
+
                     movimientos.add(new Movimiento(envio, vueloActual, vueloNuevo));
+
+                    // 🔥 corte temprano = clave para performance
+                    if (movimientos.size() >= maxVecinos) {
+                        return movimientos;
+                    }
                 }
             }
         }
-
         return movimientos;
     }
 
@@ -91,4 +95,23 @@ public class PlanificadorUtils {
         return a.getCodigoBase().equals(b.getCodigoBase())
                 && a.getFechaHoraSalida().equals(b.getFechaHoraSalida());
     }
+
+    public static Map<String, List<VueloInstanciado>> indexarVuelosPorRuta(
+            List<VueloInstanciado> vuelos) {
+        Map<String, List<VueloInstanciado>> mapa = new HashMap<>();
+        for (VueloInstanciado vuelo : vuelos) {
+            String key = vuelo.getOrigenIata() + "-" + vuelo.getDestinoIata();
+            mapa.computeIfAbsent(key, k -> new ArrayList<>()).add(vuelo);
+        }
+        for (List<VueloInstanciado> lista : mapa.values()) {
+            lista.sort((v1, v2) -> {
+                double d1 = calcularDuracionVueloHoras(v1);
+                double d2 = calcularDuracionVueloHoras(v2);
+                return Double.compare(d1, d2);
+            });
+        }
+        return mapa;
+    }
+
+
 }

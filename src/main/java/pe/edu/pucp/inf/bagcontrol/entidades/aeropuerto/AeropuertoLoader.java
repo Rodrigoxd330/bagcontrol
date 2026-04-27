@@ -79,21 +79,8 @@ public class AeropuertoLoader implements CommandLineRunner {
                 }
             }
         }
-
         aeropuertoRepository.saveAll(aeropuertosNuevos);
-
         System.out.println("\n✅ Guardados " + aeropuertosNuevos.size() + " aeropuertos en la Base de Datos H2.");
-        System.out.println("\n--- LISTA DE AEROPUERTOS CARGADOS ---");
-
-        for (Aeropuerto a : aeropuertosNuevos) {
-            System.out.println("IATA: " + a.getCodigoIata() +
-                    " | Ciudad: " + String.format("%-15s", a.getCiudad()) +
-                    " | Cont: " + String.format("%-8s", a.getContinente()) +
-                    " | Cap: " + a.getCapacidadAlmacen() +
-                    " | Lat: " + a.getLatitud() +
-                    " | Lon: " + a.getLongitud());
-        }
-        System.out.println("==================================================\n");
     }
 
     private double extraerCoordenada(String linea, String tipo) {

@@ -9,8 +9,11 @@ import pe.edu.pucp.inf.bagcontrol.planificacion.evaluacion.FitnessEvaluator;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.utils.PlanificadorUtils;
 
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
+import java.util.stream.Collectors;
 
 @Component
 @RequiredArgsConstructor
@@ -19,19 +22,28 @@ public class GRASPSearch {
     private final FitnessEvaluator fitnessEvaluator;
     private final Random random = new Random();
 
-    public SolucionRuta ejecutar(List<Envio> envios, List<VueloInstanciado> vuelos, List<Aeropuerto> aeropuertos) {
+    public SolucionRuta ejecutar(List<Envio> envios, Map<String, List<VueloInstanciado>> vuelosPorRuta, List<Aeropuerto> aeropuertos) {
+        return ejecutarConParametros(envios, vuelosPorRuta, aeropuertos, 30, 50, 0.4);
+    }
 
-        int iteraciones = 3;
+    public SolucionRuta ejecutarConParametros(
+            List<Envio> envios,
+            Map<String, List<VueloInstanciado>> vuelosPorRuta,
+            List<Aeropuerto> aeropuertos,
+            int iteraciones,
+            int maxVecinos,
+            double alpha
+    ) {
         SolucionRuta mejorSolucion = null;
 
+        Map<String, Aeropuerto> mapaAeropuertos = aeropuertos.stream()
+                .collect(Collectors.toMap(Aeropuerto::getCodigoIata, a -> a));
+
         for (int i = 0; i < iteraciones; i++) {
-            System.out.println("Iteración GRASP: " + (i + 1));
+            SolucionRuta solucion = construirSolucion(envios, vuelosPorRuta, alpha);
+            solucion = busquedaLocal(solucion, vuelosPorRuta, mapaAeropuertos, maxVecinos);
 
-            SolucionRuta solucion = construirSolucion(envios, vuelos);
-
-            solucion = busquedaLocal(solucion, vuelos, aeropuertos);
-
-            fitnessEvaluator.evaluar(solucion, aeropuertos, vuelos);
+            fitnessEvaluator.evaluar(solucion, mapaAeropuertos);
 
             if (mejorSolucion == null || solucion.getFitness() < mejorSolucion.getFitness()) {
                 mejorSolucion = solucion;
@@ -41,46 +53,55 @@ public class GRASPSearch {
         return mejorSolucion;
     }
 
-    private SolucionRuta construirSolucion(List<Envio> envios, List<VueloInstanciado> vuelos) {
+    private SolucionRuta construirSolucion(List<Envio> envios, Map<String, List<VueloInstanciado>> vuelosPorRuta, double alpha) {
         SolucionRuta solucion = new SolucionRuta();
 
         for (Envio envio : envios) {
-            List<VueloInstanciado> posibles = PlanificadorUtils.buscarVuelosPosiblesParaEnvio(envio, vuelos);
-
+            String key = envio.getOrigenIata() + "-" + envio.getDestinoIata();
+            List<VueloInstanciado> posibles = vuelosPorRuta.getOrDefault(key, Collections.emptyList());
             if (posibles.isEmpty()) {
                 solucion.agregarAsignacion(envio, null);
             } else {
-                VueloInstanciado elegido = posibles.get(random.nextInt(posibles.size()));
+                int limite = (int) Math.ceil(alpha * posibles.size());
+                limite = Math.max(limite, 1);
+                List<VueloInstanciado> rcl = posibles.subList(0, limite);
+                VueloInstanciado elegido = rcl.get(random.nextInt(rcl.size()));
                 solucion.agregarAsignacion(envio, elegido);
             }
         }
-
         return solucion;
     }
 
-    private SolucionRuta busquedaLocal(SolucionRuta solucion, List<VueloInstanciado> vuelos, List<Aeropuerto> aeropuertos) {
-
+    private SolucionRuta busquedaLocal(SolucionRuta solucion, Map<String, List<VueloInstanciado>> vuelosPorRuta, Map<String, Aeropuerto> mapaAeropuertos, int maxVecinos) {
+        // Clonamos SOLO UNA VEZ al entrar a la búsqueda local
         SolucionRuta mejor = solucion.clonar();
-        fitnessEvaluator.evaluar(mejor, aeropuertos, vuelos);
+        double mejorFitness = fitnessEvaluator.evaluar(mejor, mapaAeropuertos);
 
         boolean mejora = true;
+        int maxIterLocal = 50;
+        int iter = 0;
 
-        while (mejora) {
+        while (mejora && iter < maxIterLocal) {
+            iter++;
             mejora = false;
 
-            var vecinos = PlanificadorUtils.generarVecindario(mejor, vuelos);
-            vecinos = vecinos.subList(0, Math.min(50, vecinos.size()));
+            var vecinos = PlanificadorUtils.generarVecindario(mejor, vuelosPorRuta, maxVecinos);
 
             for (var movimiento : vecinos) {
-                SolucionRuta candidata = mejor.clonar();
-                candidata.aplicarMovimientoDefinitivo(movimiento);
+                // 🔥 PATRÓN APPLY & REVERT: En lugar de clonar toda la lista (111,000 objetos),
+                // modificamos un solo puntero (1 objeto).
 
-                fitnessEvaluator.evaluar(candidata, aeropuertos, vuelos);
+                mejor.aplicarMovimientoDefinitivo(movimiento);
+                double fitnessCandidato = fitnessEvaluator.evaluar(mejor, mapaAeropuertos);
 
-                if (candidata.getFitness() < mejor.getFitness()) {
-                    mejor = candidata;
+                if (fitnessCandidato < mejorFitness) {
+                    mejorFitness = fitnessCandidato;
                     mejora = true;
-                    break;
+                    break; // First-Improvement: Si mejora, dejamos el movimiento aplicado y cortamos.
+                } else {
+                    // Si no mejoró, deshacemos el movimiento y restauramos el fitness para probar el siguiente
+                    mejor.deshacerMovimiento(movimiento);
+                    mejor.setFitness(mejorFitness);
                 }
             }
         }

@@ -14,9 +14,18 @@ public class ResultadoSimulacionDTO {
     private int vuelosBaseDisponibles;
     private int vuelosInstanciados;
     private int aeropuertosCargados;
+
+    // GRASP
     private double fitnessGrasp;
     private int asignacionesGrasp;
+    private long tiempoGrasp;
+    private double vuelosPromedioGrasp;
+
+    // TABU
     private double fitnessTabu;
     private int asignacionesTabu;
+    private long tiempoTabu;
+    private double vuelosPromedioTabu;
+
     private String ganador;
 }
