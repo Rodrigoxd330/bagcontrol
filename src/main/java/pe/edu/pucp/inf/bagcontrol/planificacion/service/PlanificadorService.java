@@ -24,6 +24,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 
 @Service
 @RequiredArgsConstructor
@@ -222,5 +223,102 @@ public class PlanificadorService {
         System.out.println("Promedio Tiempo GRASP : " + (sumaTimeGrasp / iteraciones) + " ms");
         System.out.println("Promedio Tiempo TABU  : " + (sumaTimeTabu / iteraciones) + " ms");
         System.out.println("========================================");
+    }
+    public void optimizarParametros(){
+        //Random search
+        Random rand = new Random();
+
+        //Parametros hardcodeados
+        LocalDate fechaInicio = LocalDate.of(2026, 2, 2);
+        int cantidadDias = 3;
+        int iteraciones = 50;
+        int algo_iter = 1;
+
+        //Valores ganadores (GRASP)
+        double bestFitness = Double.MAX_VALUE;
+        int bestIteraciones = 0;
+        int bestMaxVecinos = 0;
+        double bestAlpha = 0.0;
+
+        //Valores ganadores (TABU)
+        double bestTabuFitness = Double.MAX_VALUE;
+        int bestTabuIteraciones = 0;
+        int bestTabuMaxVecinos = 0;
+        int bestTabuTenure = 0;
+
+        System.out.println("\n========================================");
+        System.out.println("OPTIMIZACION DE HIPERPARAMETROS");
+        System.out.println("========================================");
+
+        for(int i=0;i<iteraciones;i++){
+            //Usando Randomized Search porque explora mas valores
+            //Random da distribucion uniforme, pero para hiperparametros es mejor log-uniforme
+            //debido a que en esta distribucion la probabilidad es igual independientemente del tamaño del rango de parámetros
+
+            //GRASP
+            int _iteraciones = (int)Math.round(30.0*Math.pow(100/30.0,rand.nextDouble()));
+            int _maxVecinos = (int)Math.round(30.0*Math.pow(10/30.0,rand.nextDouble()));
+            double _alpha = Math.pow(2,rand.nextDouble())/2.0;
+
+            //TABU
+            int _tabuIteraciones = (int)Math.round(30.0*Math.pow(150/30.0,rand.nextDouble()));
+            int _tabuMaxVecinos = (int)Math.round(30.0*Math.pow(10/30.0,rand.nextDouble()));
+            int _tabuTenure = (int)Math.round(10.0*Math.pow(100/10.0,rand.nextDouble()));
+
+            System.out.println("========================================");
+            System.out.println("ITERACION "+(i+1));
+            System.out.println("GRASP:");
+            System.out.println("Num. Iteraciones:  "+_iteraciones);
+            System.out.println("Max. Vecinos:  "+_maxVecinos);
+            System.out.println("Alfa:  "+_alpha);
+            System.out.println("Tabu Search:");
+            System.out.println("Num. Iteraciones:  "+_tabuIteraciones);
+            System.out.println("Max. Vecinos:  "+_tabuMaxVecinos);
+            System.out.println("Tenure:  "+_tabuTenure);
+            GRASPSearch.establecerParametros(_iteraciones,_maxVecinos,_alpha);
+            TabuSearch.establecerParametros(_tabuIteraciones,_tabuMaxVecinos,_tabuTenure);
+            double sumaFit = 0;
+            double sumaFitTabu = 0;
+            //long sumaTime = 0;
+
+            for(int j=0;j<algo_iter;j++){
+                ResultadoSimulacionDTO r = ejecutarSimulacion(fechaInicio, cantidadDias);
+                //sumaTime += r.getTiempoGrasp();
+                sumaFit += r.getFitnessGrasp();
+                sumaFitTabu += r.getFitnessTabu();
+            }
+            double promFit = sumaFit/algo_iter;
+            if(promFit<=bestFitness){
+                bestFitness = promFit;
+                bestIteraciones = _iteraciones;
+                bestMaxVecinos = _maxVecinos;
+                bestAlpha = _alpha;
+            }
+            double promTabu = sumaFitTabu/algo_iter;
+            if(promTabu<=bestTabuFitness){
+                bestTabuFitness = promTabu;
+                bestTabuIteraciones = _tabuIteraciones;
+                bestTabuMaxVecinos = _tabuMaxVecinos;
+                bestTabuTenure = _tabuTenure;
+            }
+        }
+
+        System.out.println("\n========================================");
+        System.out.println("RESULTADOS: ");
+        System.out.println("\n========================================");
+        System.out.println("GRASP: ");
+        System.out.println("Mejor Fitness: "+ bestFitness);
+        System.out.println("Mejor num. iteraciones: " + bestIteraciones);
+        System.out.println("Mejor max. vecinos: " + bestMaxVecinos);
+        System.out.println("Mejor alfa: " + bestAlpha);
+        System.out.println("\n========================================");
+        System.out.println("Tabu Search: ");
+        System.out.println("Mejor Fitness: "+ bestTabuFitness);
+        System.out.println("Mejor num. iteraciones: " + bestTabuIteraciones);
+        System.out.println("Mejor max. vecinos: " + bestTabuMaxVecinos);
+        System.out.println("Mejor tenure: " + bestTabuTenure);
+        System.out.println("\n========================================");
+        System.out.println("Ganador: " + (bestFitness<bestTabuFitness?"GRASP Search":"Tabu Search"));
+
     }
 }

@@ -19,6 +19,15 @@ import java.util.stream.Collectors;
 public class TabuSearch {
 
     private final FitnessEvaluator fitnessEvaluator;
+    private static int Iteraciones = 120;
+    private static int MaxVecinos = 50;
+    private static int Tenure = 12;
+
+    public static void establecerParametros(int _iteraciones,int _maxVecinos,int _tenure){
+        Iteraciones = _iteraciones;
+        MaxVecinos = _maxVecinos;
+        Tenure = _tenure;
+    }
 
     public SolucionRuta ejecutar(List<Envio> envios, Map<String, List<Itinerario>> itinerariosPorRuta, List<Aeropuerto> aeropuertos) {
         return ejecutarConParametros(envios, itinerariosPorRuta, aeropuertos, 120, 12, 50);

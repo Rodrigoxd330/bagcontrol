@@ -15,7 +15,8 @@ public class BagcontrolApplication {
 	CommandLineRunner runPlanificador(PlanificadorService service) {
 		return args -> {
 			System.out.println("=== EJECUTANDO GRASP ===");
-			service.ejecutarPrueba();
+			//service.ejecutarPrueba();
+			service.optimizarParametros();
 		};
 	}
 }

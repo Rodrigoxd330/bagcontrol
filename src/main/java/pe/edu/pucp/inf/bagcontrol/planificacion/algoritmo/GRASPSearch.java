@@ -16,12 +16,22 @@ import java.util.stream.Collectors;
 @Component
 @RequiredArgsConstructor
 public class GRASPSearch {
+    //Parametros puestos como variables globales para mayor conveniencia
+    private static int Iteraciones = 30;
+    private static int MaxVecinos = 50;
+    private static double Alpha = 0.4;
 
     private final FitnessEvaluator fitnessEvaluator;
     private final Random random = new Random();
 
+    public static void establecerParametros(int _iteraciones,int _maxVecinos,double _alpha){
+        Iteraciones = _iteraciones;
+        MaxVecinos = _maxVecinos;
+        Alpha = _alpha;
+    }
+
     public SolucionRuta ejecutar(List<Envio> envios, Map<String, List<Itinerario>> itinerariosPorRuta, List<Aeropuerto> aeropuertos) {
-        return ejecutarConParametros(envios, itinerariosPorRuta, aeropuertos, 30, 50, 0.4);
+        return ejecutarConParametros(envios, itinerariosPorRuta, aeropuertos, Iteraciones, MaxVecinos, Alpha);
     }
 
     public SolucionRuta ejecutarConParametros(
