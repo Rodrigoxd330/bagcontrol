@@ -91,12 +91,7 @@ public class TabuSearch {
                 it.remove();
             }
         }
-
-        System.out.println("[TABU] Fitness final: " + mejorFitnessGlobal);
-        System.out.println("[TABU] Sin itinerario: " +
-                mejor.getAsignaciones().stream().filter(a -> a.getItinerario() == null).count()
-                + "/" + envios.size());
-
+        
         return mejor;
     }
 

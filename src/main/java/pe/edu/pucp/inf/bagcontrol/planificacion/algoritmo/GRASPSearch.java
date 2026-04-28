@@ -47,7 +47,6 @@ public class GRASPSearch {
                 mejorSolucion = solucion.clonar();
             }
         }
-
         return mejorSolucion;
     }
 
@@ -124,7 +123,6 @@ public class GRASPSearch {
                 }
             }
         }
-
         return mejor;
     }
 }
