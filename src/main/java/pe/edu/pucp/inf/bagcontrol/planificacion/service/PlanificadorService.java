@@ -13,15 +13,14 @@ import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloRepository;
 import pe.edu.pucp.inf.bagcontrol.planificacion.algoritmo.GRASPSearch;
 import pe.edu.pucp.inf.bagcontrol.planificacion.algoritmo.TabuSearch;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.AsignacionPlanDTO;
+import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.Itinerario;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.PlanResultadoDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.ResultadoSimulacionDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
-import pe.edu.pucp.inf.bagcontrol.planificacion.utils.PlanificadorUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -35,77 +34,89 @@ public class PlanificadorService {
     private final VueloFactory vueloFactory;
     private final GRASPSearch graspSearch;
     private final TabuSearch tabuSearch;
-
+    private final ItinerarioService itinerarioService;
 
     public PlanResultadoDTO obtenerPlan(String algoritmo, LocalDate fechaInicio, int dias) {
-        return new PlanResultadoDTO()
-        {
-//        if (dias <= 0) throw new IllegalArgumentException("La cantidad de días debe ser mayor que 0.");
-//
-//        LocalDateTime inicio = fechaInicio.atStartOfDay();
-//        LocalDateTime fin = fechaInicio.plusDays(dias).atStartOfDay();
-//
-//        var envios = envioDataStore.obtenerEnviosEnVentana(inicio, fin);
-//        var vuelosBase = vueloRepository.findAll();
-//        var aeropuertos = aeropuertoRepository.findAll();
-//
-//        List<VueloInstanciado> vuelosInstanciados = generarVuelosInstanciados(vuelosBase, fechaInicio, dias);
-//
-//        var solucion = algoritmo.equalsIgnoreCase("TABU")
-//                ? tabuSearch.ejecutar(envios, vuelosInstanciados, aeropuertos)
-//                : graspSearch.ejecutar(envios, vuelosInstanciados, aeropuertos);
-//
-//        var plan = solucion.getAsignaciones().stream()
-//                .map(asignacion -> {
-//                    var envio = asignacion.getEnvio();
-//                    var vuelo = asignacion.getVuelo();
-//
-//                    if (vuelo == null) {
-//                        return new AsignacionPlanDTO(
-//                                envio.getIdPedido(),
-//                                envio.getOrigenIata(),
-//                                envio.getDestinoIata(),
-//                                envio.getCantidadMaletas(),
-//                                null,
-//                                null,
-//                                null,
-//                                null,
-//                                null,
-//                                "SIN_VUELO_ASIGNADO"
-//                        );
-//                    }
-//
-//                    return new AsignacionPlanDTO(
-//                            envio.getIdPedido(),
-//                            envio.getOrigenIata(),
-//                            envio.getDestinoIata(),
-//                            envio.getCantidadMaletas(),
-//                            vuelo.getCodigoBase(),
-//                            vuelo.getOrigenIata(),
-//                            vuelo.getDestinoIata(),
-//                            vuelo.getFechaHoraSalida().toString(),
-//                            vuelo.getFechaHoraLlegada().toString(),
-//                            "ASIGNADO"
-//                    );
-//                })
-//                .toList();
-//
-//        return new PlanResultadoDTO(
-//                algoritmo.toUpperCase(),
-//                solucion.getFitness(),
-//                solucion.getAsignaciones().size(),
-//                plan
-//        );
-        };
-    }
 
-
-    public ResultadoSimulacionDTO ejecutarSimulacion(LocalDate fechaInicio, int cantidadDias) {
-        if (cantidadDias <= 0) throw new IllegalArgumentException("La cantidad de días debe ser mayor que 0.");
+        if (dias <= 0) {
+            throw new IllegalArgumentException("La cantidad de días debe ser mayor que 0.");
+        }
 
         LocalDateTime inicio = fechaInicio.atStartOfDay();
-        //LocalDateTime fin = fechaInicio.plusDays(cantidadDias).atStartOfDay();
-        LocalDateTime fin = fechaInicio.atStartOfDay().plusHours(2);
+        LocalDateTime fin = fechaInicio.plusDays(dias).atStartOfDay();
+
+        List<Envio> envios = envioDataStore.obtenerEnviosEnVentana(inicio, fin);
+        List<Vuelo> vuelosBase = vueloRepository.findAll();
+        List<Aeropuerto> aeropuertos = aeropuertoRepository.findAll();
+
+        List<VueloInstanciado> vuelosInstanciados =
+                generarVuelosInstanciados(vuelosBase, fechaInicio, dias);
+
+        Map<String, List<Itinerario>> itinerariosPorRuta =
+                itinerarioService.generarItinerariosPorRuta(vuelosInstanciados);
+
+        SolucionRuta solucion = algoritmo.equalsIgnoreCase("TABU")
+                ? tabuSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos)
+                : graspSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos);
+
+        List<AsignacionPlanDTO> plan = solucion.getAsignaciones().stream()
+                .map(asignacion -> {
+                    Envio envio = asignacion.getEnvio();
+                    Itinerario itinerario = asignacion.getItinerario();
+
+                    if (itinerario == null || itinerario.getVuelos() == null || itinerario.getVuelos().isEmpty()) {
+                        return new AsignacionPlanDTO(
+                                envio.getIdPedido(),
+                                envio.getOrigenIata(),
+                                envio.getDestinoIata(),
+                                envio.getCantidadMaletas(),
+                                null,
+                                null,
+                                null,
+                                null,
+                                null,
+                                "SIN_ITINERARIO_ASIGNADO"
+                        );
+                    }
+
+                    VueloInstanciado primerVuelo = itinerario.getVuelos().get(0);
+                    VueloInstanciado ultimoVuelo = itinerario.getVuelos().get(itinerario.getVuelos().size() - 1);
+
+                    String estado = itinerario.getCantidadVuelos() == 1
+                            ? "ASIGNADO_DIRECTO"
+                            : "ASIGNADO_CON_ESCALA_" + itinerario.getCantidadVuelos() + "_VUELOS";
+
+                    return new AsignacionPlanDTO(
+                            envio.getIdPedido(),
+                            envio.getOrigenIata(),
+                            envio.getDestinoIata(),
+                            envio.getCantidadMaletas(),
+                            primerVuelo.getCodigoBase(),
+                            primerVuelo.getOrigenIata(),
+                            ultimoVuelo.getDestinoIata(),
+                            primerVuelo.getFechaHoraSalida().toString(),
+                            ultimoVuelo.getFechaHoraLlegada().toString(),
+                            estado
+                    );
+                })
+                .toList();
+
+        return new PlanResultadoDTO(
+                algoritmo.toUpperCase(),
+                solucion.getFitness(),
+                solucion.getAsignaciones().size(),
+                plan
+        );
+    }
+
+    public ResultadoSimulacionDTO ejecutarSimulacion(LocalDate fechaInicio, int cantidadDias) {
+
+        if (cantidadDias <= 0) {
+            throw new IllegalArgumentException("La cantidad de días debe ser mayor que 0.");
+        }
+
+        LocalDateTime inicio = fechaInicio.atStartOfDay();
+        LocalDateTime fin = fechaInicio.plusDays(cantidadDias).atStartOfDay();
 
         List<Envio> envios = envioDataStore.obtenerEnviosEnVentana(inicio, fin);
         List<Vuelo> vuelosBase = vueloRepository.findAll();
@@ -114,8 +125,8 @@ public class PlanificadorService {
         List<VueloInstanciado> vuelosInstanciados =
                 generarVuelosInstanciados(vuelosBase, fechaInicio, cantidadDias);
 
-        Map<String, List<VueloInstanciado>> vuelosPorRuta =
-                PlanificadorUtils.indexarVuelosPorRuta(vuelosInstanciados);
+        Map<String, List<Itinerario>> itinerariosPorRuta =
+                itinerarioService.generarItinerariosPorRuta(vuelosInstanciados);
 
         System.out.println("========================================");
         System.out.println("VENTANA DE SIMULACIÓN");
@@ -125,46 +136,42 @@ public class PlanificadorService {
         System.out.println("Envios usados: " + envios.size());
         System.out.println("Vuelos base disponibles: " + vuelosBase.size());
         System.out.println("Vuelos instanciados: " + vuelosInstanciados.size());
+        System.out.println("Rutas con itinerarios: " + itinerariosPorRuta.size());
         System.out.println("Aeropuertos cargados: " + aeropuertos.size());
         System.out.println("========================================");
 
-        // ================= GRASP =================
         System.out.println("\n=== EJECUTANDO GRASP ===");
 
         long inicioGrasp = System.currentTimeMillis();
         SolucionRuta solucionGrasp =
-                graspSearch.ejecutar(envios, vuelosPorRuta, aeropuertos);
+                graspSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos);
         long finGrasp = System.currentTimeMillis();
 
         long tiempoGrasp = finGrasp - inicioGrasp;
         int asignacionesGrasp = solucionGrasp.getAsignaciones().size();
-        double vuelosPromedioGrasp =
-                envios.isEmpty() ? 0 : (double) asignacionesGrasp / envios.size();
+        double vuelosPromedioGrasp = calcularVuelosPromedio(solucionGrasp, envios.size());
 
         System.out.println("Fitness GRASP: " + solucionGrasp.getFitness());
         System.out.println("Asignaciones GRASP: " + asignacionesGrasp);
         System.out.println("Tiempo GRASP (ms): " + tiempoGrasp);
         System.out.println("Vuelos promedio GRASP: " + vuelosPromedioGrasp);
 
-        // ================= TABU =================
         System.out.println("\n=== EJECUTANDO TABU ===");
 
         long inicioTabu = System.currentTimeMillis();
         SolucionRuta solucionTabu =
-                tabuSearch.ejecutar(envios, vuelosPorRuta, aeropuertos);
+                tabuSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos);
         long finTabu = System.currentTimeMillis();
 
         long tiempoTabu = finTabu - inicioTabu;
         int asignacionesTabu = solucionTabu.getAsignaciones().size();
-        double vuelosPromedioTabu =
-                envios.isEmpty() ? 0 : (double) asignacionesTabu / envios.size();
+        double vuelosPromedioTabu = calcularVuelosPromedio(solucionTabu, envios.size());
 
         System.out.println("Fitness TABU: " + solucionTabu.getFitness());
         System.out.println("Asignaciones TABU: " + asignacionesTabu);
         System.out.println("Tiempo TABU (ms): " + tiempoTabu);
         System.out.println("Vuelos promedio TABU: " + vuelosPromedioTabu);
 
-        // ================= GANADOR =================
         String ganador;
         if (solucionGrasp.getFitness() < solucionTabu.getFitness()) {
             ganador = "GRASP";
@@ -213,6 +220,19 @@ public class PlanificadorService {
         return vuelosInstanciados;
     }
 
+    private double calcularVuelosPromedio(SolucionRuta solucion, int totalEnvios) {
+        if (totalEnvios == 0) {
+            return 0.0;
+        }
+
+        int totalVuelosUsados = solucion.getAsignaciones().stream()
+                .filter(a -> a.getItinerario() != null)
+                .mapToInt(a -> a.getItinerario().getCantidadVuelos())
+                .sum();
+
+        return (double) totalVuelosUsados / totalEnvios;
+    }
+
     public void ejecutarPrueba() {
         LocalDate fechaInicio = LocalDate.of(2026, 2, 2);
         int cantidadDias = 1;
@@ -252,14 +272,12 @@ public class PlanificadorService {
                     " | Tiempo(ms): " + r.getTiempoTabu() +
                     " | VuelosProm: " + r.getVuelosPromedioTabu());
 
-            // Acumuladores
             sumaFitnessGrasp += r.getFitnessGrasp();
             sumaFitnessTabu += r.getFitnessTabu();
 
             sumaTiempoGrasp += r.getTiempoGrasp();
             sumaTiempoTabu += r.getTiempoTabu();
 
-            // Conteo de ganadores
             switch (r.getGanador()) {
                 case "GRASP" -> winsGrasp++;
                 case "TABU" -> winsTabu++;
@@ -267,7 +285,6 @@ public class PlanificadorService {
             }
         }
 
-        // ================= RESUMEN FINAL =================
         System.out.println("\n========================================");
         System.out.println("RESUMEN FINAL");
         System.out.println("========================================");
@@ -277,7 +294,6 @@ public class PlanificadorService {
         System.out.println("Empates   : " + empates);
 
         System.out.println("\nPROMEDIOS:");
-
         System.out.println("GRASP -> Fitness Prom: " + (sumaFitnessGrasp / iteraciones) +
                 " | Tiempo Prom(ms): " + (sumaTiempoGrasp / iteraciones));
 

@@ -2,7 +2,6 @@ package pe.edu.pucp.inf.bagcontrol.planificacion.modelos;
 
 import lombok.Data;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
-import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -13,21 +12,21 @@ public class SolucionRuta {
     private List<RutaAsignada> asignaciones = new ArrayList<>();
     private double fitness;
 
-    public void agregarAsignacion(Envio envio, VueloInstanciado vuelo) {
-        asignaciones.add(new RutaAsignada(envio, vuelo));
+    public void agregarAsignacion(Envio envio, Itinerario itinerario) {
+        asignaciones.add(new RutaAsignada(envio, itinerario));
     }
 
-    public VueloInstanciado obtenerVueloAsignado(Envio envio) {
+    public Itinerario obtenerItinerarioAsignado(Envio envio) {
         return asignaciones.stream()
                 .filter(a -> a.getEnvio().getIdPedido().equals(envio.getIdPedido()))
-                .map(RutaAsignada::getVuelo)
+                .map(RutaAsignada::getItinerario)
                 .findFirst()
                 .orElse(null);
     }
 
     public List<Envio> obtenerEnviosConConflictos() {
         return asignaciones.stream()
-                .filter(a -> a.getVuelo() == null)
+                .filter(a -> a.getItinerario() == null)
                 .map(RutaAsignada::getEnvio)
                 .toList();
     }
@@ -37,7 +36,7 @@ public class SolucionRuta {
         copia.setFitness(this.fitness);
 
         for (RutaAsignada asignacion : this.asignaciones) {
-            copia.agregarAsignacion(asignacion.getEnvio(), asignacion.getVuelo());
+            copia.agregarAsignacion(asignacion.getEnvio(), asignacion.getItinerario());
         }
 
         return copia;
@@ -46,7 +45,7 @@ public class SolucionRuta {
     public void aplicarMovimientoDefinitivo(Movimiento movimiento) {
         for (RutaAsignada asignacion : asignaciones) {
             if (asignacion.getEnvio().getIdPedido().equals(movimiento.getEnvio().getIdPedido())) {
-                asignacion.setVuelo(movimiento.getVueloNuevo());
+                asignacion.setItinerario(movimiento.getItinerarioNuevo());
                 break;
             }
         }
@@ -55,8 +54,8 @@ public class SolucionRuta {
     public void deshacerMovimiento(Movimiento movimiento) {
         for (RutaAsignada asignacion : asignaciones) {
             if (asignacion.getEnvio().getIdPedido().equals(movimiento.getEnvio().getIdPedido())) {
-                asignacion.setVuelo(movimiento.getVueloAnterior());
-                return;
+                asignacion.setItinerario(movimiento.getItinerarioAnterior());
+                break;
             }
         }
     }
