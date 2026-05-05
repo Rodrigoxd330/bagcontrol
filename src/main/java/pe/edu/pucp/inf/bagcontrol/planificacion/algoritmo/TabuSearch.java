@@ -32,7 +32,7 @@ public class TabuSearch {
             int tenure,
             int maxVecinos
     ) {
-        Set<String> listaTabu = new HashSet<>();
+        Set<String> listaTabu = new LinkedHashSet<>();
 
         Map<String, Aeropuerto> mapaAeropuertos = aeropuertos.stream()
                 .collect(Collectors.toMap(Aeropuerto::getCodigoIata, a -> a));

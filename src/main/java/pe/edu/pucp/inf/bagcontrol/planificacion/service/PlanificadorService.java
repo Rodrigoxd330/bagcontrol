@@ -151,9 +151,29 @@ public class PlanificadorService {
         String ganador = solucionGrasp.getFitness() < solucionTabu.getFitness() ? "GRASP" : (solucionTabu.getFitness() < solucionGrasp.getFitness() ? "TABU" : "EMPATE");
 
         return new ResultadoSimulacionDTO(
-                inicio.toString(), fin.toString(), envios.size(), vuelosBase.size(), vuelosInstanciados.size(), aeropuertos.size(),
-                solucionGrasp.getFitness(), solucionGrasp.getAsignaciones().size(), tiempoGrasp, vuelosPromGrasp,
-                solucionTabu.getFitness(), solucionTabu.getAsignaciones().size(), tiempoTabu, vuelosPromTabu,
+                inicio.toString(),
+                fin.toString(),
+                envios.size(),
+                vuelosBase.size(),
+                vuelosInstanciados.size(),
+                aeropuertos.size(),
+
+                // GRASP
+                solucionGrasp.getFitness(),
+                solucionGrasp.getAsignaciones().size(),
+                tiempoGrasp,
+                vuelosPromGrasp,
+                solucionGrasp.getSinItinerarioCount(),
+                solucionGrasp.getExcedeSlaCount(),
+
+                // TABU
+                solucionTabu.getFitness(),
+                solucionTabu.getAsignaciones().size(),
+                tiempoTabu,
+                vuelosPromTabu,
+                solucionTabu.getSinItinerarioCount(),
+                solucionTabu.getExcedeSlaCount(),
+
                 ganador
         );
     }
@@ -183,7 +203,26 @@ public class PlanificadorService {
                 .sum();
         return sumaHoras / asignados;
     }
+    public SolucionRuta calcularSolucion(String algoritmo, LocalDate fechaInicio, int dias) {
+        if (dias <= 0) throw new IllegalArgumentException("La cantidad de días debe ser mayor que 0.");
 
+        LocalDateTime inicio = fechaInicio.atStartOfDay();
+        LocalDateTime fin = fechaInicio.plusDays(dias).atStartOfDay();
+
+        List<Envio> envios = envioDataStore.obtenerEnviosEnVentana(inicio, fin);
+        List<Vuelo> vuelosBase = vueloRepository.findAll();
+        List<Aeropuerto> aeropuertos = aeropuertoRepository.findAll();
+
+        List<VueloInstanciado> vuelosInstanciados =
+                generarVuelosInstanciados(vuelosBase, fechaInicio, dias + 2);
+
+        Map<String, List<Itinerario>> itinerariosPorRuta =
+                itinerarioService.generarItinerariosPorRuta(vuelosInstanciados);
+
+        return algoritmo.equalsIgnoreCase("TABU")
+                ? tabuSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos)
+                : graspSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos);
+    }
     public void ejecutarPrueba() {
         LocalDate fechaInicio = LocalDate.of(2026, 2, 2);
         int cantidadDias = 3;

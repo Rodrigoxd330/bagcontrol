@@ -20,12 +20,16 @@ public class ResultadoSimulacionDTO {
     private int asignacionesGrasp;
     private long tiempoGrasp;
     private double vuelosPromedioGrasp;
+    private int sinItinerarioGrasp;
+    private int excedeSlaGrasp;
 
     // TABU
     private double fitnessTabu;
     private int asignacionesTabu;
     private long tiempoTabu;
     private double vuelosPromedioTabu;
+    private int sinItinerarioTabu;
+    private int excedeSlaTabu;
 
     private String ganador;
 }
