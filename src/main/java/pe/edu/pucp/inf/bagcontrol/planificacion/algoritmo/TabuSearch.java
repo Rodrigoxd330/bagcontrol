@@ -19,6 +19,7 @@ import java.util.stream.Collectors;
 public class TabuSearch {
 
     private final FitnessEvaluator fitnessEvaluator;
+    private final Random random = new Random();
 
     public SolucionRuta ejecutar(List<Envio> envios, Map<String, List<Itinerario>> itinerariosPorRuta, List<Aeropuerto> aeropuertos) {
         return ejecutarConParametros(envios, itinerariosPorRuta, aeropuertos, 120, 12, 50);
@@ -105,17 +106,20 @@ public class TabuSearch {
 
         for (Envio envio : envios) {
             List<Itinerario> posibles = PlanificadorUtils.buscarItinerariosViablesParaEnvio(
-                            envio,
-                            itinerariosPorRuta,
-                            mapaAeropuertos
-                    ).stream()
+                            envio, itinerariosPorRuta, mapaAeropuertos)
+                    .stream()
                     .filter(i -> PlanificadorUtils.itinerarioTieneCapacidad(i, envio, cargaAcumulada))
+                    // Ordenar por duración ascendente = itinerario más rápido primero
+                    .sorted(Comparator.comparingDouble(
+                            i -> PlanificadorUtils.calcularDuracionItinerarioHoras(i)))
                     .toList();
 
             if (posibles.isEmpty()) {
                 solucion.agregarAsignacion(envio, null);
             } else {
-                Itinerario elegido = posibles.get(0);
+                // Elegir aleatoriamente entre el top 20% de mejores itinerarios
+                int limite = Math.max(1, (int) Math.ceil(0.2 * posibles.size()));
+                Itinerario elegido = posibles.get(random.nextInt(limite));
                 PlanificadorUtils.acumularCargaItinerario(elegido, envio, cargaAcumulada);
                 solucion.agregarAsignacion(envio, elegido);
             }

@@ -102,7 +102,7 @@ public class PlanificadorService {
             he verificado que si pones cantidadDias nada más salen 3-4 maletas sin poder planificar porque ya no hay vuelos
             siguientes porque los vuelos instanciados acaban ahí.
          */
-        List<VueloInstanciado> vuelosInstanciados = generarVuelosInstanciados(vuelosBase, fechaInicio, cantidadDias + 2);
+        List<VueloInstanciado> vuelosInstanciados = generarVuelosInstanciados(vuelosBase, fechaInicio, cantidadDias);
 
         Map<String, List<Itinerario>> itinerariosPorRuta = itinerarioService.generarItinerariosPorRuta(vuelosInstanciados);
 
@@ -131,6 +131,16 @@ public class PlanificadorService {
         System.out.println("SLA Incumplidos: " + solucionGrasp.getExcedeSlaCount());
         System.out.println("Sin Itinerario: " + solucionGrasp.getSinItinerarioCount() + "/" + envios.size());
 
+        solucionGrasp.getAsignaciones().stream()
+                .filter(a -> a.getItinerario() == null)
+                .forEach(a -> {
+                    Envio e = a.getEnvio();
+                    System.out.println("  [SIN_ITINERARIO GRASP] idPedido=" + e.getIdPedido()
+                            + " ruta=" + e.getOrigenIata() + "->" + e.getDestinoIata()
+                            + " maletas=" + e.getCantidadMaletas()
+                            + " fechaHora=" + e.getFechaHora());
+                });
+
         // --- TABU ---
         System.out.println("\n=== EJECUTANDO TABU ===");
         long inicioTabu = System.currentTimeMillis();
@@ -147,6 +157,15 @@ public class PlanificadorService {
         System.out.println("Fitness: " + solucionTabu.getFitness());
         System.out.println("SLA Incumplidos: " + solucionTabu.getExcedeSlaCount());
         System.out.println("Sin Itinerario: " + solucionTabu.getSinItinerarioCount() + "/" + envios.size());
+        solucionTabu.getAsignaciones().stream()
+                .filter(a -> a.getItinerario() == null)
+                .forEach(a -> {
+                    Envio e = a.getEnvio();
+                    System.out.println("  [SIN_ITINERARIO TABU]  idPedido=" + e.getIdPedido()
+                            + " ruta=" + e.getOrigenIata() + "->" + e.getDestinoIata()
+                            + " maletas=" + e.getCantidadMaletas()
+                            + " fechaHora=" + e.getFechaHora());
+                });
 
         String ganador = solucionGrasp.getFitness() < solucionTabu.getFitness() ? "GRASP" : (solucionTabu.getFitness() < solucionGrasp.getFitness() ? "TABU" : "EMPATE");
 
@@ -214,7 +233,7 @@ public class PlanificadorService {
         List<Aeropuerto> aeropuertos = aeropuertoRepository.findAll();
 
         List<VueloInstanciado> vuelosInstanciados =
-                generarVuelosInstanciados(vuelosBase, fechaInicio, dias + 2);
+                generarVuelosInstanciados(vuelosBase, fechaInicio, dias);
 
         Map<String, List<Itinerario>> itinerariosPorRuta =
                 itinerarioService.generarItinerariosPorRuta(vuelosInstanciados);
@@ -224,9 +243,9 @@ public class PlanificadorService {
                 : graspSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos);
     }
     public void ejecutarPrueba() {
-        LocalDate fechaInicio = LocalDate.of(2026, 2, 2);
-        int cantidadDias = 3;
-        int iteraciones = 3;
+        LocalDate fechaInicio = LocalDate.of(2026, 2, 25);
+        int cantidadDias = 5;
+        int iteraciones = 15;
 
         System.out.println("========================================");
         System.out.println("INICIANDO EXPERIMENTACIÓN (" + iteraciones + " iteraciones)");
