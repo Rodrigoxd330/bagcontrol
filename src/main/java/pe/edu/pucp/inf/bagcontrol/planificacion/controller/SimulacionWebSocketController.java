@@ -1,15 +1,16 @@
-package pe.edu.pucp.inf.bagcontrol.planificacion.service;
+package pe.edu.pucp.inf.bagcontrol.planificacion.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.*;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SimulacionEstadoDTO;
+import pe.edu.pucp.inf.bagcontrol.planificacion.service.SimulacionWebSocketService;
 
 import java.time.LocalDate;
 import java.util.Map;
 import java.util.UUID;
 
-@RestController
+@Deprecated
 @RequiredArgsConstructor
 public class SimulacionWebSocketController {
 

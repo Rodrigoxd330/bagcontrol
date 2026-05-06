@@ -1,4 +1,4 @@
-package pe.edu.pucp.inf.bagcontrol.planificacion.service;
+package pe.edu.pucp.inf.bagcontrol.planificacion.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;

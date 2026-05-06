@@ -1,4 +1,4 @@
-package pe.edu.pucp.inf.bagcontrol.planificacion.service;
+package pe.edu.pucp.inf.bagcontrol.planificacion.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.ResultadoSimulacionDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.PlanResultadoDTO;
+import pe.edu.pucp.inf.bagcontrol.planificacion.service.PlanificadorService;
 import java.time.LocalDate;
 
 @RestController

@@ -16,6 +16,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         registry.addEndpoint("/ws/simulacion")
                 .setAllowedOriginPatterns("*")
                 .withSockJS();
+        registry.addEndpoint("/ws-bagcontrol")
+                .setAllowedOriginPatterns("*")
+                .withSockJS();
     }
 
     @Override
