@@ -2,6 +2,7 @@ package pe.edu.pucp.inf.bagcontrol.planificacion.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.EnvioDataStore;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloFactory;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloRepository;
@@ -19,6 +20,7 @@ public class ConsultaOperativaService {
     private final EnvioDataStore envioDataStore;
     private final VueloRepository vueloRepository;
     private final VueloFactory vueloFactory;
+    private final AeropuertoRepository aeropuertoRepository;
 
     public List<EnvioDTO> obtenerEnviosEnVentana(LocalDateTime inicio, LocalDateTime fin) {
         var envios = envioDataStore.obtenerEnviosEnVentana(inicio, fin);
@@ -37,7 +39,8 @@ public class ConsultaOperativaService {
 
     public List<VueloInstanciadoDTO> obtenerVuelosInstanciados(LocalDate fecha) {
         var vuelosBase = vueloRepository.findAll();
-        var instancias = vueloFactory.crearInstanciasDelDia(vuelosBase, fecha);
+        var aeropuertos = aeropuertoRepository.findAll();
+        var instancias = vueloFactory.crearInstanciasDelDia(vuelosBase, fecha, aeropuertos);
 
         return instancias.stream()
                 .map(v -> new VueloInstanciadoDTO(

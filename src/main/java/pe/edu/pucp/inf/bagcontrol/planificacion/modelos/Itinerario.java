@@ -5,6 +5,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -30,6 +31,14 @@ public class Itinerario {
 
     public LocalDateTime getFechaHoraLlegada() {
         return vuelos.get(vuelos.size() - 1).getFechaHoraLlegada();
+    }
+
+    public Instant getFechaHoraSalidaUtc() {
+        return vuelos.get(0).getFechaHoraSalidaUtc();
+    }
+
+    public Instant getFechaHoraLlegadaUtc() {
+        return vuelos.get(vuelos.size() - 1).getFechaHoraLlegadaUtc();
     }
 
     public int getCantidadVuelos() {

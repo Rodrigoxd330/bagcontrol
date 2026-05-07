@@ -4,6 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 
 @Data
@@ -15,5 +16,7 @@ public class SimulacionVueloAgrupado {
     private String destinoIata;
     private LocalDateTime fechaHoraSalida;
     private LocalDateTime fechaHoraLlegada;
+    private Instant fechaHoraSalidaUtc;
+    private Instant fechaHoraLlegadaUtc;
     private int cantidadMaletas;
 }

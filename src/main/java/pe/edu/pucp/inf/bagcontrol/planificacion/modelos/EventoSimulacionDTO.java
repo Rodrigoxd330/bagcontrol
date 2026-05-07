@@ -47,6 +47,10 @@ public class EventoSimulacionDTO {
     private String destinoIata;
     private String horaSalida;
     private String horaLlegada;
+    private String horaSalidaLocal;
+    private String horaLlegadaLocal;
+    private String horaSalidaUtc;
+    private String horaLlegadaUtc;
     private Integer cantidadMaletas;
 
     private Map<String, Object> extra;

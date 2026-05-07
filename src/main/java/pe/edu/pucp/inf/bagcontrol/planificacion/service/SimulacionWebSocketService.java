@@ -176,6 +176,10 @@ public class SimulacionWebSocketService {
                         .destinoIata(destino)
                         .horaSalida(vuelo.getFechaHoraSalida().toString())
                         .horaLlegada(vuelo.getFechaHoraLlegada().toString())
+                        .horaSalidaLocal(vuelo.getFechaHoraSalida().toString())
+                        .horaLlegadaLocal(vuelo.getFechaHoraLlegada().toString())
+                        .horaSalidaUtc(vuelo.getFechaHoraSalidaUtc().toString())
+                        .horaLlegadaUtc(vuelo.getFechaHoraLlegadaUtc().toString())
                         .cantidadMaletas(cantidadMaletas)
                         .estado("EN_VUELO")
                         .build());
@@ -194,6 +198,10 @@ public class SimulacionWebSocketService {
                         .destinoIata(destino)
                         .horaSalida(vuelo.getFechaHoraSalida().toString())
                         .horaLlegada(vuelo.getFechaHoraLlegada().toString())
+                        .horaSalidaLocal(vuelo.getFechaHoraSalida().toString())
+                        .horaLlegadaLocal(vuelo.getFechaHoraLlegada().toString())
+                        .horaSalidaUtc(vuelo.getFechaHoraSalidaUtc().toString())
+                        .horaLlegadaUtc(vuelo.getFechaHoraLlegadaUtc().toString())
                         .cantidadMaletas(cantidadMaletas)
                         .estado("ATERRIZADO")
                         .build());
@@ -451,6 +459,8 @@ public class SimulacionWebSocketService {
                                 vuelo.getDestinoIata(),
                                 vuelo.getFechaHoraSalida(),
                                 vuelo.getFechaHoraLlegada(),
+                                vuelo.getFechaHoraSalidaUtc(),
+                                vuelo.getFechaHoraLlegadaUtc(),
                                 cantidadMaletas
                         );
                     }
@@ -463,7 +473,7 @@ public class SimulacionWebSocketService {
 
         return agrupados.values()
                 .stream()
-                .sorted(Comparator.comparing(SimulacionVueloAgrupado::getFechaHoraSalida))
+                .sorted(Comparator.comparing(SimulacionVueloAgrupado::getFechaHoraSalidaUtc))
                 .toList();
     }
 

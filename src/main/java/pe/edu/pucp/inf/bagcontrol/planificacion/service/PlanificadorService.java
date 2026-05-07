@@ -49,7 +49,7 @@ public class PlanificadorService {
 
         // Se mantiene el margen de 2 días para cubrir el SLA máximo de 48h [cite: 12]
         List<VueloInstanciado> vuelosInstanciados =
-                generarVuelosInstanciados(vuelosBase, fechaInicio, dias + 2);
+                generarVuelosInstanciados(vuelosBase, fechaInicio, dias + 2, aeropuertos);
 
         Map<String, List<Itinerario>> itinerariosPorRuta =
                 itinerarioService.generarItinerariosPorRuta(vuelosInstanciados);
@@ -66,7 +66,7 @@ public class PlanificadorService {
                     if (itinerario == null || itinerario.getVuelos() == null || itinerario.getVuelos().isEmpty()) {
                         return new AsignacionPlanDTO(
                                 envio.getIdPedido(), envio.getOrigenIata(), envio.getDestinoIata(),
-                                envio.getCantidadMaletas(), null, null, null, null, null, "SIN_ITINERARIO_ASIGNADO"
+                                envio.getCantidadMaletas(), null, null, null, null, null, null, null, "SIN_ITINERARIO_ASIGNADO"
                         );
                     }
 
@@ -77,7 +77,11 @@ public class PlanificadorService {
                     return new AsignacionPlanDTO(
                             envio.getIdPedido(), envio.getOrigenIata(), envio.getDestinoIata(), envio.getCantidadMaletas(),
                             primerVuelo.getCodigoBase(), primerVuelo.getOrigenIata(), ultimoVuelo.getDestinoIata(),
-                            primerVuelo.getFechaHoraSalida().toString(), ultimoVuelo.getFechaHoraLlegada().toString(), estado
+                            primerVuelo.getFechaHoraSalida().toString(),
+                            ultimoVuelo.getFechaHoraLlegada().toString(),
+                            primerVuelo.getFechaHoraSalidaUtc().toString(),
+                            ultimoVuelo.getFechaHoraLlegadaUtc().toString(),
+                            estado
                     );
                 })
                 .toList();
@@ -102,7 +106,7 @@ public class PlanificadorService {
             he verificado que si pones cantidadDias nada más salen 3-4 maletas sin poder planificar porque ya no hay vuelos
             siguientes porque los vuelos instanciados acaban ahí.
          */
-        List<VueloInstanciado> vuelosInstanciados = generarVuelosInstanciados(vuelosBase, fechaInicio, cantidadDias);
+        List<VueloInstanciado> vuelosInstanciados = generarVuelosInstanciados(vuelosBase, fechaInicio, cantidadDias, aeropuertos);
 
         Map<String, List<Itinerario>> itinerariosPorRuta = itinerarioService.generarItinerariosPorRuta(vuelosInstanciados);
 
@@ -197,10 +201,15 @@ public class PlanificadorService {
         );
     }
 
-    private List<VueloInstanciado> generarVuelosInstanciados(List<Vuelo> vuelosBase, LocalDate fechaInicio, int cantidadDias) {
+    private List<VueloInstanciado> generarVuelosInstanciados(
+            List<Vuelo> vuelosBase,
+            LocalDate fechaInicio,
+            int cantidadDias,
+            List<Aeropuerto> aeropuertos
+    ) {
         List<VueloInstanciado> vuelosInstanciados = new ArrayList<>();
         for (int i = 0; i < cantidadDias; i++) {
-            vuelosInstanciados.addAll(vueloFactory.crearInstanciasDelDia(vuelosBase, fechaInicio.plusDays(i)));
+            vuelosInstanciados.addAll(vueloFactory.crearInstanciasDelDia(vuelosBase, fechaInicio.plusDays(i), aeropuertos));
         }
         return vuelosInstanciados;
     }
@@ -233,7 +242,7 @@ public class PlanificadorService {
         List<Aeropuerto> aeropuertos = aeropuertoRepository.findAll();
 
         List<VueloInstanciado> vuelosInstanciados =
-                generarVuelosInstanciados(vuelosBase, fechaInicio, dias);
+                generarVuelosInstanciados(vuelosBase, fechaInicio, dias, aeropuertos);
 
         Map<String, List<Itinerario>> itinerariosPorRuta =
                 itinerarioService.generarItinerariosPorRuta(vuelosInstanciados);

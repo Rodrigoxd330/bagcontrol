@@ -4,6 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 
 @Data
@@ -14,7 +15,21 @@ public class VueloInstanciado {
     private Vuelo vueloBase;
     private LocalDateTime fechaHoraSalida;
     private LocalDateTime fechaHoraLlegada;
+    private Instant fechaHoraSalidaUtc;
+    private Instant fechaHoraLlegadaUtc;
     private int ocupacionActual = 0;
+
+    public VueloInstanciado(
+            Vuelo vueloBase,
+            LocalDateTime fechaHoraSalida,
+            LocalDateTime fechaHoraLlegada,
+            int ocupacionActual
+    ) {
+        this.vueloBase = vueloBase;
+        this.fechaHoraSalida = fechaHoraSalida;
+        this.fechaHoraLlegada = fechaHoraLlegada;
+        this.ocupacionActual = ocupacionActual;
+    }
 
     public Long getCodigoBase() {
         return vueloBase != null ? vueloBase.getCodigo() : null;

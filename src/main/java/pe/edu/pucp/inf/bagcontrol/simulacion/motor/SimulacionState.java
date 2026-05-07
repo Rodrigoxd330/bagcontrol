@@ -6,7 +6,7 @@ import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.LoteEventosDTO;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicLong;
 @Data
 public class SimulacionState {
     private final String simulacionId;
-    private LocalDateTime tiempoSimuladoActual;
+    private Instant tiempoSimuladoActual;
     private Map<String, Aeropuerto> aeropuertosSnapshot = new ConcurrentHashMap<>();
     private Map<String, Integer> inventarioSnapshot = new ConcurrentHashMap<>();
     private SolucionRuta solucionActual;

@@ -17,6 +17,8 @@ import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.TipoEvento;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -60,7 +62,7 @@ public class SimulacionJob implements Runnable {
         this.aeropuertoRepository = aeropuertoRepository;
         this.webSocketPublisher = webSocketPublisher;
         this.state = new SimulacionState(simulacionId, saMs);
-        this.state.setTiempoSimuladoActual(fechaInicio.atStartOfDay());
+        this.state.setTiempoSimuladoActual(fechaInicio.atStartOfDay().toInstant(ZoneOffset.UTC));
     }
 
     public void asignarHilo(Thread hilo) {
@@ -94,10 +96,7 @@ public class SimulacionJob implements Runnable {
             publicarLoteAeropuertos(aeropuertos, "Carga inicial");
             publicarControl(TipoEvento.PLAN_GENERADO);
 
-            for (VueloAgrupado vuelo : agruparVuelos(solucion)) {
-                esperarSiPausadaODetenida();
-                procesarVuelo(vuelo);
-            }
+            procesarEventosProgramados(agruparVuelos(solucion));
 
             state.setEstado("FINALIZADA");
             publicarControl(TipoEvento.SIMULACION_FINALIZADA);
@@ -163,26 +162,53 @@ public class SimulacionJob implements Runnable {
         return fechaCreacion;
     }
 
-    private void procesarVuelo(VueloAgrupado vuelo) {
-        state.setTiempoSimuladoActual(vuelo.fechaHoraSalida());
+    private void procesarEventosProgramados(List<VueloAgrupado> vuelos) {
+        List<EventoProgramado> eventosProgramados = crearEventosProgramados(vuelos);
 
-        List<EventoBaseDTO> salida = new ArrayList<>();
-        restarMaletas(vuelo.origenIata(), vuelo.cantidadMaletas());
-        agregarEventoAeropuerto(salida, vuelo.origenIata(), TipoEvento.AEROPUERTO_ACTUALIZADO);
-        salida.add(crearEventoVuelo(vuelo, TipoEvento.VUELO_DESPEGA, "EN_VUELO"));
-        publicarLote(salida, vuelo.fechaHoraSalida(), vuelo.fechaHoraSalida());
+        int indice = 0;
+        while (indice < eventosProgramados.size()) {
+            esperarSiPausadaODetenida();
 
-        esperarConControl();
+            Instant instantUtc = eventosProgramados.get(indice).instantUtc();
+            state.setTiempoSimuladoActual(instantUtc);
 
-        state.setTiempoSimuladoActual(vuelo.fechaHoraLlegada());
+            List<EventoBaseDTO> eventos = new ArrayList<>();
+            while (indice < eventosProgramados.size()
+                    && eventosProgramados.get(indice).instantUtc().equals(instantUtc)) {
+                procesarEventoProgramado(eventosProgramados.get(indice), eventos);
+                indice++;
+            }
 
-        List<EventoBaseDTO> llegada = new ArrayList<>();
-        sumarMaletas(vuelo.destinoIata(), vuelo.cantidadMaletas());
-        llegada.add(crearEventoVuelo(vuelo, TipoEvento.VUELO_ATERRIZA, "ATERRIZADO"));
-        agregarEventoAeropuerto(llegada, vuelo.destinoIata(), TipoEvento.AEROPUERTO_ACTUALIZADO);
-        publicarLote(llegada, vuelo.fechaHoraLlegada(), vuelo.fechaHoraLlegada());
+            publicarLote(eventos, instantUtc, instantUtc);
+            esperarConControl();
+        }
+    }
 
-        esperarConControl();
+    private List<EventoProgramado> crearEventosProgramados(List<VueloAgrupado> vuelos) {
+        return vuelos.stream()
+                .flatMap(vuelo -> List.of(
+                        new EventoProgramado(TipoEvento.VUELO_DESPEGA, vuelo.fechaHoraSalidaUtc(), vuelo),
+                        new EventoProgramado(TipoEvento.VUELO_ATERRIZA, vuelo.fechaHoraLlegadaUtc(), vuelo)
+                ).stream())
+                .sorted(Comparator.comparing(EventoProgramado::instantUtc))
+                .toList();
+    }
+
+    private void procesarEventoProgramado(EventoProgramado eventoProgramado, List<EventoBaseDTO> eventos) {
+        VueloAgrupado vuelo = eventoProgramado.vuelo();
+
+        if (eventoProgramado.tipo() == TipoEvento.VUELO_DESPEGA) {
+            restarMaletas(vuelo.origenIata(), vuelo.cantidadMaletas());
+            agregarEventoAeropuerto(eventos, vuelo.origenIata(), TipoEvento.AEROPUERTO_ACTUALIZADO);
+            eventos.add(crearEventoVuelo(vuelo, TipoEvento.VUELO_DESPEGA, "EN_VUELO"));
+            return;
+        }
+
+        if (eventoProgramado.tipo() == TipoEvento.VUELO_ATERRIZA) {
+            sumarMaletas(vuelo.destinoIata(), vuelo.cantidadMaletas());
+            eventos.add(crearEventoVuelo(vuelo, TipoEvento.VUELO_ATERRIZA, "ATERRIZADO"));
+            agregarEventoAeropuerto(eventos, vuelo.destinoIata(), TipoEvento.AEROPUERTO_ACTUALIZADO);
+        }
     }
 
     private void publicarLoteAeropuertos(List<Aeropuerto> aeropuertos, String estado) {
@@ -191,7 +217,8 @@ public class SimulacionJob implements Runnable {
         for (Aeropuerto aeropuerto : aeropuertos) {
             EventoAeropuertoDTO evento = crearEventoAeropuerto(aeropuerto, state.getInventarioSnapshot()
                     .getOrDefault(aeropuerto.getCodigoIata(), 0));
-            evento.setEstado(estado + " " + obtenerEstadoSemaforo(evento.getPorcentajeOcupacion()));
+            evento.setEstado(obtenerEstadoSemaforo(evento.getPorcentajeOcupacion()));
+            evento.setMensaje(estado);
             eventos.add(evento);
         }
         publicarLote(eventos, state.getTiempoSimuladoActual(), state.getTiempoSimuladoActual());
@@ -199,13 +226,13 @@ public class SimulacionJob implements Runnable {
 
     private void publicarControl(TipoEvento tipoEvento) {
         EventoBaseDTO evento = new EventoBaseDTO(tipoEvento, LocalDateTime.now().toString());
-        LocalDateTime ventana = state.getTiempoSimuladoActual() != null
+        Instant ventana = state.getTiempoSimuladoActual() != null
                 ? state.getTiempoSimuladoActual()
-                : LocalDateTime.now();
+                : Instant.now();
         publicarLote(List.of(evento), ventana, ventana);
     }
 
-    private void publicarLote(List<EventoBaseDTO> eventos, LocalDateTime ventanaInicio, LocalDateTime ventanaFin) {
+    private void publicarLote(List<EventoBaseDTO> eventos, Instant ventanaInicio, Instant ventanaFin) {
         if (eventos.isEmpty()) return;
 
         LoteEventosDTO lote = new LoteEventosDTO(
@@ -232,6 +259,10 @@ public class SimulacionJob implements Runnable {
         evento.setCantidadMaletas(vuelo.cantidadMaletas());
         evento.setHoraSalida(vuelo.fechaHoraSalida().toString());
         evento.setHoraLlegada(vuelo.fechaHoraLlegada().toString());
+        evento.setHoraSalidaLocal(vuelo.fechaHoraSalida().toString());
+        evento.setHoraLlegadaLocal(vuelo.fechaHoraLlegada().toString());
+        evento.setHoraSalidaUtc(vuelo.fechaHoraSalidaUtc().toString());
+        evento.setHoraLlegadaUtc(vuelo.fechaHoraLlegadaUtc().toString());
         return evento;
     }
 
@@ -322,7 +353,7 @@ public class SimulacionJob implements Runnable {
         return agrupados.values()
                 .stream()
                 .map(VueloAgrupadoAcumulado::toVueloAgrupado)
-                .sorted(Comparator.comparing(VueloAgrupado::fechaHoraSalida))
+                .sorted(Comparator.comparing(VueloAgrupado::fechaHoraSalidaUtc))
                 .toList();
     }
 
@@ -398,7 +429,16 @@ public class SimulacionJob implements Runnable {
             String destinoIata,
             LocalDateTime fechaHoraSalida,
             LocalDateTime fechaHoraLlegada,
+            Instant fechaHoraSalidaUtc,
+            Instant fechaHoraLlegadaUtc,
             int cantidadMaletas
+    ) {
+    }
+
+    private record EventoProgramado(
+            TipoEvento tipo,
+            Instant instantUtc,
+            VueloAgrupado vuelo
     ) {
     }
 
@@ -421,6 +461,8 @@ public class SimulacionJob implements Runnable {
                     vuelo.getDestinoIata(),
                     vuelo.getFechaHoraSalida(),
                     vuelo.getFechaHoraLlegada(),
+                    vuelo.getFechaHoraSalidaUtc(),
+                    vuelo.getFechaHoraLlegadaUtc(),
                     cantidadMaletas
             );
         }

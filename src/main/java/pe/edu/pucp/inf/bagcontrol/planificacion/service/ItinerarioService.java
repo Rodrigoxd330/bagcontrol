@@ -6,6 +6,7 @@ import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.Itinerario;
 import pe.edu.pucp.inf.bagcontrol.planificacion.utils.PlanificadorUtils;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.*;
 
 @Service
@@ -69,10 +70,10 @@ public class ItinerarioService {
     }
 
     private boolean conexionValida(VueloInstanciado primero, VueloInstanciado segundo) {
-        var llegadaPrimero = primero.getFechaHoraLlegada();
-        var salidaSegundo = segundo.getFechaHoraSalida();
+        Instant llegadaPrimero = primero.getFechaHoraLlegadaUtc();
+        Instant salidaSegundo = segundo.getFechaHoraSalidaUtc();
 
-        if (salidaSegundo.isBefore(llegadaPrimero.plusMinutes(MIN_CONEXION_MINUTOS))) {
+        if (salidaSegundo.isBefore(llegadaPrimero.plus(Duration.ofMinutes(MIN_CONEXION_MINUTOS)))) {
             return false;
         }
 

@@ -9,14 +9,15 @@ import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.*;
 
 public class PlanificadorUtils {
 
     public static double calcularDuracionItinerarioHoras(Itinerario itinerario) {
         Duration duracion = Duration.between(
-                itinerario.getFechaHoraSalida(),
-                itinerario.getFechaHoraLlegada()
+                itinerario.getFechaHoraSalidaUtc(),
+                itinerario.getFechaHoraLlegadaUtc()
         );
 
         return duracion.toMinutes() / 60.0;
@@ -36,7 +37,8 @@ public class PlanificadorUtils {
 
         boolean mismoContinente = origen.getContinente().equalsIgnoreCase(destino.getContinente());
 
-        Duration tiempoTotal = Duration.between(envio.getFechaHora(), itinerario.getFechaHoraLlegada());
+        Instant fechaEnvioUtc = ZonaHorariaUtils.convertirLocalAInstant(envio.getFechaHora(), origen);
+        Duration tiempoTotal = Duration.between(fechaEnvioUtc, itinerario.getFechaHoraLlegadaUtc());
         double horasTotales = tiempoTotal.toMinutes() / 60.0;
 
         if (horasTotales < 0) return true;
@@ -50,11 +52,18 @@ public class PlanificadorUtils {
             Map<String, Aeropuerto> mapaAeropuertos
     ) {
         String key = envio.getOrigenIata() + "-" + envio.getDestinoIata();
+        Aeropuerto origen = mapaAeropuertos.get(envio.getOrigenIata());
+
+        if (origen == null) {
+            return Collections.emptyList();
+        }
+
+        Instant fechaEnvioUtc = ZonaHorariaUtils.convertirLocalAInstant(envio.getFechaHora(), origen);
 
         return itinerariosPorRuta.getOrDefault(key, Collections.emptyList())
                 .stream()
                 .filter(i -> !i.contieneVueloCancelado())
-                .filter(i -> !i.getFechaHoraSalida().isBefore(envio.getFechaHora()))
+                .filter(i -> !i.getFechaHoraSalidaUtc().isBefore(fechaEnvioUtc))
                 .filter(i -> !excedePlazoMaximo(envio, i, mapaAeropuertos))
                 .toList();
     }

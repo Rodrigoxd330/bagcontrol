@@ -10,6 +10,7 @@ import lombok.NoArgsConstructor;
 public class EventoAeropuertoDTO extends EventoBaseDTO {
     private String codigoAeropuerto;
     private String estado;
+    private String mensaje;
     private double porcentajeOcupacion;
     private int maletasActuales;
     private int capacidadAlmacen;
