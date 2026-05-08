@@ -17,8 +17,13 @@ public class ItinerarioService {
     private static final int MAX_ITINERARIOS_POR_RUTA = 300;
 
     public Map<String, List<Itinerario>> generarItinerariosPorRuta(List<VueloInstanciado> vuelos) {
+        long inicio = System.currentTimeMillis();
         Map<String, List<VueloInstanciado>> vuelosPorOrigen = new HashMap<>();
         Map<String, List<Itinerario>> itinerariosPorRuta = new HashMap<>();
+        int itinerariosDirectos = 0;
+        int itinerariosConEscala = 0;
+        int rutasRecortadas = 0;
+        int itinerariosEliminadosPorRecorte = 0;
 
         for (VueloInstanciado vuelo : vuelos) {
             if (vuelo.isEstaCancelado()) continue;
@@ -31,6 +36,7 @@ public class ItinerarioService {
             itinerariosPorRuta
                     .computeIfAbsent(keyDirecto, k -> new ArrayList<>())
                     .add(new Itinerario(List.of(vuelo)));
+            itinerariosDirectos++;
         }
 
         for (VueloInstanciado primerVuelo : vuelos) {
@@ -55,16 +61,32 @@ public class ItinerarioService {
                 itinerariosPorRuta
                         .computeIfAbsent(keyConEscala, k -> new ArrayList<>())
                         .add(new Itinerario(List.of(primerVuelo, segundoVuelo)));
+                itinerariosConEscala++;
             }
         }
 
+        int totalAntesRecorte = itinerariosPorRuta.values().stream().mapToInt(List::size).sum();
         for (List<Itinerario> lista : itinerariosPorRuta.values()) {
             lista.sort(Comparator.comparingDouble(PlanificadorUtils::calcularDuracionItinerarioHoras));
 
             if (lista.size() > MAX_ITINERARIOS_POR_RUTA) {
+                rutasRecortadas++;
+                itinerariosEliminadosPorRecorte += lista.size() - MAX_ITINERARIOS_POR_RUTA;
                 lista.subList(MAX_ITINERARIOS_POR_RUTA, lista.size()).clear();
             }
         }
+
+        int totalFinal = itinerariosPorRuta.values().stream().mapToInt(List::size).sum();
+        long tiempoTotal = System.currentTimeMillis() - inicio;
+        System.out.println("[METRICA ITINERARIOS] vuelosRecibidos=" + vuelos.size()
+                + " itinerariosDirectos=" + itinerariosDirectos
+                + " itinerariosConEscala=" + itinerariosConEscala
+                + " totalRutas=" + itinerariosPorRuta.size()
+                + " totalAntesRecorte=" + totalAntesRecorte
+                + " rutasRecortadas=" + rutasRecortadas
+                + " itinerariosEliminadosPorRecorte=" + itinerariosEliminadosPorRecorte
+                + " totalFinal=" + totalFinal
+                + " tiempoTotalMs=" + tiempoTotal);
 
         return itinerariosPorRuta;
     }

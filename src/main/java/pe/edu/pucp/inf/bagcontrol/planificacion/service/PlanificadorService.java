@@ -48,15 +48,25 @@ public class PlanificadorService {
         List<Aeropuerto> aeropuertos = aeropuertoRepository.findAll();
 
         // Se mantiene el margen de 2 días para cubrir el SLA máximo de 48h [cite: 12]
+        long inicioGeneracionVuelos = System.currentTimeMillis();
         List<VueloInstanciado> vuelosInstanciados =
                 generarVuelosInstanciados(vuelosBase, fechaInicio, dias + 2, aeropuertos);
+        long tiempoGeneracionVuelos = System.currentTimeMillis() - inicioGeneracionVuelos;
 
+        long inicioGeneracionItinerarios = System.currentTimeMillis();
         Map<String, List<Itinerario>> itinerariosPorRuta =
                 itinerarioService.generarItinerariosPorRuta(vuelosInstanciados);
+        long tiempoGeneracionItinerarios = System.currentTimeMillis() - inicioGeneracionItinerarios;
 
+        long inicioAlgoritmo = System.currentTimeMillis();
         SolucionRuta solucion = algoritmo.equalsIgnoreCase("TABU")
                 ? tabuSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos)
                 : graspSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos);
+        long tiempoAlgoritmo = System.currentTimeMillis() - inicioAlgoritmo;
+
+        imprimirMetricasPlanificacion(algoritmo, fechaInicio, dias, envios, vuelosBase, vuelosInstanciados,
+                aeropuertos, itinerariosPorRuta, tiempoGeneracionVuelos, tiempoGeneracionItinerarios,
+                tiempoAlgoritmo, solucion);
 
         List<AsignacionPlanDTO> plan = solucion.getAsignaciones().stream()
                 .map(asignacion -> {
@@ -106,9 +116,13 @@ public class PlanificadorService {
             he verificado que si pones cantidadDias nada más salen 3-4 maletas sin poder planificar porque ya no hay vuelos
             siguientes porque los vuelos instanciados acaban ahí.
          */
+        long inicioGeneracionVuelos = System.currentTimeMillis();
         List<VueloInstanciado> vuelosInstanciados = generarVuelosInstanciados(vuelosBase, fechaInicio, cantidadDias, aeropuertos);
+        long tiempoGeneracionVuelos = System.currentTimeMillis() - inicioGeneracionVuelos;
 
+        long inicioGeneracionItinerarios = System.currentTimeMillis();
         Map<String, List<Itinerario>> itinerariosPorRuta = itinerarioService.generarItinerariosPorRuta(vuelosInstanciados);
+        long tiempoGeneracionItinerarios = System.currentTimeMillis() - inicioGeneracionItinerarios;
 
         System.out.println("========================================");
         System.out.println("VENTANA DE SIMULACIÓN");
@@ -123,6 +137,9 @@ public class PlanificadorService {
         long inicioGrasp = System.currentTimeMillis();
         SolucionRuta solucionGrasp = graspSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos);
         long tiempoGrasp = System.currentTimeMillis() - inicioGrasp;
+        imprimirMetricasPlanificacion("GRASP", fechaInicio, cantidadDias, envios, vuelosBase, vuelosInstanciados,
+                aeropuertos, itinerariosPorRuta, tiempoGeneracionVuelos, tiempoGeneracionItinerarios,
+                tiempoGrasp, solucionGrasp);
 
         double entregaPromGrasp = calcularTiempoEntregaPromedio(solucionGrasp);
         double vuelosPromGrasp = calcularVuelosPromedio(solucionGrasp, envios.size());
@@ -150,6 +167,9 @@ public class PlanificadorService {
         long inicioTabu = System.currentTimeMillis();
         SolucionRuta solucionTabu = tabuSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos);
         long tiempoTabu = System.currentTimeMillis() - inicioTabu;
+        imprimirMetricasPlanificacion("TABU", fechaInicio, cantidadDias, envios, vuelosBase, vuelosInstanciados,
+                aeropuertos, itinerariosPorRuta, tiempoGeneracionVuelos, tiempoGeneracionItinerarios,
+                tiempoTabu, solucionTabu);
 
         double entregaPromTabu = calcularTiempoEntregaPromedio(solucionTabu);
         double vuelosPromTabu = calcularVuelosPromedio(solucionTabu, envios.size());
@@ -241,16 +261,105 @@ public class PlanificadorService {
         List<Vuelo> vuelosBase = vueloRepository.findAll();
         List<Aeropuerto> aeropuertos = aeropuertoRepository.findAll();
 
+        long inicioGeneracionVuelos = System.currentTimeMillis();
         List<VueloInstanciado> vuelosInstanciados =
                 generarVuelosInstanciados(vuelosBase, fechaInicio, dias, aeropuertos);
+        long tiempoGeneracionVuelos = System.currentTimeMillis() - inicioGeneracionVuelos;
 
+        long inicioGeneracionItinerarios = System.currentTimeMillis();
         Map<String, List<Itinerario>> itinerariosPorRuta =
                 itinerarioService.generarItinerariosPorRuta(vuelosInstanciados);
+        long tiempoGeneracionItinerarios = System.currentTimeMillis() - inicioGeneracionItinerarios;
 
-        return algoritmo.equalsIgnoreCase("TABU")
+        long inicioAlgoritmo = System.currentTimeMillis();
+        SolucionRuta solucion = algoritmo.equalsIgnoreCase("TABU")
                 ? tabuSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos)
                 : graspSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos);
+        long tiempoAlgoritmo = System.currentTimeMillis() - inicioAlgoritmo;
+
+        imprimirMetricasPlanificacion(algoritmo, fechaInicio, dias, envios, vuelosBase, vuelosInstanciados,
+                aeropuertos, itinerariosPorRuta, tiempoGeneracionVuelos, tiempoGeneracionItinerarios,
+                tiempoAlgoritmo, solucion);
+
+        return solucion;
     }
+
+    public List<Envio> obtenerEnviosEnVentana(LocalDateTime inicio, LocalDateTime fin) {
+        return envioDataStore.obtenerEnviosEnVentana(inicio, fin);
+    }
+
+    public SolucionRuta calcularSolucionParaEnvios(String algoritmo, LocalDate fechaInicio, int dias, List<Envio> envios) {
+        if (dias <= 0) throw new IllegalArgumentException("La cantidad de dias debe ser mayor que 0.");
+
+        List<Vuelo> vuelosBase = vueloRepository.findAll();
+        List<Aeropuerto> aeropuertos = aeropuertoRepository.findAll();
+
+        long inicioGeneracionVuelos = System.currentTimeMillis();
+        List<VueloInstanciado> vuelosInstanciados =
+                generarVuelosInstanciados(vuelosBase, fechaInicio, dias, aeropuertos);
+        long tiempoGeneracionVuelos = System.currentTimeMillis() - inicioGeneracionVuelos;
+
+        long inicioGeneracionItinerarios = System.currentTimeMillis();
+        Map<String, List<Itinerario>> itinerariosPorRuta =
+                itinerarioService.generarItinerariosPorRuta(vuelosInstanciados);
+        long tiempoGeneracionItinerarios = System.currentTimeMillis() - inicioGeneracionItinerarios;
+
+        long inicioAlgoritmo = System.currentTimeMillis();
+        SolucionRuta solucion = algoritmo.equalsIgnoreCase("TABU")
+                ? tabuSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos)
+                : graspSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos);
+        long tiempoAlgoritmo = System.currentTimeMillis() - inicioAlgoritmo;
+
+        imprimirMetricasPlanificacion(algoritmo, fechaInicio, dias, envios, vuelosBase, vuelosInstanciados,
+                aeropuertos, itinerariosPorRuta, tiempoGeneracionVuelos, tiempoGeneracionItinerarios,
+                tiempoAlgoritmo, solucion);
+
+        return solucion;
+    }
+
+    private void imprimirMetricasPlanificacion(
+            String algoritmo,
+            LocalDate fechaInicio,
+            int dias,
+            List<Envio> envios,
+            List<Vuelo> vuelosBase,
+            List<VueloInstanciado> vuelosInstanciados,
+            List<Aeropuerto> aeropuertos,
+            Map<String, List<Itinerario>> itinerariosPorRuta,
+            long tiempoGeneracionVuelos,
+            long tiempoGeneracionItinerarios,
+            long tiempoAlgoritmo,
+            SolucionRuta solucion
+    ) {
+        int totalItinerarios = itinerariosPorRuta.values().stream().mapToInt(List::size).sum();
+        int rutasConItinerarios = itinerariosPorRuta.size();
+        double promedioItinerariosPorRuta = rutasConItinerarios > 0
+                ? totalItinerarios / (double) rutasConItinerarios
+                : 0.0;
+
+        System.out.println("[METRICA PLANIFICACION] algoritmo=" + algoritmo.toUpperCase()
+                + " fechaInicio=" + fechaInicio
+                + " dias=" + dias
+                + " enviosProcesados=" + envios.size()
+                + " maletasProcesadas=" + sumarMaletas(envios)
+                + " vuelosBase=" + vuelosBase.size()
+                + " vuelosInstanciados=" + vuelosInstanciados.size()
+                + " aeropuertos=" + aeropuertos.size()
+                + " rutasConItinerarios=" + rutasConItinerarios
+                + " totalItinerarios=" + totalItinerarios
+                + " promedioItinerariosPorRuta=" + promedioItinerariosPorRuta
+                + " tiempoGeneracionVuelosMs=" + tiempoGeneracionVuelos
+                + " tiempoGeneracionItinerariosMs=" + tiempoGeneracionItinerarios
+                + " tiempoAlgoritmoMs=" + tiempoAlgoritmo
+                + " fitnessFinal=" + solucion.getFitness()
+                + " sinItinerarioCount=" + solucion.getSinItinerarioCount()
+                + " excedeSlaCount=" + solucion.getExcedeSlaCount());
+    }
+
+    private int sumarMaletas(List<Envio> envios) {
+        return envios.stream().mapToInt(Envio::getCantidadMaletas).sum();
+    }
+
     public void ejecutarPrueba() {
         LocalDate fechaInicio = LocalDate.of(2026, 2, 25);
         int cantidadDias = 5;

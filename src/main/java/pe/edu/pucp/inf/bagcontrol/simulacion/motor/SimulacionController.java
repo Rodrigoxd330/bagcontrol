@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
 
 import java.time.LocalDate;
@@ -38,6 +39,49 @@ public class SimulacionController {
         return Map.of(
                 "simulacionId", simulacionId,
                 "topic", "/topic/simulacion/" + simulacionId + "/eventos"
+        );
+    }
+
+    @PostMapping("/api/simulacion/ws/iniciar-colapso")
+    public Map<String, String> iniciarSimulacionColapso(
+            @RequestParam("fechaInicio")
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate fechaInicio,
+            @RequestParam(value = "algoritmo", defaultValue = "TABU")
+            String algoritmo,
+            @RequestParam(value = "saMs", defaultValue = "500")
+            long saMs,
+            @RequestParam(value = "maxDias", defaultValue = "30")
+            int maxDias,
+            @RequestParam(value = "tamanoCicloDias", defaultValue = "1")
+            int tamanoCicloDias,
+            @RequestParam(value = "umbralSinItinerario", defaultValue = "0.10")
+            double umbralSinItinerario,
+            @RequestParam(value = "umbralSla", defaultValue = "0.20")
+            double umbralSla,
+            @RequestParam(value = "umbralAeropuerto", defaultValue = "1.00")
+            double umbralAeropuerto,
+            @RequestParam(value = "ciclosPendientesCrecientes", defaultValue = "3")
+            int ciclosPendientesCrecientes,
+            @RequestParam(value = "ciclosSobrecargaVuelo", defaultValue = "3")
+            int ciclosSobrecargaVuelo
+    ) {
+        ConfiguracionColapsoDTO configuracion = new ConfiguracionColapsoDTO(
+                maxDias,
+                tamanoCicloDias,
+                umbralSinItinerario,
+                umbralSla,
+                umbralAeropuerto,
+                ciclosPendientesCrecientes,
+                ciclosSobrecargaVuelo
+        );
+
+        String simulacionId = simulacionManager.crearJobColapso(fechaInicio, algoritmo, saMs, configuracion);
+
+        return Map.of(
+                "simulacionId", simulacionId,
+                "topic", "/topic/simulacion/" + simulacionId + "/eventos",
+                "modo", "COLAPSO"
         );
     }
 

@@ -32,14 +32,24 @@ public class GRASPSearch {
             int maxVecinos,
             double alpha
     ) {
+        long inicio = System.currentTimeMillis();
         SolucionRuta mejorSolucion = null;
+        int iteracionesEjecutadas = 0;
+        int mejorasAceptadasLocal = 0;
+        int vecinosGenerados = 0;
+        int vecinosEvaluados = 0;
 
         Map<String, Aeropuerto> mapaAeropuertos = aeropuertos.stream()
                 .collect(Collectors.toMap(Aeropuerto::getCodigoIata, a -> a));
 
         for (int i = 0; i < iteraciones; i++) {
+            iteracionesEjecutadas++;
             SolucionRuta solucion = construirSolucion(envios, itinerariosPorRuta, mapaAeropuertos, alpha);
-            solucion = busquedaLocal(solucion, itinerariosPorRuta, mapaAeropuertos, maxVecinos);
+            ResultadoBusquedaLocal resultadoLocal = busquedaLocal(solucion, itinerariosPorRuta, mapaAeropuertos, maxVecinos);
+            solucion = resultadoLocal.solucion();
+            mejorasAceptadasLocal += resultadoLocal.mejorasAceptadas();
+            vecinosGenerados += resultadoLocal.vecinosGenerados();
+            vecinosEvaluados += resultadoLocal.vecinosEvaluados();
 
             fitnessEvaluator.evaluar(solucion, mapaAeropuertos);
 
@@ -47,6 +57,17 @@ public class GRASPSearch {
                 mejorSolucion = solucion.clonar();
             }
         }
+        long tiempoTotal = System.currentTimeMillis() - inicio;
+        System.out.println("[METRICA GRASP] enviosRecibidos=" + envios.size()
+                + " iteracionesConfiguradas=" + iteraciones
+                + " maxVecinos=" + maxVecinos
+                + " alpha=" + alpha
+                + " iteracionesEjecutadas=" + iteracionesEjecutadas
+                + " mejorFitnessFinal=" + (mejorSolucion != null ? mejorSolucion.getFitness() : 0.0)
+                + " tiempoTotalMs=" + tiempoTotal
+                + " mejorasAceptadasLocal=" + mejorasAceptadasLocal
+                + " vecinosGenerados=" + vecinosGenerados
+                + " vecinosEvaluados=" + vecinosEvaluados);
         return mejorSolucion;
     }
 
@@ -85,7 +106,7 @@ public class GRASPSearch {
         return solucion;
     }
 
-    private SolucionRuta busquedaLocal(
+    private ResultadoBusquedaLocal busquedaLocal(
             SolucionRuta solucion,
             Map<String, List<Itinerario>> itinerariosPorRuta,
             Map<String, Aeropuerto> mapaAeropuertos,
@@ -93,6 +114,9 @@ public class GRASPSearch {
     ) {
         SolucionRuta mejor = solucion.clonar();
         double mejorFitness = fitnessEvaluator.evaluar(mejor, mapaAeropuertos);
+        int mejorasAceptadas = 0;
+        int vecinosGenerados = 0;
+        int vecinosEvaluados = 0;
 
         boolean mejora = true;
         int maxIterLocal = 50;
@@ -108,14 +132,17 @@ public class GRASPSearch {
                     mapaAeropuertos,
                     maxVecinos
             );
+            vecinosGenerados += vecinos.size();
 
             for (var movimiento : vecinos) {
+                vecinosEvaluados++;
                 mejor.aplicarMovimientoDefinitivo(movimiento);
                 double fitnessCandidato = fitnessEvaluator.evaluar(mejor, mapaAeropuertos);
 
                 if (fitnessCandidato < mejorFitness) {
                     mejorFitness = fitnessCandidato;
                     mejora = true;
+                    mejorasAceptadas++;
                     break;
                 } else {
                     mejor.deshacerMovimiento(movimiento);
@@ -123,6 +150,14 @@ public class GRASPSearch {
                 }
             }
         }
-        return mejor;
+        return new ResultadoBusquedaLocal(mejor, mejorasAceptadas, vecinosGenerados, vecinosEvaluados);
+    }
+
+    private record ResultadoBusquedaLocal(
+            SolucionRuta solucion,
+            int mejorasAceptadas,
+            int vecinosGenerados,
+            int vecinosEvaluados
+    ) {
     }
 }

@@ -5,6 +5,7 @@ import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.LoteEventosDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MetricasColapsoDTO;
 
 import java.time.Instant;
 import java.util.List;
@@ -24,6 +25,11 @@ public class SimulacionState {
     private LoteEventosDTO ultimoLoteEmitido;
     private AtomicLong ultimoLoteEmitidoNumero = new AtomicLong(0);
     private AtomicLong saMs = new AtomicLong(1000);
+    private String modoSimulacion = "NORMAL";
+    private MetricasColapsoDTO metricasColapsoActuales;
+    private String estadoColapso = "NO_EVALUADO";
+    private String motivoColapso;
+    private int cicloActual;
 
     public SimulacionState(String simulacionId, long velocidadInicialMs) {
         this.simulacionId = simulacionId;

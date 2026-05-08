@@ -33,7 +33,13 @@ public class TabuSearch {
             int tenure,
             int maxVecinos
     ) {
+        long inicio = System.currentTimeMillis();
         Set<String> listaTabu = new LinkedHashSet<>();
+        int iteracionesEjecutadas = 0;
+        int vecinosGenerados = 0;
+        int vecinosEvaluados = 0;
+        int movimientosAceptados = 0;
+        int mejorasGlobales = 0;
 
         Map<String, Aeropuerto> mapaAeropuertos = aeropuertos.stream()
                 .collect(Collectors.toMap(Aeropuerto::getCodigoIata, a -> a));
@@ -45,17 +51,20 @@ public class TabuSearch {
         double mejorFitnessGlobal = actualFitness;
 
         for (int i = 0; i < iteraciones; i++) {
+            iteracionesEjecutadas++;
             List<Movimiento> vecinos = PlanificadorUtils.generarVecindario(
                     actual,
                     itinerariosPorRuta,
                     mapaAeropuertos,
                     maxVecinos
             );
+            vecinosGenerados += vecinos.size();
 
             Movimiento mejorMovimiento = null;
             double mejorFitnessVecino = Double.MAX_VALUE;
 
             for (Movimiento mov : vecinos) {
+                vecinosEvaluados++;
                 String id = mov.getIdMovimientoTabu();
 
                 actual.aplicarMovimientoDefinitivo(mov);
@@ -77,11 +86,13 @@ public class TabuSearch {
             if (mejorMovimiento == null) break;
 
             actual.aplicarMovimientoDefinitivo(mejorMovimiento);
+            movimientosAceptados++;
             actualFitness = fitnessEvaluator.evaluar(actual, mapaAeropuertos);
 
             if (actualFitness < mejorFitnessGlobal) {
                 mejor = actual.clonar();
                 mejorFitnessGlobal = actualFitness;
+                mejorasGlobales++;
             }
 
             listaTabu.add(mejorMovimiento.getIdMovimientoTabu());
@@ -92,7 +103,19 @@ public class TabuSearch {
                 it.remove();
             }
         }
-        
+
+        long tiempoTotal = System.currentTimeMillis() - inicio;
+        System.out.println("[METRICA TABU] enviosRecibidos=" + envios.size()
+                + " iteracionesConfiguradas=" + iteraciones
+                + " tenure=" + tenure
+                + " maxVecinos=" + maxVecinos
+                + " iteracionesEjecutadas=" + iteracionesEjecutadas
+                + " vecinosGenerados=" + vecinosGenerados
+                + " vecinosEvaluados=" + vecinosEvaluados
+                + " movimientosAceptados=" + movimientosAceptados
+                + " mejorasGlobales=" + mejorasGlobales
+                + " mejorFitnessFinal=" + mejorFitnessGlobal
+                + " tiempoTotalMs=" + tiempoTotal);
         return mejor;
     }
 

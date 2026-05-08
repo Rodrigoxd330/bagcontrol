@@ -8,6 +8,7 @@ import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.service.PlanificadorService;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
 
 import java.time.LocalDate;
@@ -51,6 +52,55 @@ public class SimulacionManager {
         thread.start();
 
         return simulacionId;
+    }
+
+    public String crearJobColapso(
+            LocalDate fechaInicio,
+            String algoritmo,
+            long saMs,
+            ConfiguracionColapsoDTO configuracion
+    ) {
+        validarConfiguracionColapso(saMs, configuracion);
+
+        String simulacionId = UUID.randomUUID().toString();
+        SimulacionJob job = new SimulacionJob(
+                simulacionId,
+                fechaInicio,
+                configuracion.getMaxDias(),
+                algoritmo,
+                saMs,
+                planificadorService,
+                aeropuertoRepository,
+                webSocketPublisher,
+                configuracion
+        );
+
+        trabajosActivos.put(simulacionId, job);
+        Thread thread = new Thread(job, "simulacion-colapso-" + simulacionId);
+        job.asignarHilo(thread);
+        thread.start();
+
+        return simulacionId;
+    }
+
+    private void validarConfiguracionColapso(long saMs, ConfiguracionColapsoDTO configuracion) {
+        if (saMs < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La velocidad no puede ser negativa.");
+        }
+        if (configuracion.getMaxDias() <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "maxDias debe ser mayor que 0.");
+        }
+        if (configuracion.getTamanoCicloDias() <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "tamanoCicloDias debe ser mayor que 0.");
+        }
+        if (configuracion.getUmbralSinItinerario() < 0 || configuracion.getUmbralSla() < 0
+                || configuracion.getUmbralAeropuerto() < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Los umbrales no pueden ser negativos.");
+        }
+        if (configuracion.getCiclosPendientesCrecientes() <= 0
+                || configuracion.getCiclosSobrecargaVuelo() <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Los ciclos consecutivos deben ser mayores que 0.");
+        }
     }
 
     public void detenerJob(String simulacionId) {
