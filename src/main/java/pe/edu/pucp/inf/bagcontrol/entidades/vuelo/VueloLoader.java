@@ -31,7 +31,7 @@ public class VueloLoader implements CommandLineRunner{
     @Override
     public void run(String... args) throws Exception{
         System.out.println("==================================================");
-        System.out.println("✈️ 1. Iniciando carga de Vuelos desde archivo...");
+        System.out.println("✈️ 2. Iniciando carga de Vuelos desde archivo...");
         System.out.println("==================================================");
 
         List<Vuelo> vuelosNuevos = new ArrayList<>();
@@ -42,7 +42,6 @@ public class VueloLoader implements CommandLineRunner{
 
             String line;
             while ((line = br.readLine())!=null) {
-                System.out.println(line);
                 String[] params = line.split("-");
                 vuelosNuevos.add(new Vuelo(params[0], params[1],
                         LocalTime.parse(params[2]),

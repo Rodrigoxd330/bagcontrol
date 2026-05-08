@@ -63,30 +63,9 @@ public class EnvioLoader implements CommandLineRunner {
                 zis.closeEntry();
             }
         }
-
         long finTiempo = System.currentTimeMillis();
         System.out.println("✅ Carga finalizada: " + totalEnvios + " envíos indexados en el TreeMap.");
         System.out.println("⏱️ Tiempo de carga: " + (finTiempo - inicioTiempo) + " ms");
-        System.out.println("==================================================\n");
-
-        System.out.println("\n🔍 PRUEBA DE VENTANA DE TIEMPO (K-Simulación):");
-
-        // Definimos la ventana: Del 2 de Enero 2025 a las 00:00 hasta las 04:00 (4 horas)
-        LocalDateTime inicioSimulado = LocalDateTime.of(2026, 2, 2, 0, 0);
-        LocalDateTime finSimulado = inicioSimulado.plusHours(6);
-
-        long inicioBusqueda = System.nanoTime(); // Usamos nanoTime porque será instantáneo
-        List<Envio> rafagaEnvios = envioDataStore.obtenerEnviosEnVentana(inicioSimulado, finSimulado);
-        long finBusqueda = System.nanoTime();
-
-        System.out.println("Buscando maletas entre " + inicioSimulado + " y " + finSimulado);
-        System.out.println("⚡ Tiempo de extracción: " + (finBusqueda - inicioBusqueda) / 1_000_000.0 + " ms");
-        System.out.println("📦 Total de maletas a planificar en este salto: " + rafagaEnvios.size());
-
-        if (!rafagaEnvios.isEmpty()) {
-            System.out.println("\nPrimer envío de la ráfaga: " + rafagaEnvios.get(0));
-            System.out.println("Último envío de la ráfaga: " + rafagaEnvios.get(rafagaEnvios.size() - 1));
-        }
         System.out.println("==================================================\n");
     }
 
