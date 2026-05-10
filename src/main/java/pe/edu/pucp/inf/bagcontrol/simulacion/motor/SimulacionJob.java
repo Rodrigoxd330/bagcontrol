@@ -9,7 +9,12 @@ import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.service.PlanificadorService;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MetricasColapsoDTO;
-import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.*;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoAeropuertoDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoBaseDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoCicloColapsoDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoColapsoDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.LoteEventosDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.TipoEvento;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -60,6 +65,7 @@ public class SimulacionJob implements Runnable {
         this.configuracionColapso = configuracionColapso;
 
         this.state = new SimulacionState(simulacionId, saMs);
+        this.state.setModoSimulacion(configuracionColapso != null ? "COLAPSO" : "NORMAL");
         this.state.setTiempoSimuladoActual(fechaInicio.atStartOfDay().toInstant(ZoneOffset.UTC));
         this.mutator = new SimulacionStateMutator(this.state, aeropuertoRepository);
         this.eventosFactory = new SimulacionEventosFactory(configuracionColapso);
@@ -89,31 +95,40 @@ public class SimulacionJob implements Runnable {
             publicarControl(TipoEvento.ERROR);
         } finally {
             long totalMs = System.currentTimeMillis() - inicioProceso;
-            System.out.println("[PERFORMANCE] Simulación finalizada. Tiempo total de CPU: " + totalMs + "ms");
+            System.out.println("[PERFORMANCE] Simulacion finalizada. Tiempo total de CPU: " + totalMs + "ms");
         }
     }
 
     private void ejecutarModoNormal() {
+        long inicioCargaSimulacion = System.currentTimeMillis();
+        LocalDate fechaFin = fechaInicio.plusDays(cantidadDias);
+
         publicarControl(TipoEvento.SIMULACION_INICIADA);
         verificarDetencion();
 
         mutator.inicializarAeropuertos();
+        int inventarioInicialTotal = calcularInventarioTotal();
         publicarLoteAeropuertos(state.getAeropuertosSnapshot().values().stream().toList(), "Estado inicial");
+        long tiempoHastaPrimerLoteMs = System.currentTimeMillis() - inicioCargaSimulacion;
 
-        // MEDICIÓN FASE 1: Planificación inicial
         long t1 = System.currentTimeMillis();
         SolucionRuta solucion = planificadorService.calcularSolucion(algoritmo, fechaInicio, cantidadDias);
         long tPlanificacion = System.currentTimeMillis() - t1;
-        System.out.println("[PERFORMANCE] Fase 1 (Planificación Global) tomó: " + tPlanificacion + "ms");
+        System.out.println("[PERFORMANCE] Fase 1 (Planificacion Global) tomo: " + tPlanificacion + "ms");
 
         state.setSolucionActual(solucion);
-        mutator.cargarMaletasInicialesEnOrigenes(solucion);
         mutator.indexarEnviosPorVuelo(solucion);
+
+        int enviosCargadosVentana = solucion.getAsignaciones().size();
+        int maletasCargadasVentana = sumarMaletasSolucion(solucion);
+        imprimirMetricasCargaSimulacion(
+                "NORMAL", fechaInicio, fechaFin, enviosCargadosVentana, maletasCargadasVentana,
+                0, inventarioInicialTotal, tiempoHastaPrimerLoteMs, tPlanificacion, -1L
+        );
 
         publicarControl(TipoEvento.PLAN_GENERADO);
         List<SimulacionEventosFactory.EventoProgramado> lineaDeTiempo = eventosFactory.generarLineaDeTiempo(solucion);
 
-        // FASE 2: Motor de Batches
         double minutosRealesPorIteracion = state.getVelocidadMs() / 60000.0;
         long minutosPorBatch = Math.max(1, Math.round(minutosRealesPorIteracion * k));
         long totalMinutosSimulacion = cantidadDias * 24L * 60L;
@@ -121,6 +136,7 @@ public class SimulacionJob implements Runnable {
 
         LocalDateTime ventanaInicio = fechaInicio.atStartOfDay();
         int indiceEvento = 0;
+        long tiempoHastaPrimerEventoMovimientoMs = -1L;
 
         for (long batchActual = 0; batchActual < totalBatches; batchActual++) {
             long inicioBatchReal = System.currentTimeMillis();
@@ -142,16 +158,30 @@ public class SimulacionJob implements Runnable {
             }
 
             publicarLote(eventosDelLote, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
+            if (tiempoHastaPrimerEventoMovimientoMs < 0 && !eventosDelLote.isEmpty()) {
+                tiempoHastaPrimerEventoMovimientoMs = System.currentTimeMillis() - inicioCargaSimulacion;
+                imprimirMetricasCargaSimulacion(
+                        "NORMAL", fechaInicio, fechaFin, enviosCargadosVentana, maletasCargadasVentana,
+                        0, inventarioInicialTotal, tiempoHastaPrimerLoteMs, tPlanificacion,
+                        tiempoHastaPrimerEventoMovimientoMs
+                );
+            }
             ventanaInicio = ventanaFin;
 
             long duracionBatchReal = System.currentTimeMillis() - inicioBatchReal;
-
-            // ADVERTENCIA DE TIEMPO REAL
             if (duracionBatchReal > state.getVelocidadMs()) {
-                System.err.println("[WARNING] El procesamiento del lote #" + (batchActual+1) + " tardó " + duracionBatchReal + "ms, excediendo el saMs de " + state.getVelocidadMs() + "ms. Se producirá LAG.");
+                System.err.println("[WARNING] El procesamiento del lote #" + (batchActual + 1) + " tardo "
+                        + duracionBatchReal + "ms, excediendo el saMs de " + state.getVelocidadMs() + "ms.");
             }
 
             dormir(state.getVelocidadMs());
+        }
+
+        if (tiempoHastaPrimerEventoMovimientoMs < 0) {
+            imprimirMetricasCargaSimulacion(
+                    "NORMAL", fechaInicio, fechaFin, enviosCargadosVentana, maletasCargadasVentana,
+                    0, inventarioInicialTotal, tiempoHastaPrimerLoteMs, tPlanificacion, -1L
+            );
         }
 
         state.setEstado("FINALIZADA");
@@ -159,10 +189,16 @@ public class SimulacionJob implements Runnable {
     }
 
     private void ejecutarModoColapso() {
+        long inicioCargaSimulacion = System.currentTimeMillis();
+
         publicarControl(TipoEvento.SIMULACION_INICIADA);
         verificarDetencion();
 
         mutator.inicializarAeropuertos();
+        int inventarioInicialTotal = calcularInventarioTotal();
+        publicarLoteAeropuertos(state.getAeropuertosSnapshot().values().stream().toList(), "Estado inicial colapso");
+        long tiempoHastaPrimerLoteMs = System.currentTimeMillis() - inicioCargaSimulacion;
+
         List<Envio> pendientes = new ArrayList<>();
         int ciclo = 0;
         int diaOffset = 0;
@@ -183,11 +219,10 @@ public class SimulacionJob implements Runnable {
             List<Envio> enviosAProcesar = new ArrayList<>(pendientes);
             enviosAProcesar.addAll(nuevos);
 
-            // MEDICIÓN: Replanificación iterativa
             long t1 = System.currentTimeMillis();
             SolucionRuta solucion = planificadorService.calcularSolucionParaEnvios(algoritmo, ventanaInicio, 1, enviosAProcesar);
             long tAlgoritmoCiclo = System.currentTimeMillis() - t1;
-            System.out.println("[PERFORMANCE] Ciclo #" + ciclo + ": Algoritmo tardó " + tAlgoritmoCiclo + "ms");
+            System.out.println("[PERFORMANCE] Ciclo #" + ciclo + ": Algoritmo tardo " + tAlgoritmoCiclo + "ms");
 
             state.setSolucionActual(solucion);
             mutator.indexarEnviosPorVuelo(solucion);
@@ -196,18 +231,41 @@ public class SimulacionJob implements Runnable {
                     .filter(a -> a.getItinerario() == null)
                     .map(RutaAsignada::getEnvio).toList();
 
-            MetricasColapsoDTO metricas = eventosFactory.calcularMetricasColapso(ciclo, ventanaInicio, ventanaFin, nuevos, pendientes, enviosAProcesar, solucion, state.getAeropuertosSnapshot());
+            MetricasColapsoDTO metricas = eventosFactory.calcularMetricasColapso(
+                    ciclo, ventanaInicio, ventanaFin, nuevos, pendientes, enviosAProcesar, solucion,
+                    state.getAeropuertosSnapshot()
+            );
             List<String> criterios = eventosFactory.detectarCriteriosColapso(metricas);
 
             mutator.actualizarInventarioDesdeSolucionColapso(solucion);
             state.setMetricasColapsoActuales(metricas);
 
-            publicarLote(List.of(new EventoCicloColapsoDTO(LocalDateTime.now().toString(), metricas)), state.getTiempoSimuladoActual(), ventanaFin.atStartOfDay().toInstant(ZoneOffset.UTC));
+            publicarLote(
+                    List.of(new EventoCicloColapsoDTO(LocalDateTime.now().toString(), metricas)),
+                    state.getTiempoSimuladoActual(),
+                    ventanaFin.atStartOfDay().toInstant(ZoneOffset.UTC)
+            );
+
+            long tiempoHastaPrimerEventoMovimientoMs = ciclo == 1
+                    ? System.currentTimeMillis() - inicioCargaSimulacion
+                    : -1L;
+            imprimirMetricasCargaSimulacion(
+                    "COLAPSO", ventanaInicio, ventanaFin, nuevos.size(), sumarMaletas(nuevos),
+                    pendientes.size(), inventarioInicialTotal, tiempoHastaPrimerLoteMs, tAlgoritmoCiclo,
+                    tiempoHastaPrimerEventoMovimientoMs
+            );
 
             if (!criterios.isEmpty()) {
                 state.setEstadoColapso("COLAPSO_DETECTADO");
                 state.setMotivoColapso(criterios.get(0));
-                publicarLote(List.of(new EventoColapsoDTO(LocalDateTime.now().toString(), simulacionId, state.getTiempoSimuladoActual().toString(), ciclo, criterios.get(0), criterios, metricas)), state.getTiempoSimuladoActual(), state.getTiempoSimuladoActual());
+                publicarLote(
+                        List.of(new EventoColapsoDTO(
+                                LocalDateTime.now().toString(), simulacionId, state.getTiempoSimuladoActual().toString(),
+                                ciclo, criterios.get(0), criterios, metricas
+                        )),
+                        state.getTiempoSimuladoActual(),
+                        state.getTiempoSimuladoActual()
+                );
                 state.setEstado("FINALIZADA");
                 publicarControl(TipoEvento.SIMULACION_FINALIZADA);
                 return;
@@ -215,7 +273,7 @@ public class SimulacionJob implements Runnable {
 
             long duracionTotalCiclo = System.currentTimeMillis() - inicioCicloReal;
             if (duracionTotalCiclo > state.getVelocidadMs()) {
-                System.err.println("[WARNING] El ciclo de colapso #" + ciclo + " tardó " + duracionTotalCiclo + "ms. ¡Es mayor que el saMs!");
+                System.err.println("[WARNING] El ciclo de colapso #" + ciclo + " tardo " + duracionTotalCiclo + "ms.");
             }
 
             esperarConControl();
@@ -226,7 +284,6 @@ public class SimulacionJob implements Runnable {
         publicarControl(TipoEvento.SIMULACION_FINALIZADA);
     }
 
-    // El resto de métodos auxiliares (procesarEventoProgramado, dormir, etc.) se mantienen igual...
     private void procesarEventoProgramado(SimulacionEventosFactory.EventoProgramado eventoProgramado, List<EventoBaseDTO> eventos) {
         SimulacionEventosFactory.VueloAgrupado vuelo = eventoProgramado.vuelo();
         if (eventoProgramado.tipo() == TipoEvento.VUELO_DESPEGA) {
@@ -243,7 +300,9 @@ public class SimulacionJob implements Runnable {
     private void agregarEventoAeropuerto(List<EventoBaseDTO> eventos, String codigoIata, TipoEvento tipoEvento) {
         Aeropuerto aeropuerto = state.getAeropuertosSnapshot().get(codigoIata);
         if (aeropuerto == null) return;
-        EventoAeropuertoDTO evento = eventosFactory.crearEventoAeropuerto(aeropuerto, state.getInventarioSnapshot().getOrDefault(codigoIata, 0));
+        EventoAeropuertoDTO evento = eventosFactory.crearEventoAeropuerto(
+                aeropuerto, state.getInventarioSnapshot().getOrDefault(codigoIata, 0)
+        );
         evento.setTipo(tipoEvento);
         eventos.add(evento);
     }
@@ -251,7 +310,9 @@ public class SimulacionJob implements Runnable {
     private void publicarLoteAeropuertos(List<Aeropuerto> aeropuertos, String estado) {
         List<EventoBaseDTO> eventos = new ArrayList<>();
         for (Aeropuerto aeropuerto : aeropuertos) {
-            EventoAeropuertoDTO evento = eventosFactory.crearEventoAeropuerto(aeropuerto, state.getInventarioSnapshot().getOrDefault(aeropuerto.getCodigoIata(), 0));
+            EventoAeropuertoDTO evento = eventosFactory.crearEventoAeropuerto(
+                    aeropuerto, state.getInventarioSnapshot().getOrDefault(aeropuerto.getCodigoIata(), 0)
+            );
             evento.setMensaje(estado);
             eventos.add(evento);
         }
@@ -266,9 +327,54 @@ public class SimulacionJob implements Runnable {
 
     private void publicarLote(List<EventoBaseDTO> eventos, Instant ventanaInicio, Instant ventanaFin) {
         if (eventos.isEmpty()) return;
-        LoteEventosDTO lote = new LoteEventosDTO(simulacionId, state.siguienteLote(), ventanaInicio != null ? ventanaInicio.toString() : null, ventanaFin != null ? ventanaFin.toString() : null, eventos.size(), eventos);
+        LoteEventosDTO lote = new LoteEventosDTO(
+                simulacionId, state.siguienteLote(),
+                ventanaInicio != null ? ventanaInicio.toString() : null,
+                ventanaFin != null ? ventanaFin.toString() : null,
+                eventos.size(), eventos
+        );
         state.setUltimoLoteEmitido(lote);
         webSocketPublisher.publicarLote(simulacionId, lote);
+    }
+
+    private void imprimirMetricasCargaSimulacion(
+            String modo,
+            LocalDate fechaInicioMetrica,
+            LocalDate fechaFinMetrica,
+            int enviosCargadosVentana,
+            int maletasCargadasVentana,
+            int enviosPendientesAcumulados,
+            int inventarioInicialTotal,
+            long tiempoHastaPrimerLoteMs,
+            long tiempoCalculoPlanificacionMs,
+            long tiempoHastaPrimerEventoMovimientoMs
+    ) {
+        System.out.println("[METRICA CARGA SIMULACION] simulacionId=" + simulacionId
+                + " modo=" + modo
+                + " fechaInicio=" + fechaInicioMetrica
+                + " fechaFin=" + fechaFinMetrica
+                + " enviosCargadosVentana=" + enviosCargadosVentana
+                + " maletasCargadasVentana=" + maletasCargadasVentana
+                + " enviosPendientesAcumulados=" + enviosPendientesAcumulados
+                + " inventarioInicialTotal=" + inventarioInicialTotal
+                + " tiempoHastaPrimerLoteMs=" + tiempoHastaPrimerLoteMs
+                + " tiempoCalculoPlanificacionMs=" + tiempoCalculoPlanificacionMs
+                + " tiempoHastaPrimerEventoMovimientoMs=" + tiempoHastaPrimerEventoMovimientoMs);
+    }
+
+    private int calcularInventarioTotal() {
+        return state.getInventarioSnapshot().values().stream().mapToInt(Integer::intValue).sum();
+    }
+
+    private int sumarMaletasSolucion(SolucionRuta solucion) {
+        return solucion.getAsignaciones().stream()
+                .map(RutaAsignada::getEnvio)
+                .mapToInt(Envio::getCantidadMaletas)
+                .sum();
+    }
+
+    private int sumarMaletas(List<Envio> envios) {
+        return envios.stream().mapToInt(Envio::getCantidadMaletas).sum();
     }
 
     private void esperarConControl() {
@@ -301,12 +407,15 @@ public class SimulacionJob implements Runnable {
     }
 
     private boolean esTerminal() {
-        return "FINALIZADA".equals(state.getEstado()) || "DETENIDA".equals(state.getEstado()) || "ERROR".equals(state.getEstado());
+        return "FINALIZADA".equals(state.getEstado())
+                || "DETENIDA".equals(state.getEstado())
+                || "ERROR".equals(state.getEstado());
     }
 
     private void dormir(long ms) {
-        try { Thread.sleep(ms); }
-        catch (InterruptedException e) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             if (detenida.get()) throw new SimulacionDetenidaException();
         }
@@ -338,9 +447,17 @@ public class SimulacionJob implements Runnable {
         publicarControl(TipoEvento.VELOCIDAD_CAMBIADA);
     }
 
-    public boolean estaPausada() { return pausada.get(); }
-    public boolean estaDetenida() { return detenida.get(); }
-    public LocalDateTime getFechaCreacion() { return fechaCreacion; }
+    public boolean estaPausada() {
+        return pausada.get();
+    }
+
+    public boolean estaDetenida() {
+        return detenida.get();
+    }
+
+    public LocalDateTime getFechaCreacion() {
+        return fechaCreacion;
+    }
 
     private static class SimulacionDetenidaException extends RuntimeException {}
 }

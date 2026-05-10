@@ -36,6 +36,8 @@ public class SimulacionStateMutator {
     }
 
     public void cargarMaletasInicialesEnOrigenes(SolucionRuta solucion) {
+        // Legacy: no se usa en el modo normal WebSocket porque infla el inventario inicial
+        // con todos los envios de la ventana. Mantener solo para flujos que pidan precarga.
         for (RutaAsignada asignacion : solucion.getAsignaciones()) {
             if (asignacion.getItinerario() == null) continue;
             String origen = asignacion.getEnvio().getOrigenIata();
