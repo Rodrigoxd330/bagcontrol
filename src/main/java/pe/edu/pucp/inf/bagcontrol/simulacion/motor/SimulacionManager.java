@@ -12,6 +12,7 @@ import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
 
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -20,87 +21,51 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class SimulacionManager {
 
+
+
     private final PlanificadorService planificadorService;
     private final AeropuertoRepository aeropuertoRepository;
     private final WebSocketPublisher webSocketPublisher;
 
     private final ConcurrentHashMap<String, SimulacionJob> trabajosActivos = new ConcurrentHashMap<>();
 
-    public String crearJob(LocalDate fechaInicio, int k, String algoritmo, long saMs) {
-        if (k <= 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La cantidad de dias debe ser mayor que 0.");
-        }
-        if (saMs < 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La velocidad no puede ser negativa.");
-        }
-
+    /*
+    * Crea los hilos de ejecución de la simulación
+    * */
+    public String crearJob(LocalDate fechaInicio, LocalDate fechaFin, int k, String algoritmo) {
         String simulacionId = UUID.randomUUID().toString();
-        SimulacionJob job = new SimulacionJob(
-                simulacionId,
-                fechaInicio,
-                k,
-                algoritmo,
-                saMs,
-                planificadorService,
-                aeropuertoRepository,
-                webSocketPublisher
-        );
+        SimulacionJob job;
 
+        if (fechaFin == null) {
+            // Escenario 3: Colapso
+            ConfiguracionColapsoDTO configColapso = crearConfiguracionColapsoPorDefecto();
+            job = new SimulacionJob(
+                    simulacionId, fechaInicio, null ,k, algoritmo, // fechaFin es null
+                    planificadorService, aeropuertoRepository, webSocketPublisher, configColapso
+            );
+        } else {
+            // Escenario 1 y 2: Normal
+            if (fechaInicio.isAfter(fechaFin) || fechaInicio.isEqual(fechaFin)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La fecha fin debe ser mayor a la fecha inicio.");
+            }
+            // Pasamos AMBOS: fechaFin (para saber cuándo parar) y k (tamaño del lote)
+            job = new SimulacionJob(
+                    simulacionId, fechaInicio, (int) ChronoUnit.DAYS.between(fechaInicio, fechaFin), k, algoritmo,
+                    planificadorService, aeropuertoRepository, webSocketPublisher, null // Sin config de colapso
+            );
+        }
         trabajosActivos.put(simulacionId, job);
         Thread thread = new Thread(job, "simulacion-" + simulacionId);
         job.asignarHilo(thread);
         thread.start();
-
         return simulacionId;
     }
 
-    public String crearJobColapso(
-            LocalDate fechaInicio,
-            String algoritmo,
-            long saMs,
-            ConfiguracionColapsoDTO configuracion
-    ) {
-        validarConfiguracionColapso(saMs, configuracion);
-
-        String simulacionId = UUID.randomUUID().toString();
-        SimulacionJob job = new SimulacionJob(
-                simulacionId,
-                fechaInicio,
-                configuracion.getMaxDias(),
-                algoritmo,
-                saMs,
-                planificadorService,
-                aeropuertoRepository,
-                webSocketPublisher,
-                configuracion
-        );
-
-        trabajosActivos.put(simulacionId, job);
-        Thread thread = new Thread(job, "simulacion-colapso-" + simulacionId);
-        job.asignarHilo(thread);
-        thread.start();
-
-        return simulacionId;
-    }
-
-    private void validarConfiguracionColapso(long saMs, ConfiguracionColapsoDTO configuracion) {
-        if (saMs < 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La velocidad no puede ser negativa.");
-        }
-        if (configuracion.getMaxDias() <= 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "maxDias debe ser mayor que 0.");
-        }
-        if (configuracion.getTamanoCicloDias() <= 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "tamanoCicloDias debe ser mayor que 0.");
-        }
-        if (configuracion.getUmbralSinItinerario() < 0 || configuracion.getUmbralSla() < 0
-                || configuracion.getUmbralAeropuerto() < 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Los umbrales no pueden ser negativos.");
-        }
-        if (configuracion.getCiclosPendientesCrecientes() <= 0
-                || configuracion.getCiclosSobrecargaVuelo() <= 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Los ciclos consecutivos deben ser mayores que 0.");
-        }
+    private ConfiguracionColapsoDTO crearConfiguracionColapsoPorDefecto() {
+        double umbralSinItinerario = 0.10;
+        double umbralSLA = 0.00;
+        double umbralAeropuerto = 1.00;
+        return new ConfiguracionColapsoDTO(umbralSinItinerario,umbralSLA,umbralAeropuerto);
     }
 
     public void detenerJob(String simulacionId) {

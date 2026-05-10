@@ -7,12 +7,10 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
+
+//UMBRALES EXCLUSIVAMENTE PARA REALIZAR PRUEBAS DE HASTA DONDE LLEGA EL ALGORITMO
 public class ConfiguracionColapsoDTO {
-    private int maxDias;
-    private int tamanoCicloDias;
     private double umbralSinItinerario;
     private double umbralSla;
     private double umbralAeropuerto;
-    private int ciclosPendientesCrecientes;
-    private int ciclosSobrecargaVuelo;
 }

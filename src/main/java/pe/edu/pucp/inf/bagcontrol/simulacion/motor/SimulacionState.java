@@ -4,7 +4,7 @@ import lombok.Data;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
-import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.LoteEventosDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.LoteEventosDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MetricasColapsoDTO;
 
 import java.time.Instant;

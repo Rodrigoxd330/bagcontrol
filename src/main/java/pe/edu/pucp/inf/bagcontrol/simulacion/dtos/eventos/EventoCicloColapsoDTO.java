@@ -1,9 +1,10 @@
-package pe.edu.pucp.inf.bagcontrol.simulacion.dtos;
+package pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MetricasColapsoDTO;
 
 @Data
 @NoArgsConstructor

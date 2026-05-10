@@ -3,7 +3,7 @@ package pe.edu.pucp.inf.bagcontrol.simulacion.motor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
-import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.LoteEventosDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.LoteEventosDTO;
 
 @Component
 @RequiredArgsConstructor

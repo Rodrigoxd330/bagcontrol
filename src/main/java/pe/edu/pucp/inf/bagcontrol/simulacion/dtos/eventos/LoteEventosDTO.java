@@ -1,4 +1,4 @@
-package pe.edu.pucp.inf.bagcontrol.simulacion.dtos;
+package pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
