@@ -1,6 +1,6 @@
 package pe.edu.pucp.inf.bagcontrol.simulacion.motor;
 
-import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.model.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;

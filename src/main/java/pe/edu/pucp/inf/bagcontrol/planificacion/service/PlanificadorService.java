@@ -2,8 +2,8 @@ package pe.edu.pucp.inf.bagcontrol.planificacion.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
-import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.model.Aeropuerto;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.repo.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.EnvioDataStore;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.Vuelo;

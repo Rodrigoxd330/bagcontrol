@@ -1,4 +1,4 @@
-package pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto;
+package pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.model;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;

@@ -4,7 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
-import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.repo.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.service.PlanificadorService;
@@ -29,22 +29,17 @@ public class SimulacionManager {
 
     private final ConcurrentHashMap<String, SimulacionJob> trabajosActivos = new ConcurrentHashMap<>();
 
-    /*
-    * Crea los hilos de ejecución de la simulación
-    * */
     public String crearJob(LocalDate fechaInicio, LocalDate fechaFin, int k, String algoritmo) {
         String simulacionId = UUID.randomUUID().toString();
         SimulacionJob job;
 
         if (fechaFin == null) {
-            // Escenario 3: Colapso
             ConfiguracionColapsoDTO configColapso = crearConfiguracionColapsoPorDefecto();
             job = new SimulacionJob(
                     simulacionId, fechaInicio, null ,k, algoritmo, // fechaFin es null
                     planificadorService, aeropuertoRepository, webSocketPublisher, configColapso
             );
         } else {
-            // Escenario 1 y 2: Normal
             if (fechaInicio.isAfter(fechaFin) || fechaInicio.isEqual(fechaFin)) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La fecha fin debe ser mayor a la fecha inicio.");
             }
@@ -55,10 +50,18 @@ public class SimulacionManager {
             );
         }
         trabajosActivos.put(simulacionId, job);
+
+        return simulacionId;
+    }
+
+    public void arrancarJob(String simulacionId) {
+        SimulacionJob job = trabajosActivos.get(simulacionId);
+        if (job == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Simulación no encontrada: " + simulacionId);
+        }
         Thread thread = new Thread(job, "simulacion-" + simulacionId);
         job.asignarHilo(thread);
         thread.start();
-        return simulacionId;
     }
 
     private ConfiguracionColapsoDTO crearConfiguracionColapsoPorDefecto() {

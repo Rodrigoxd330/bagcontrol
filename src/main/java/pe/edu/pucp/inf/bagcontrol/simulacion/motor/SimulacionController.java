@@ -24,8 +24,8 @@ public class SimulacionController {
      * Escenario 5 días: Fecha fin - fecha inicio = 5 días
      * Esenario colapso: Fecha Fin = null
      */
-    @PostMapping("/iniciar")
-    public RespuestaInicioSimulacionDTO iniciarSimulacion(
+    @PostMapping("/preparar")
+    public RespuestaInicioSimulacionDTO preparaSimulacion(
             @RequestParam("fechaInicio")
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaInicio,
 
@@ -39,8 +39,17 @@ public class SimulacionController {
         String simulacionId = simulacionManager.crearJob(fechaInicio, fechaFin, k, algoritmo);
         String modo = (fechaFin == null) ? "COLAPSO" : "ESTANDAR";
         String topic = "/topic/simulacion/" + simulacionId + "/eventos";
+
         return new RespuestaInicioSimulacionDTO(simulacionId, topic, modo);
     }
+
+    @PostMapping("/iniciar/{simulacionId}/arrancar")
+    public Map<String, String> iniciarSimulacion(@PathVariable String simulacionId) {
+        simulacionManager.arrancarJob(simulacionId);
+        return Map.of("mensaje", "Simulación en marcha");
+    }
+
+
 
     @PostMapping("/{simulacionId}/pausar")
     public Map<String, String> pausar(@PathVariable String simulacionId) {
