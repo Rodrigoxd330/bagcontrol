@@ -54,26 +54,26 @@ public class SimulacionController {
     @PostMapping("/{simulacionId}/pausar")
     public Map<String, String> pausar(@PathVariable String simulacionId) {
         simulacionManager.pausarJob(simulacionId);
-        return Map.of("estado", "PAUSADA", "mensaje", "Simulación pausada");
+        return Map.of("estado", "PAUSADA", "mensaje", "Simulacion pausada");
     }
 
     @PostMapping("/{simulacionId}/reanudar")
     public Map<String, String> reanudar(@PathVariable String simulacionId) {
         simulacionManager.reanudarJob(simulacionId);
-        return Map.of("estado", "EN_PROCESO", "mensaje", "Simulación reanudada");
+        return Map.of("estado", "EN_PROCESO", "mensaje", "Simulacion reanudada");
     }
 
     @PostMapping("/{simulacionId}/detener")
     public Map<String, String> detener(@PathVariable String simulacionId) {
         simulacionManager.detenerJob(simulacionId);
-        return Map.of("estado", "DETENIDA", "mensaje", "Simulación abortada");
+        return Map.of("estado", "DETENIDA", "mensaje", "Simulacion abortada");
     }
 
     // Opcional: Solo si implementas botón de cámara rápida en el front
     @PostMapping("/{simulacionId}/velocidad")
     public Map<String, String> cambiarVelocidad(
             @PathVariable String simulacionId,
-            @RequestParam("multiplicador") int multiplicador // ej: 1x, 2x, 5x
+            @RequestParam("multiplicador") int multiplicador
     ) {
         simulacionManager.cambiarVelocidad(simulacionId, multiplicador);
         return Map.of("mensaje", "Velocidad actualizada a " + multiplicador + "x");

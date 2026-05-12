@@ -9,6 +9,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class RespuestaInicioSimulacionDTO {
     private String simulacionId;
+    private String topic;
     private String websocketTopic;
     private String modo;
 }

@@ -4,7 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
-import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.repo.AeropuertoRepository;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.service.PlanificadorService;
@@ -68,7 +68,7 @@ public class SimulacionManager {
         double umbralSinItinerario = 0.10;
         double umbralSLA = 0.00;
         double umbralAeropuerto = 1.00;
-        return new ConfiguracionColapsoDTO(umbralSinItinerario,umbralSLA,umbralAeropuerto);
+        return new ConfiguracionColapsoDTO(umbralSinItinerario, umbralSLA, umbralAeropuerto);
     }
 
     public void detenerJob(String simulacionId) {
