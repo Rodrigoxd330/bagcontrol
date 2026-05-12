@@ -2,7 +2,7 @@ package pe.edu.pucp.inf.bagcontrol.planificacion.algoritmo;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
-import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.model.Aeropuerto;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.evaluacion.FitnessEvaluator;

@@ -1,7 +1,7 @@
 package pe.edu.pucp.inf.bagcontrol.planificacion.evaluacion;
 
 import org.springframework.stereotype.Component;
-import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.model.Aeropuerto;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.Itinerario;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;

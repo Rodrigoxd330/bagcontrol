@@ -4,7 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
-import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.repo.AeropuertoRepository;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.service.PlanificadorService;
@@ -36,36 +36,31 @@ public class SimulacionManager {
 
     public String crearJobColapso(LocalDate fechaInicio, int k, String algoritmo) {
         String simulacionId = UUID.randomUUID().toString();
-        SimulacionJob job;
-
-        if (fechaFin == null) {
-            // Escenario 3: Colapso
-            ConfiguracionColapsoDTO configColapso = crearConfiguracionColapsoPorDefecto();
-            job = new SimulacionJob(
-                    simulacionId, fechaInicio, null ,k, algoritmo, // fechaFin es null
-                    planificadorService, aeropuertoRepository, webSocketPublisher, configColapso
-            );
-        } else {
-            // Escenario 1 y 2: Normal
-            if (fechaInicio.isAfter(fechaFin) || fechaInicio.isEqual(fechaFin)) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La fecha fin debe ser mayor a la fecha inicio.");
-            }
-            // Pasamos AMBOS: fechaFin (para saber cuándo parar) y k (tamaño del lote)
-            job = new SimulacionJob(
-                    simulacionId, fechaInicio, (int) ChronoUnit.DAYS.between(fechaInicio, fechaFin), k, algoritmo,
-                    planificadorService, aeropuertoRepository, webSocketPublisher, null // Sin config de colapso
-            );
-        }
-        trabajosActivos.put(simulacionId, job);
-
+        ConfiguracionColapsoDTO configColapso = crearConfiguracionColapsoPorDefecto();
+        SimulacionJob job = new SimulacionJob(
+                simulacionId, fechaInicio, null, k, algoritmo,
+                planificadorService, aeropuertoRepository, webSocketPublisher, configColapso
+        );
+        iniciarJob(simulacionId, job);
         return simulacionId;
     }
 
-    public void arrancarJob(String simulacionId) {
-        SimulacionJob job = trabajosActivos.get(simulacionId);
-        if (job == null) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Simulación no encontrada: " + simulacionId);
+    private String crearJobNormal(LocalDate fechaInicio, LocalDate fechaFin, int k, String algoritmo) {
+        if (fechaInicio.isAfter(fechaFin) || fechaInicio.isEqual(fechaFin)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La fecha fin debe ser mayor a la fecha inicio.");
         }
+
+        String simulacionId = UUID.randomUUID().toString();
+        SimulacionJob job = new SimulacionJob(
+                simulacionId, fechaInicio, (int) ChronoUnit.DAYS.between(fechaInicio, fechaFin), k, algoritmo,
+                planificadorService, aeropuertoRepository, webSocketPublisher, null
+        );
+        iniciarJob(simulacionId, job);
+        return simulacionId;
+    }
+
+    private void iniciarJob(String simulacionId, SimulacionJob job) {
+        trabajosActivos.put(simulacionId, job);
         Thread thread = new Thread(job, "simulacion-" + simulacionId);
         job.asignarHilo(thread);
         thread.start();
