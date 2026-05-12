@@ -1,4 +1,4 @@
-package pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto;
+package pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -7,6 +7,8 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.model.Aeropuerto;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.repo.AeropuertoRepository;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;

@@ -1,7 +1,7 @@
 package pe.edu.pucp.inf.bagcontrol.entidades.vuelo;
 
 import org.springframework.stereotype.Component;
-import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.model.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.planificacion.utils.ZonaHorariaUtils;
 
 import java.time.Instant;
