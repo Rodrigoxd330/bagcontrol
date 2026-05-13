@@ -59,16 +59,12 @@ public class SimulacionController {
 
             @RequestParam(value = "k", defaultValue = "15") int k,
 
-            @RequestParam(value = "algoritmo", defaultValue = "TABU") String algoritmo,
-
-            @RequestParam(value = "modo", required = false) String modo
+            @RequestParam(value = "algoritmo", defaultValue = "TABU") String algoritmo
     ) {
-        if (MODO_COLAPSO.equalsIgnoreCase(modo)) {
+        if (fechaFin == null) {
             return iniciarColapso(fechaInicio, k, algoritmo);
         }
-
-        LocalDate fechaFinNormalizada = fechaFin != null ? fechaFin : fechaInicio.plusDays(1);
-        return iniciarNormal(fechaInicio, fechaFinNormalizada, k, algoritmo);
+        return iniciarNormal(fechaInicio, fechaFin, k, algoritmo);
     }
 
     @PostMapping("/ws/iniciar")
@@ -81,13 +77,12 @@ public class SimulacionController {
 
             @RequestParam(value = "k", defaultValue = "15") int k,
 
-            @RequestParam(value = "algoritmo", defaultValue = "TABU") String algoritmo,
-
-            @RequestParam(value = "modo", required = false) String modo
+            @RequestParam(value = "algoritmo", defaultValue = "TABU") String algoritmo
     ) {
-        return iniciarSimulacion(fechaInicio, fechaFin, k, algoritmo, modo);
+        return iniciarSimulacion(fechaInicio, fechaFin, k, algoritmo);
     }
 
+    @Deprecated
     @PostMapping("/ws/iniciar-colapso")
     public RespuestaInicioSimulacionDTO iniciarSimulacionColapsoWs(
             @RequestParam("fechaInicio")
@@ -97,7 +92,7 @@ public class SimulacionController {
 
             @RequestParam(value = "algoritmo", defaultValue = "TABU") String algoritmo
     ) {
-        return iniciarColapso(fechaInicio, k, algoritmo);
+        return iniciarSimulacion(fechaInicio, null, k, algoritmo);
     }
 
     private RespuestaInicioSimulacionDTO iniciarNormal(LocalDate fechaInicio, LocalDate fechaFin, int k, String algoritmo) {
