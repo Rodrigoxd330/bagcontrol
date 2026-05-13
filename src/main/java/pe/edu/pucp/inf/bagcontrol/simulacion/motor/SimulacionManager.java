@@ -57,9 +57,22 @@ public class SimulacionManager {
         if (job == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Simulación no encontrada: " + simulacionId);
         }
+        if (!"CREADA".equals(job.getState().getEstado())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "La simulacion ya fue arrancada: " + simulacionId);
+        }
         Thread thread = new Thread(job, "simulacion-" + simulacionId);
         job.asignarHilo(thread);
         thread.start();
+    }
+
+    public String crearYArrancarJob(LocalDate fechaInicio, LocalDate fechaFin, int k, String algoritmo) {
+        String simulacionId = crearJob(fechaInicio, fechaFin, k, algoritmo);
+        arrancarJob(simulacionId);
+        return simulacionId;
+    }
+
+    public String crearYArrancarJobColapso(LocalDate fechaInicio, int k, String algoritmo) {
+        return crearYArrancarJob(fechaInicio, null, k, algoritmo);
     }
 
     private ConfiguracionColapsoDTO crearConfiguracionColapsoPorDefecto() {
