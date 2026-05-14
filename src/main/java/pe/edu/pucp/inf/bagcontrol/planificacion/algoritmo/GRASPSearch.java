@@ -58,16 +58,16 @@ public class GRASPSearch {
             }
         }
         long tiempoTotal = System.currentTimeMillis() - inicio;
-        System.out.println("[METRICA GRASP] enviosRecibidos=" + envios.size()
-                + " iteracionesConfiguradas=" + iteraciones
-                + " maxVecinos=" + maxVecinos
-                + " alpha=" + alpha
-                + " iteracionesEjecutadas=" + iteracionesEjecutadas
-                + " mejorFitnessFinal=" + (mejorSolucion != null ? mejorSolucion.getFitness() : 0.0)
-                + " tiempoTotalMs=" + tiempoTotal
-                + " mejorasAceptadasLocal=" + mejorasAceptadasLocal
-                + " vecinosGenerados=" + vecinosGenerados
-                + " vecinosEvaluados=" + vecinosEvaluados);
+//        System.out.println("[METRICA GRASP] enviosRecibidos=" + envios.size()
+//                + " iteracionesConfiguradas=" + iteraciones
+//                + " maxVecinos=" + maxVecinos
+//                + " alpha=" + alpha
+//                + " iteracionesEjecutadas=" + iteracionesEjecutadas
+//                + " mejorFitnessFinal=" + (mejorSolucion != null ? mejorSolucion.getFitness() : 0.0)
+//                + " tiempoTotalMs=" + tiempoTotal
+//                + " mejorasAceptadasLocal=" + mejorasAceptadasLocal
+//                + " vecinosGenerados=" + vecinosGenerados
+//                + " vecinosEvaluados=" + vecinosEvaluados);
         return mejorSolucion;
     }
 

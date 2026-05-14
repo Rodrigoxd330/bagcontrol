@@ -12,7 +12,6 @@ import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
 
 import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,24 +28,42 @@ public class SimulacionManager {
 
     public String crearJob(LocalDate fechaInicio, LocalDate fechaFin, int k, String algoritmo) {
         String simulacionId = UUID.randomUUID().toString();
-        SimulacionJob job;
 
+        // 1. Instanciamos la memoria y su mutador para este job específico
+        SimulacionState state = new SimulacionState(simulacionId);
+        SimulacionStateMutator mutator = new SimulacionStateMutator(state, aeropuertoRepository);
+
+        // 2. Determinamos la configuración de colapso según el escenario
+        ConfiguracionColapsoDTO configColapso = null;
         if (fechaFin == null) {
-            ConfiguracionColapsoDTO configColapso = crearConfiguracionColapsoPorDefecto();
-            job = new SimulacionJob(
-                    simulacionId, fechaInicio, null ,k, algoritmo, // fechaFin es null
-                    planificadorService, aeropuertoRepository, webSocketPublisher, configColapso
-            );
+            configColapso = crearConfiguracionColapsoPorDefecto();
+            state.setModoSimulacion("COLAPSO");
         } else {
             if (fechaInicio.isAfter(fechaFin) || fechaInicio.isEqual(fechaFin)) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La fecha fin debe ser mayor a la fecha inicio.");
             }
-            // Pasamos AMBOS: fechaFin (para saber cuándo parar) y k (tamaño del lote)
-            job = new SimulacionJob(
-                    simulacionId, fechaInicio, (int) ChronoUnit.DAYS.between(fechaInicio, fechaFin), k, algoritmo,
-                    planificadorService, aeropuertoRepository, webSocketPublisher, null // Sin config de colapso
-            );
+            state.setModoSimulacion("ESTANDAR");
         }
+
+        // 3. Instanciamos la fábrica de eventos pasándole la configuración
+        SimulacionEventosFactory eventosFactory = new SimulacionEventosFactory(configColapso);
+
+        // 4. Armamos el Job con todas sus dependencias
+        SimulacionJob job = new SimulacionJob(
+                simulacionId,
+                fechaInicio,
+                fechaFin,
+                k,
+                algoritmo,
+                planificadorService,
+                aeropuertoRepository,
+                webSocketPublisher,
+                eventosFactory,
+                state,
+                configColapso,
+                mutator
+        );
+
         trabajosActivos.put(simulacionId, job);
 
         return simulacionId;
@@ -94,13 +111,6 @@ public class SimulacionManager {
         obtenerJob(simulacionId).reanudar();
     }
 
-    public void cambiarVelocidad(String simulacionId, long saMs) {
-        if (saMs < 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La velocidad no puede ser negativa.");
-        }
-        obtenerJob(simulacionId).cambiarVelocidad(saMs);
-    }
-
     public SimulacionEstadoDTO obtenerEstado(String simulacionId) {
         SimulacionJob job = obtenerJob(simulacionId);
         SimulacionState state = job.getState();
@@ -110,13 +120,13 @@ public class SimulacionManager {
                 state.getEstado(),
                 job.estaPausada(),
                 job.estaDetenida(),
-                state.getVelocidadMs(),
+                job.getSaMs(),
                 state.getUltimoLoteEmitidoNumero().get(),
                 job.getAlgoritmo(),
                 job.getK(),
                 job.getFechaInicio().toString(),
                 job.getFechaCreacion().toString(),
-                state.getTiempoSimuladoActual() != null ? state.getTiempoSimuladoActual().toString() : null
+                state.getTiempoActual() != null ? state.getTiempoActual().toString() : null
         );
     }
 

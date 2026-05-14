@@ -26,6 +26,10 @@ public class SimulacionController {
 
     private final SimulacionManager simulacionManager;
 
+    /*
+    * Crear el hilo (sin ejecutarlo) para que esté 'listo para arrncar'
+    * devuelve el id de la simulación
+     */
     @PostMapping("/preparar")
     public RespuestaInicioSimulacionDTO preparaSimulacion(
             @RequestParam("fechaInicio")
@@ -40,75 +44,19 @@ public class SimulacionController {
     ) {
         String simulacionId = simulacionManager.crearJob(fechaInicio, fechaFin, k, algoritmo);
         String modo = (fechaFin == null) ? MODO_COLAPSO : MODO_NORMAL;
-        return crearRespuestaInicio(simulacionId, modo);
+        String topic = "/topic/simulacion/" + simulacionId + "/eventos";
+        return new RespuestaInicioSimulacionDTO(simulacionId, topic, modo);
     }
 
+    /*
+    * Solamante arranca la simulación del id que le pasemos
+     */
     @PostMapping("/iniciar/{simulacionId}/arrancar")
     public Map<String, String> arrancarSimulacion(@PathVariable String simulacionId) {
         simulacionManager.arrancarJob(simulacionId);
         return Map.of("mensaje", "Simulacion en marcha");
     }
 
-    @PostMapping("/iniciar")
-    public RespuestaInicioSimulacionDTO iniciarSimulacion(
-            @RequestParam("fechaInicio")
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaInicio,
-
-            @RequestParam(value = "fechaFin", required = false)
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaFin,
-
-            @RequestParam(value = "k", defaultValue = "15") int k,
-
-            @RequestParam(value = "algoritmo", defaultValue = "TABU") String algoritmo
-    ) {
-        if (fechaFin == null) {
-            return iniciarColapso(fechaInicio, k, algoritmo);
-        }
-        return iniciarNormal(fechaInicio, fechaFin, k, algoritmo);
-    }
-
-    @PostMapping("/ws/iniciar")
-    public RespuestaInicioSimulacionDTO iniciarSimulacionWs(
-            @RequestParam("fechaInicio")
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaInicio,
-
-            @RequestParam(value = "fechaFin", required = false)
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaFin,
-
-            @RequestParam(value = "k", defaultValue = "15") int k,
-
-            @RequestParam(value = "algoritmo", defaultValue = "TABU") String algoritmo
-    ) {
-        return iniciarSimulacion(fechaInicio, fechaFin, k, algoritmo);
-    }
-
-    @Deprecated
-    @PostMapping("/ws/iniciar-colapso")
-    public RespuestaInicioSimulacionDTO iniciarSimulacionColapsoWs(
-            @RequestParam("fechaInicio")
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaInicio,
-
-            @RequestParam(value = "k", defaultValue = "15") int k,
-
-            @RequestParam(value = "algoritmo", defaultValue = "TABU") String algoritmo
-    ) {
-        return iniciarSimulacion(fechaInicio, null, k, algoritmo);
-    }
-
-    private RespuestaInicioSimulacionDTO iniciarNormal(LocalDate fechaInicio, LocalDate fechaFin, int k, String algoritmo) {
-        String simulacionId = simulacionManager.crearYArrancarJob(fechaInicio, fechaFin, k, algoritmo);
-        return crearRespuestaInicio(simulacionId, MODO_NORMAL);
-    }
-
-    private RespuestaInicioSimulacionDTO iniciarColapso(LocalDate fechaInicio, int k, String algoritmo) {
-        String simulacionId = simulacionManager.crearYArrancarJobColapso(fechaInicio, k, algoritmo);
-        return crearRespuestaInicio(simulacionId, MODO_COLAPSO);
-    }
-
-    private RespuestaInicioSimulacionDTO crearRespuestaInicio(String simulacionId, String modo) {
-        String topic = "/topic/simulacion/" + simulacionId + "/eventos";
-        return new RespuestaInicioSimulacionDTO(simulacionId, topic, topic, modo);
-    }
 
     @PostMapping("/{simulacionId}/pausar")
     public Map<String, String> pausar(@PathVariable String simulacionId) {
@@ -128,20 +76,14 @@ public class SimulacionController {
         return Map.of("estado", "DETENIDA", "mensaje", "Simulacion abortada");
     }
 
-    @PostMapping("/{simulacionId}/velocidad")
-    public Map<String, String> cambiarVelocidad(
-            @PathVariable String simulacionId,
-            @RequestParam("multiplicador") int multiplicador
-    ) {
-        simulacionManager.cambiarVelocidad(simulacionId, multiplicador);
-        return Map.of("mensaje", "Velocidad actualizada a " + multiplicador + "x");
-    }
-
     @GetMapping("/{simulacionId}/estado")
     public SimulacionEstadoDTO obtenerEstado(@PathVariable String simulacionId) {
         return simulacionManager.obtenerEstado(simulacionId);
     }
 
+    /*
+     * Puede servir para después
+    */
     @GetMapping("/{simulacionId}/vuelos/{codigoVuelo}/envios")
     public List<EnvioDTO> obtenerEnviosPorVuelo(
             @PathVariable String simulacionId,

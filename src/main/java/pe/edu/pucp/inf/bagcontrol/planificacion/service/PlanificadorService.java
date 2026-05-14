@@ -251,38 +251,54 @@ public class PlanificadorService {
                 .sum();
         return sumaHoras / asignados;
     }
-    public SolucionRuta calcularSolucion(String algoritmo, LocalDate fechaInicio, int dias) {
-        if (dias <= 0) throw new IllegalArgumentException("La cantidad de días debe ser mayor que 0.");
 
-        LocalDateTime inicio = fechaInicio.atStartOfDay();
-        LocalDateTime fin = fechaInicio.plusDays(dias).atStartOfDay();
+    public SolucionRuta calcularSolucion(
+            String algoritmo,
+            LocalDateTime inicio,
+            LocalDateTime fin,
+            List<Envio> pendientes
+    ) {
+        if (!fin.isAfter(inicio)) throw new IllegalArgumentException("La fecha fin debe ser mayor a la inicio.");
 
-        List<Envio> envios = envioDataStore.obtenerEnviosEnVentana(inicio, fin);
+        List<Envio> enviosVentana = envioDataStore.obtenerEnviosEnVentana(inicio, fin);
+
+        // Unimos los nuevos de la ventana con los pendientes que vienen del State
+        List<Envio> todosLosEnvios = new ArrayList<>(enviosVentana);
+        if (pendientes != null && !pendientes.isEmpty()) {
+            todosLosEnvios.addAll(pendientes);
+        }
+
         List<Vuelo> vuelosBase = vueloRepository.findAll();
         List<Aeropuerto> aeropuertos = aeropuertoRepository.findAll();
 
         long inicioGeneracionVuelos = System.currentTimeMillis();
+
+        int dias = (int) java.time.Duration.between(inicio, fin).toDays();
         List<VueloInstanciado> vuelosInstanciados =
-                generarVuelosInstanciados(vuelosBase, fechaInicio, dias, aeropuertos);
+                generarVuelosInstanciados(vuelosBase, inicio.toLocalDate(), dias > 0 ? dias : 1, aeropuertos);
+
         long tiempoGeneracionVuelos = System.currentTimeMillis() - inicioGeneracionVuelos;
-
         long inicioGeneracionItinerarios = System.currentTimeMillis();
-        Map<String, List<Itinerario>> itinerariosPorRuta =
-                itinerarioService.generarItinerariosPorRuta(vuelosInstanciados);
+
+        Map<String, List<Itinerario>> itinerariosPorRuta = itinerarioService.generarItinerariosPorRuta(vuelosInstanciados);
+
         long tiempoGeneracionItinerarios = System.currentTimeMillis() - inicioGeneracionItinerarios;
-
         long inicioAlgoritmo = System.currentTimeMillis();
-        SolucionRuta solucion = algoritmo.equalsIgnoreCase("TABU")
-                ? tabuSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos)
-                : graspSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos);
-        long tiempoAlgoritmo = System.currentTimeMillis() - inicioAlgoritmo;
 
-        imprimirMetricasPlanificacion(algoritmo, fechaInicio, dias, envios, vuelosBase, vuelosInstanciados,
+        // IMPORTANTE: Pasamos 'todosLosEnvios' al algoritmo en lugar de solo los de la ventana
+        SolucionRuta solucion = algoritmo.equalsIgnoreCase("TABU")
+                ? tabuSearch.ejecutar(todosLosEnvios, itinerariosPorRuta, aeropuertos)
+                : graspSearch.ejecutar(todosLosEnvios, itinerariosPorRuta, aeropuertos);
+
+        long tiempoAlgoritmo = System.currentTimeMillis() - inicioAlgoritmo;
+        imprimirMetricasPlanificacion(algoritmo, inicio.toLocalDate(), dias > 0 ? dias : 1, todosLosEnvios, vuelosBase, vuelosInstanciados,
                 aeropuertos, itinerariosPorRuta, tiempoGeneracionVuelos, tiempoGeneracionItinerarios,
                 tiempoAlgoritmo, solucion);
 
         return solucion;
     }
+
+
 
     public List<Envio> obtenerEnviosEnVentana(LocalDateTime inicio, LocalDateTime fin) {
         return envioDataStore.obtenerEnviosEnVentana(inicio, fin);
@@ -337,7 +353,7 @@ public class PlanificadorService {
                 ? totalItinerarios / (double) rutasConItinerarios
                 : 0.0;
 
-        System.out.println("[METRICA PLANIFICACION] algoritmo=" + algoritmo.toUpperCase()
+        System.out.println("[PLANIFICACION-MÉTRICA] algoritmo=" + algoritmo.toUpperCase()
                 + " fechaInicio=" + fechaInicio
                 + " dias=" + dias
                 + " enviosProcesados=" + envios.size()
