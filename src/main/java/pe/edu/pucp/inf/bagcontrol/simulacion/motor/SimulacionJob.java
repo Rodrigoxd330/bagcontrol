@@ -7,10 +7,7 @@ import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.service.PlanificadorService;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
-import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoBaseDTO;
-import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoColapsoDTO;
-import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.LoteEventosDTO;
-import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.TipoEvento;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.*;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -102,7 +99,7 @@ public class SimulacionJob implements Runnable {
         publicarControl(TipoEvento.SIMULACION_INICIADA);
         state.setTiempoActual(horaInicio);
         LocalDateTime tiempoFin = (horaFin == null) ? LocalDateTime.MAX : horaFin;
-
+        List<EventoBaseDTO> listaEventosPostergados = new ArrayList<>();
         while (state.getTiempoActual().isBefore(tiempoFin)) {
             long t0 = System.currentTimeMillis();
 
@@ -119,19 +116,36 @@ public class SimulacionJob implements Runnable {
 
             // 3. Extraer eventos de la solución
             List<SimulacionEventosFactory.EventoProgramado> eventosOrdenados = simulacionEventosFactory.generarLineaDeTiempo(solucionActual);
-            List<EventoBaseDTO> loteEventos = generarLoteDeEventos(eventosOrdenados);
+            List<EventoBaseDTO> loteEventos = generarLoteDeEventos(listaEventosPostergados,eventosOrdenados,
+                    state.getTiempoActual().toInstant(ZoneOffset.UTC),proximoTiempo.toInstant(ZoneOffset.UTC));
 
+            //ERROR
+            /*
+            for(EventoBaseDTO evento : listaEventosPostergados){
+                if(state.getTiempoActual().toInstant(ZoneOffset.UTC).isAfter(LocalDateTime.parse(evento.getFechaHoraEvento()).toInstant(ZoneOffset.UTC))){
+                    listaEventosPostergados.remove(evento);
+                    loteEventos.add(evento);
+                }
+            }
+            for(EventoBaseDTO evento : loteEventos){
+                if(proximoTiempo.toInstant(ZoneOffset.UTC).isBefore(LocalDateTime.parse(evento.getFechaHoraEvento()).toInstant(ZoneOffset.UTC))){
+                    loteEventos.remove(evento);
+                    listaEventosPostergados.add(evento);
+                }
+            }*/
+            //ERROR
             if (colapso) {
                 EventoColapsoDTO eventoColapsoDTO = new EventoColapsoDTO();
                 state.setEstado("COLAPSADA");
                 loteEventos.add(eventoColapsoDTO);
+                System.out.println("SIMULACION COLAPSADA");
             }
             publicarLote(loteEventos, state.getTiempoActual().toInstant(ZoneOffset.UTC), proximoTiempo.toInstant(ZoneOffset.UTC));
             if(colapso) break;
 
             // 6. Preparar datos para el siguiente ciclo K
             actualizarPendientesParaSiguienteCiclo(solucionActual);
-            state.setTiempoActual(proximoTiempo);
+
 
             long tLote = System.currentTimeMillis() - t0;
             System.out.printf("[SIMULADOR] Lote #%d publicado | eventos=%d | ventana=%s→%s | tiempoEjecucion=%d%n",
@@ -142,6 +156,7 @@ public class SimulacionJob implements Runnable {
                     tLote
             );
 
+            state.setTiempoActual(proximoTiempo);
             esperarConControl();
         }
 
@@ -305,27 +320,55 @@ public class SimulacionJob implements Runnable {
         return horasEsperando > horasLimite;
     }
 
-    private List<EventoBaseDTO> generarLoteDeEventos(List<SimulacionEventosFactory.EventoProgramado> eventosOrdenados) {
+    private List<EventoBaseDTO> generarLoteDeEventos(List<EventoBaseDTO> listaEventosPostergados,
+            List<SimulacionEventosFactory.EventoProgramado> eventosOrdenados,
+             Instant ventanaInicio,Instant ventanaFin) {
         List<EventoBaseDTO> loteEventos = new ArrayList<>();
-
+        for(EventoBaseDTO evento : listaEventosPostergados){
+            if(ventanaInicio.isAfter(LocalDateTime.parse(evento.getFechaHoraEvento()).toInstant(ZoneOffset.UTC))){
+                listaEventosPostergados.remove(evento);
+                loteEventos.add(evento);
+                if(evento.getTipo() == TipoEvento.VUELO_DESPEGA){
+                    EventoVueloDTO eventoVuelo = (EventoVueloDTO) evento;
+                    String origen = eventoVuelo.getOrigenIata();
+                    simulacionStateMutator.restarMaletas(origen,eventoVuelo.getCantidadMaletas());
+                }
+                else if(evento.getTipo() == TipoEvento.VUELO_ATERRIZA){
+                    EventoVueloDTO eventoVuelo = (EventoVueloDTO) evento;
+                    String destino = eventoVuelo.getDestinoIata();
+                    simulacionStateMutator.sumarMaletas(destino,eventoVuelo.getCantidadMaletas());
+                }
+            }
+        }
         for (SimulacionEventosFactory.EventoProgramado eventoProgramado : eventosOrdenados) {
             SimulacionEventosFactory.VueloAgrupado vuelo = eventoProgramado.vuelo();
             String origenIata = vuelo.origenIata();
             String destinoIata = vuelo.destinoIata();
 
             if (eventoProgramado.tipo() == TipoEvento.VUELO_DESPEGA) {
+                Aeropuerto aeropuertoOrigen = state.getAeropuertosSnapshot().get(origenIata);
+                int inventarioOrigen = state.getInventarioSnapshot().getOrDefault(origenIata, 0);
+
+                //Revisar si esta dentro de ventana
+                if(ventanaFin.isBefore(eventoProgramado.instantUtc())){
+                    listaEventosPostergados.add(simulacionEventosFactory.crearEventoAeropuerto(aeropuertoOrigen, inventarioOrigen));
+                    listaEventosPostergados.add(simulacionEventosFactory.crearEventoVuelo(vuelo, TipoEvento.VUELO_DESPEGA, "EN_VUELO"));
+                    continue;
+                }
+
                 // 1. Mutar la memoria física
                 simulacionStateMutator.restarMaletas(origenIata, vuelo.cantidadMaletas());
 
                 // 2. Avisar al front del nuevo inventario del aeropuerto
-                Aeropuerto aeropuertoOrigen = state.getAeropuertosSnapshot().get(origenIata);
-                int inventarioOrigen = state.getInventarioSnapshot().getOrDefault(origenIata, 0);
+
                 loteEventos.add(simulacionEventosFactory.crearEventoAeropuerto(aeropuertoOrigen, inventarioOrigen));
 
                 // 3. Avisar al front del despegue
                 loteEventos.add(simulacionEventosFactory.crearEventoVuelo(vuelo, TipoEvento.VUELO_DESPEGA, "EN_VUELO"));
 
             } else if (eventoProgramado.tipo() == TipoEvento.VUELO_ATERRIZA) {
+
+
                 // 1. Mutar la memoria física
                 simulacionStateMutator.sumarMaletas(destinoIata, vuelo.cantidadMaletas());
 

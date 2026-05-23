@@ -1,6 +1,7 @@
 package pe.edu.pucp.inf.bagcontrol.entidades.envios;
 
 import org.springframework.stereotype.Component;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.model.Aeropuerto;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -18,9 +19,13 @@ public class EnvioDataStore {
      * Agrega un envío al índice temporal.
      * Se sincroniza para evitar conflictos si hay accesos concurrentes.
      */
-    public synchronized void agregarEnvio(Envio envio) {
+    public synchronized void agregarEnvio(Envio envio, Aeropuerto aeropuerto) {
+        int gmt = aeropuerto.getGmt();
         enviosPorTiempo
-                .computeIfAbsent(envio.getFechaHora(), k -> new ArrayList<>())
+                .computeIfAbsent(
+                        envio.getFechaHora(),
+                        //envio.getFechaHora().minusHours(gmt),
+                        k -> new ArrayList<>())
                 .add(envio);
     }
 

@@ -6,12 +6,17 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.model.Aeropuerto;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.repo.AeropuertoRepository;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -21,7 +26,7 @@ import java.util.zip.ZipInputStream;
 public class EnvioLoader implements CommandLineRunner {
 
     private final EnvioDataStore envioDataStore;
-
+    private final AeropuertoRepository aeropuertoRepository;
     // Ruta de tu ZIP: classpath:data/envios.zip
     @Value("${tasf.b2b.data.envios}")
     private Resource enviosZipResource;
@@ -30,6 +35,11 @@ public class EnvioLoader implements CommandLineRunner {
     public void run(String... args) throws Exception {
         System.out.println("==================================================");
         System.out.println("📦 3. Iniciando extracción en memoria del ZIP de Envíos...");
+
+        //Obtener mapa de aeropuertos para traducir tiempo por gmt
+        //HashMap<String, Aeropuerto> mapaAeropuerto =
+        Map<String, Aeropuerto> mapaAeropuertos = aeropuertoRepository.findAll().stream()
+                .collect(Collectors.toMap(Aeropuerto::getCodigoIata, a -> a));
 
         long inicioTiempo = System.currentTimeMillis();
         int totalEnvios = 0;
@@ -56,7 +66,8 @@ public class EnvioLoader implements CommandLineRunner {
 
                     Envio envio = parsearLinea(linea, origenIata);
                     if (envio != null) {
-                        envioDataStore.agregarEnvio(envio);
+                        Aeropuerto aeropuerto = mapaAeropuertos.get(origenIata);
+                        envioDataStore.agregarEnvio(envio,aeropuerto);
                         totalEnvios++;
                     }
                 }
