@@ -42,6 +42,7 @@ public class SimulacionController {
 
             @RequestParam(value = "algoritmo", defaultValue = "TABU") String algoritmo
     ) {
+        System.out.println("FRONTEND MANDÓ: " + fechaFin);
         String simulacionId = simulacionManager.crearJob(fechaInicio, fechaFin, k, algoritmo);
         String modo = (fechaFin == null) ? MODO_COLAPSO : MODO_NORMAL;
         String topic = "/topic/simulacion/" + simulacionId + "/eventos";

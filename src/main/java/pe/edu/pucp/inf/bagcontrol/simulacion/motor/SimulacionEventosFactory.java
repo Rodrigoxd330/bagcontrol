@@ -7,9 +7,7 @@ import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MetricasColapsoDTO;
-import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoAeropuertoDTO;
-import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoVueloDTO;
-import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.TipoEvento;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.*;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -19,76 +17,93 @@ import java.util.*;
 public class SimulacionEventosFactory {
 
     private final ConfiguracionColapsoDTO configuracionColapso;
+    private final double COTA_ROJO = 85.0;
+    private final double COTA_AMARILLO = 60.0;
 
     public SimulacionEventosFactory(ConfiguracionColapsoDTO configuracionColapso) {
         this.configuracionColapso = configuracionColapso;
     }
 
-    public List<EventoProgramado> generarLineaDeTiempo(SolucionRuta solucion) {
-        Map<String, VueloAgrupadoAcumulado> agrupados = new LinkedHashMap<>();
+    public record ResultadoEventosVuelo(
+            List<EventoBaseDTO> actuales,
+            List<EventoBaseDTO> futuros
+    ) {}
+
+    public ResultadoEventosVuelo generarEventosVuelo(SolucionRuta solucion, Instant ventanaFin) {
+        Map<String, EventoVueloDTO> actualesMap = new LinkedHashMap<>();
+        Map<String, EventoVueloDTO> futurosMap = new LinkedHashMap<>();
 
         for (RutaAsignada asignacion : solucion.getAsignaciones()) {
             if (asignacion.getItinerario() == null) continue;
             int cantidadMaletas = asignacion.getEnvio().getCantidadMaletas();
+
             for (VueloInstanciado vuelo : asignacion.getItinerario().getVuelos()) {
-                String key = vuelo.getCodigoBase() + "|" + vuelo.getOrigenIata() + "|"
-                        + vuelo.getDestinoIata() + "|" + vuelo.getFechaHoraSalida();
-                agrupados.computeIfAbsent(key, k -> new VueloAgrupadoAcumulado(vuelo)).sumar(cantidadMaletas);
+                String keyDespega = "DESPEGA|" + vuelo.getCodigoBase() + "|" + vuelo.getFechaHoraSalida();
+                String keyAterriza = "ATERRIZA|" + vuelo.getCodigoBase() + "|" + vuelo.getFechaHoraSalida();
+                int capacidadMax = vuelo.getCapacidadMax(); // Asumiendo que tu VueloInstanciado tiene este getter
+
+                // 1. Determinar a qué mapa va el DESPEGUE y actualizar
+                Map<String, EventoVueloDTO> mapaDespegue = vuelo.getFechaHoraSalidaUtc().isAfter(ventanaFin) ? futurosMap : actualesMap;
+                EventoVueloDTO evDespega = mapaDespegue.computeIfAbsent(keyDespega, k -> crearEventoVuelo(vuelo, TipoEvento.VUELO_DESPEGA));
+                actualizarSemaforoVuelo(evDespega, cantidadMaletas, capacidadMax);
+
+                // 2. Determinar a qué mapa va el ATERRIZAJE y actualizar
+                Map<String, EventoVueloDTO> mapaAterrizaje = vuelo.getFechaHoraLlegadaUtc().isAfter(ventanaFin) ? futurosMap : actualesMap;
+                EventoVueloDTO evAterriza = mapaAterrizaje.computeIfAbsent(keyAterriza, k -> crearEventoVuelo(vuelo, TipoEvento.VUELO_ATERRIZA));
+                actualizarSemaforoVuelo(evAterriza, cantidadMaletas, capacidadMax);
             }
         }
-
-        List<VueloAgrupado> vuelosAgrupados = agrupados.values().stream()
-                .map(VueloAgrupadoAcumulado::toVueloAgrupado)
-                .sorted(Comparator.comparing(VueloAgrupado::fechaHoraSalidaUtc))
-                .toList();
-
-        return vuelosAgrupados.stream()
-                .flatMap(vuelo -> List.of(
-                        new EventoProgramado(TipoEvento.VUELO_DESPEGA, vuelo.fechaHoraSalidaUtc(), vuelo),
-                        new EventoProgramado(TipoEvento.VUELO_ATERRIZA, vuelo.fechaHoraLlegadaUtc(), vuelo)
-                ).stream())
-                .sorted(Comparator.comparing(EventoProgramado::instantUtc))
-                .toList();
+        return new ResultadoEventosVuelo(
+                new ArrayList<>(actualesMap.values()),
+                new ArrayList<>(futurosMap.values())
+        );
     }
 
-    public EventoVueloDTO crearEventoVuelo(VueloAgrupado vuelo, TipoEvento tipoEvento, String estado) {
-        EventoVueloDTO evento = new EventoVueloDTO();
-        evento.setTipo(tipoEvento);
-        evento.setFechaHoraEvento(LocalDateTime.now().toString());
-        evento.setCodigoVuelo(vuelo.codigoVuelo());
-        evento.setOrigenIata(vuelo.origenIata());
-        evento.setDestinoIata(vuelo.destinoIata());
-        evento.setEstado(estado);
-        evento.setCantidadMaletas(vuelo.cantidadMaletas());
+    private void actualizarSemaforoVuelo(EventoVueloDTO dto, int nuevasMaletas, int capacidadMax) {
+        int totalMaletas = dto.getCantidadMaletas() + nuevasMaletas;
+        dto.setCantidadMaletas(totalMaletas);
 
-        // Mapeo completo de todos los campos de fecha/hora para evitar 'undefined' en el frontend
-        evento.setHoraSalida(vuelo.fechaHoraSalida().toString());
-        evento.setHoraLlegada(vuelo.fechaHoraLlegada().toString());
-        evento.setHoraSalidaLocal(vuelo.fechaHoraSalida().toString());
-        evento.setHoraLlegadaLocal(vuelo.fechaHoraLlegada().toString());
-        evento.setHoraSalidaUtc(vuelo.fechaHoraSalidaUtc().toString());
-        evento.setHoraLlegadaUtc(vuelo.fechaHoraLlegadaUtc().toString());
+        double porcentaje = capacidadMax > 0 ? (totalMaletas * 100.0) / capacidadMax : 0.0;
 
-        return evento;
+        if (porcentaje >= COTA_ROJO) {
+            dto.setEstado(EstadoCapacidad.ROJO);
+        } else if (porcentaje >= COTA_AMARILLO) {
+            dto.setEstado(EstadoCapacidad.AMARILLO);
+        } else {
+            dto.setEstado(EstadoCapacidad.VERDE);
+        }
     }
 
-    public EventoAeropuertoDTO crearEventoAeropuerto(Aeropuerto aeropuerto, int maletasActuales) {
+    public EventoVueloDTO crearEventoVuelo(VueloInstanciado vuelo, TipoEvento tipoEvento) {
+        Instant tiempoSimulado = (tipoEvento == TipoEvento.VUELO_DESPEGA)
+                ? vuelo.getFechaHoraSalidaUtc()
+                : vuelo.getFechaHoraLlegadaUtc();
+        return new EventoVueloDTO(
+                tipoEvento,
+                tiempoSimulado.toString(),
+                vuelo.getCodigoBase(),
+                vuelo.getOrigenIata(),
+                vuelo.getDestinoIata(),
+                EstadoCapacidad.VERDE,
+                0,
+                vuelo.getFechaHoraSalida().toString(),
+                vuelo.getFechaHoraLlegada().toString(),
+                vuelo.getFechaHoraSalidaUtc().toString(),
+                vuelo.getFechaHoraLlegadaUtc().toString()
+        );
+    }
+
+    public EventoAeropuertoDTO crearEventoAeropuerto(Aeropuerto aeropuerto, int maletasActuales, Instant tiempoEvento) {
         int capacidad = aeropuerto.getCapacidadAlmacen();
         double porcentaje = capacidad > 0 ? (maletasActuales * 100.0) / capacidad : 0.0;
 
-        String estadoSemaforo = "VERDE";
-        if (porcentaje >= 90.0) estadoSemaforo = "ROJO";
-        else if (porcentaje >= 70.0) estadoSemaforo = "AMARILLO";
+        EstadoCapacidad estadoSemaforo = EstadoCapacidad.VERDE;
+        if (porcentaje >= COTA_ROJO) estadoSemaforo = EstadoCapacidad.ROJO;
+        else if (porcentaje >= COTA_AMARILLO) estadoSemaforo = EstadoCapacidad.AMARILLO;
 
-        EventoAeropuertoDTO evento = new EventoAeropuertoDTO();
-        evento.setTipo(TipoEvento.AEROPUERTO_ACTUALIZADO);
-        evento.setFechaHoraEvento(LocalDateTime.now().toString());
-        evento.setCodigoAeropuerto(aeropuerto.getCodigoIata());
-        evento.setMaletasActuales(maletasActuales);
-        evento.setCapacidadAlmacen(capacidad);
-        evento.setPorcentajeOcupacion(porcentaje);
-        evento.setEstado(estadoSemaforo);
-        return evento;
+        return new EventoAeropuertoDTO(
+                TipoEvento.AEROPUERTO_ACTUALIZADO, tiempoEvento.toString(), aeropuerto.getCodigoIata(),
+                estadoSemaforo, porcentaje,maletasActuales, aeropuerto.getCapacidadAlmacen());
     }
 
     public MetricasColapsoDTO calcularMetricasColapso(
@@ -140,29 +155,5 @@ public class SimulacionEventosFactory {
         }
 
         return criterios;
-    }
-
-    // ================== RECORDS INTERNOS DE APOYO ==================
-
-    public record VueloAgrupado(
-            Long codigoVuelo, String origenIata, String destinoIata,
-            LocalDateTime fechaHoraSalida, LocalDateTime fechaHoraLlegada,
-            Instant fechaHoraSalidaUtc, Instant fechaHoraLlegadaUtc, int cantidadMaletas
-    ) {}
-
-    public record EventoProgramado(TipoEvento tipo, Instant instantUtc, VueloAgrupado vuelo) {}
-
-    private static class VueloAgrupadoAcumulado {
-        private final VueloInstanciado vuelo;
-        private int cantidadMaletas;
-        public VueloAgrupadoAcumulado(VueloInstanciado vuelo) { this.vuelo = vuelo; }
-        public void sumar(int cantidad) { cantidadMaletas += cantidad; }
-        public VueloAgrupado toVueloAgrupado() {
-            return new VueloAgrupado(
-                    vuelo.getCodigoBase(), vuelo.getOrigenIata(), vuelo.getDestinoIata(),
-                    vuelo.getFechaHoraSalida(), vuelo.getFechaHoraLlegada(),
-                    vuelo.getFechaHoraSalidaUtc(), vuelo.getFechaHoraLlegadaUtc(), cantidadMaletas
-            );
-        }
     }
 }

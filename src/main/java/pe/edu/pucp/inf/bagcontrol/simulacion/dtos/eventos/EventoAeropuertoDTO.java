@@ -9,9 +9,22 @@ import lombok.NoArgsConstructor;
 @EqualsAndHashCode(callSuper = true)
 public class EventoAeropuertoDTO extends EventoBaseDTO {
     private String codigoAeropuerto;
-    private String estado;
-    private String mensaje;
+    private EstadoCapacidad estadoCapacidad;
     private double porcentajeOcupacion;
     private int maletasActuales;
     private int capacidadAlmacen;
+
+    public EventoAeropuertoDTO(
+            TipoEvento tipo, String fechaHoraEvento, String codigoAeropuerto,
+            EstadoCapacidad estadoCapacidad, double porcentajeOcupacion, int maletasActuales,
+            int capacidadAlmacen) {
+        super(tipo, fechaHoraEvento);
+        this.codigoAeropuerto = codigoAeropuerto;
+        this.estadoCapacidad = estadoCapacidad;
+        this.porcentajeOcupacion = porcentajeOcupacion;
+        this.maletasActuales = maletasActuales;
+        this.capacidadAlmacen = capacidadAlmacen;
+    }
+
+
 }
