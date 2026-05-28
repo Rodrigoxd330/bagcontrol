@@ -6,12 +6,18 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -21,8 +27,8 @@ import java.util.zip.ZipInputStream;
 public class EnvioLoader implements CommandLineRunner {
 
     private final EnvioDataStore envioDataStore;
+    private final AeropuertoRepository aeropuertoRepository;
 
-    // Ruta de tu ZIP: classpath:data/envios.zip
     @Value("${tasf.b2b.data.envios}")
     private Resource enviosZipResource;
 
@@ -31,22 +37,27 @@ public class EnvioLoader implements CommandLineRunner {
         System.out.println("==================================================");
         System.out.println("📦 3. Iniciando extracción en memoria del ZIP de Envíos...");
 
+        // Obtener mapa de aeropuertos para traducir tiempo por gmt
+        Map<String, Aeropuerto> mapaAeropuertos = aeropuertoRepository.findAll().stream()
+                .collect(Collectors.toMap(Aeropuerto::getCodigoIata, a -> a));
+
         long inicioTiempo = System.currentTimeMillis();
         int totalEnvios = 0;
 
-        // Abrimos el ZIP directamente en memoria
         try (ZipInputStream zis = new ZipInputStream(enviosZipResource.getInputStream(), StandardCharsets.UTF_8)) {
             ZipEntry entry;
 
-            // Iteramos por cada archivo .txt dentro del ZIP
             while ((entry = zis.getNextEntry()) != null) {
                 if (entry.isDirectory()) continue;
 
-                // Extraemos el origen del nombre del archivo (Asumiendo que el IATA está en el nombre)
                 String nombreArchivo = entry.getName();
                 String origenIata = extraerIataDelNombre(nombreArchivo);
 
-                // Usamos un BufferedReader sobre el ZipInputStream
+                // Buscamos el objeto Aeropuerto de origen para conocer su GMT
+                Aeropuerto aeropuertoOrigen = mapaAeropuertos.get(origenIata);
+                // Si por alguna razón el aeropuerto no existe, asumimos GMT 0 por seguridad
+                int gmtOffset = (aeropuertoOrigen != null) ? aeropuertoOrigen.getGmt() : 0;
+
                 BufferedReader br = new BufferedReader(new InputStreamReader(zis, StandardCharsets.UTF_8));
                 String linea;
 
@@ -54,9 +65,10 @@ public class EnvioLoader implements CommandLineRunner {
                     linea = linea.trim();
                     if (linea.isEmpty() || linea.startsWith("id_envío")) continue;
 
-                    Envio envio = parsearLinea(linea, origenIata);
+                    // Pasamos el gmtOffset al parseador para normalizar la hora
+                    Envio envio = parsearLinea(linea, origenIata, gmtOffset);
                     if (envio != null) {
-                        envioDataStore.agregarEnvio(envio);
+                        envioDataStore.agregarEnvio(envio, aeropuertoOrigen);
                         totalEnvios++;
                     }
                 }
@@ -64,15 +76,16 @@ public class EnvioLoader implements CommandLineRunner {
             }
         }
         long finTiempo = System.currentTimeMillis();
-        System.out.println("✅ Carga finalizada: " + totalEnvios + " envíos indexados en el TreeMap.");
+        System.out.println("✅ Carga finalizada: " + totalEnvios + " envíos indexados con hora normalizada a UTC.");
         System.out.println("⏱️ Tiempo de carga: " + (finTiempo - inicioTiempo) + " ms");
         System.out.println("==================================================\n");
     }
 
     /**
      * Parsea: 00000001-20250102-01-38-EBCI-006-0007729
+     * e inyecta el offset local para convertir a LocalDateTime/Instant correctos
      */
-    private Envio parsearLinea(String linea, String origenIata) {
+    private Envio parsearLinea(String linea, String origenIata, int gmtOffset) {
         String[] partes = linea.split("-");
         if (partes.length < 7) return null;
 
@@ -91,19 +104,20 @@ public class EnvioLoader implements CommandLineRunner {
         int hora = Integer.parseInt(partes[2]);
         int minuto = Integer.parseInt(partes[3]);
 
-        envio.setFechaHora(LocalDateTime.of(anio, mes, dia, hora, minuto));
+        // 1. Construimos el tiempo tal y como se lee localmente en el archivo
+        LocalDateTime horaLocal = LocalDateTime.of(anio, mes, dia, hora, minuto);
+
+        // 2. Le indicamos a Java en qué zona horaria estaba (ej. GMT-5 o GMT+1) y lo convertimos a un Instant UTC
+        Instant tiempoUtc = horaLocal.toInstant(ZoneOffset.ofHours(gmtOffset));
+
+        // 3. Almacenamos el LocalDateTime equivalente en UTC para mantener la consistencia con el Job
+        envio.setFechaHora(LocalDateTime.ofInstant(tiempoUtc, ZoneOffset.UTC));
 
         return envio;
     }
 
-    /**
-     * Busca 4 letras mayúsculas seguidas en el nombre del archivo.
-     * Ej: "archivos/envios_SKBO.txt" -> retorna "SKBO"
-     */
     private String extraerIataDelNombre(String nombreArchivo) {
-        // Normalizamos a mayúsculas por si acaso mandan "_envios_skbo_.txt"
         java.util.regex.Matcher m = java.util.regex.Pattern.compile("_ENVIOS_([A-Z]{4})_").matcher(nombreArchivo.toUpperCase());
-        // group(1) devuelve solo lo que está entre los paréntesis del regex
         return m.find() ? m.group(1) : "DESC";
     }
 }

@@ -105,17 +105,17 @@ public class TabuSearch {
         }
 
         long tiempoTotal = System.currentTimeMillis() - inicio;
-        System.out.println("[METRICA TABU] enviosRecibidos=" + envios.size()
-                + " iteracionesConfiguradas=" + iteraciones
-                + " tenure=" + tenure
-                + " maxVecinos=" + maxVecinos
-                + " iteracionesEjecutadas=" + iteracionesEjecutadas
-                + " vecinosGenerados=" + vecinosGenerados
-                + " vecinosEvaluados=" + vecinosEvaluados
-                + " movimientosAceptados=" + movimientosAceptados
-                + " mejorasGlobales=" + mejorasGlobales
-                + " mejorFitnessFinal=" + mejorFitnessGlobal
-                + " tiempoTotalMs=" + tiempoTotal);
+//        System.out.println("[METRICA TABU] enviosRecibidos=" + envios.size()
+//                + " iteracionesConfiguradas=" + iteraciones
+//                + " tenure=" + tenure
+//                + " maxVecinos=" + maxVecinos
+//                + " iteracionesEjecutadas=" + iteracionesEjecutadas
+//                + " vecinosGenerados=" + vecinosGenerados
+//                + " vecinosEvaluados=" + vecinosEvaluados
+//                + " movimientosAceptados=" + movimientosAceptados
+//                + " mejorasGlobales=" + mejorasGlobales
+//                + " mejorFitnessFinal=" + mejorFitnessGlobal
+//                + " tiempoTotalMs=" + tiempoTotal);
         return mejor;
     }
 

@@ -10,6 +10,7 @@ import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.*;
 
 public class PlanificadorUtils {

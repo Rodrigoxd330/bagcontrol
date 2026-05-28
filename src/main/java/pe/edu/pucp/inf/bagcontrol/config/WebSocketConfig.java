@@ -6,6 +6,7 @@ import org.springframework.messaging.simp.config.MessageBrokerRegistry;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
+import org.springframework.web.socket.config.annotation.WebSocketTransportRegistration; // <-- IMPORTANTE IMPORTAR ESTO
 
 @Configuration
 @EnableWebSocketMessageBroker
@@ -27,10 +28,16 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         registry.setApplicationDestinationPrefixes("/app");
     }
 
-    /*
-     * Se fuerza un solo hilo de salida para mantener mejor el orden
-     * de los eventos enviados al frontend.
-     */
+    // ====================================================================
+    // ¡AQUÍ ESTÁ LA SOLUCIÓN AL CUElgue! Aumentamos el límite de 64KB a 10MB
+    // ====================================================================
+    @Override
+    public void configureWebSocketTransport(WebSocketTransportRegistration registration) {
+        registration.setMessageSizeLimit(1024 * 1024 * 10); // 10 MB
+        registration.setSendBufferSizeLimit(1024 * 1024 * 10); // 10 MB
+        registration.setSendTimeLimit(20000);
+    }
+
     @Override
     public void configureClientOutboundChannel(ChannelRegistration registration) {
         registration.taskExecutor()
@@ -38,10 +45,6 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                 .maxPoolSize(1);
     }
 
-    /*
-     * También se limita el canal de entrada para evitar procesamiento paralelo
-     * innecesario en esta simulación.
-     */
     @Override
     public void configureClientInboundChannel(ChannelRegistration registration) {
         registration.taskExecutor()

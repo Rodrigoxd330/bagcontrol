@@ -26,12 +26,14 @@ public class SimulacionStateMutator {
 
     public List<Aeropuerto> inicializarAeropuertos() {
         List<Aeropuerto> aeropuertos = aeropuertoRepository.findAll();
-        state.setAeropuertosSnapshot(aeropuertos.stream()
-                .collect(Collectors.toConcurrentMap(Aeropuerto::getCodigoIata, a -> a)));
+        state.getAeropuertosSnapshot().clear();
+        state.getInventarioSnapshot().clear();
+        aeropuertos.forEach(a -> {
+            String iata = a.getCodigoIata();
+            state.getAeropuertosSnapshot().put(iata, a);
+            state.getInventarioSnapshot().put(iata, 0);
+        });
 
-        for (Aeropuerto aeropuerto : aeropuertos) {
-            state.getInventarioSnapshot().put(aeropuerto.getCodigoIata(), 0);
-        }
         return aeropuertos;
     }
 

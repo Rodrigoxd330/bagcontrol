@@ -78,7 +78,7 @@ public class ItinerarioService {
 
         int totalFinal = itinerariosPorRuta.values().stream().mapToInt(List::size).sum();
         long tiempoTotal = System.currentTimeMillis() - inicio;
-        System.out.println("[METRICA ITINERARIOS] vuelosRecibidos=" + vuelos.size()
+        System.out.println("[PLANIFICACION-INTERARIO-METRICA] vuelosRecibidos=" + vuelos.size()
                 + " itinerariosDirectos=" + itinerariosDirectos
                 + " itinerariosConEscala=" + itinerariosConEscala
                 + " totalRutas=" + itinerariosPorRuta.size()

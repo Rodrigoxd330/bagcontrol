@@ -11,4 +11,5 @@ import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 public class RutaAsignada {
     private Envio envio;
     private Itinerario itinerario;
+    private boolean excedeSla;
 }

@@ -14,4 +14,5 @@ public class WebSocketPublisher {
     public void publicarLote(String simulacionId, LoteEventosDTO lote) {
         messagingTemplate.convertAndSend("/topic/simulacion/" + simulacionId + "/eventos", lote);
     }
+
 }

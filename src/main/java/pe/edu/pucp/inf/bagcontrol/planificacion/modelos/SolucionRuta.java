@@ -11,13 +11,11 @@ public class SolucionRuta {
 
     private List<RutaAsignada> asignaciones = new ArrayList<>();
     private double fitness;
-
-    // Nuevos contadores para el reporte final
     private int sinItinerarioCount;
     private int excedeSlaCount;
 
     public void agregarAsignacion(Envio envio, Itinerario itinerario) {
-        asignaciones.add(new RutaAsignada(envio, itinerario));
+        asignaciones.add(new RutaAsignada(envio, itinerario, false)); //El excedeSLA se evalua después
     }
 
     public Itinerario obtenerItinerarioAsignado(Envio envio) {
@@ -42,9 +40,12 @@ public class SolucionRuta {
         copia.setExcedeSlaCount(this.excedeSlaCount);
 
         for (RutaAsignada asignacion : this.asignaciones) {
-            copia.agregarAsignacion(asignacion.getEnvio(), asignacion.getItinerario());
+            copia.getAsignaciones().add(new RutaAsignada(
+                    asignacion.getEnvio(),
+                    asignacion.getItinerario(),
+                    asignacion.isExcedeSla()
+            ));
         }
-
         return copia;
     }
 

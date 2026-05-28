@@ -35,6 +35,7 @@ public class FitnessEvaluator {
             if (itinerario == null) {
                 sinItinerario++;
                 fitness += PENALIZACION_SIN_ITINERARIO;
+                asignacion.setExcedeSla(false); // No tiene itinerario, el SLA terrestre lo evalúa el motor
                 continue;
             }
 
@@ -45,10 +46,13 @@ public class FitnessEvaluator {
                 fitness += (itinerario.getCantidadVuelos() - 1) * PENALIZACION_ESCALA;
             }
 
-            // Contador de incumplimiento de SLA
+            // Contador de incumplimiento de SLA en vuelo
             if (PlanificadorUtils.excedePlazoMaximo(envio, itinerario, mapaAeropuertos)) {
                 excedeSla++;
                 fitness += PENALIZACION_EXCEDE_SLA;
+                asignacion.setExcedeSla(true);
+            } else {
+                asignacion.setExcedeSla(false);
             }
 
             for (VueloInstanciado vuelo : itinerario.getVuelos()) {

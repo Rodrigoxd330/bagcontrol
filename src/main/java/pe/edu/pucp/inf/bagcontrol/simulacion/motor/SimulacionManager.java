@@ -11,8 +11,7 @@ import pe.edu.pucp.inf.bagcontrol.planificacion.service.PlanificadorService;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
 
-import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -27,43 +26,70 @@ public class SimulacionManager {
 
     private final ConcurrentHashMap<String, SimulacionJob> trabajosActivos = new ConcurrentHashMap<>();
 
-    public String crearJob(LocalDate fechaInicio, LocalDate fechaFin, int k, String algoritmo) {
+    public String crearJob(LocalDateTime fechaInicio, LocalDateTime fechaFin, int k, String algoritmo) {
+        String simulacionId = UUID.randomUUID().toString();
+
+        // 1. Instanciamos la memoria y su mutador para este job específico
+        SimulacionState state = new SimulacionState(simulacionId);
+        SimulacionStateMutator mutator = new SimulacionStateMutator(state, aeropuertoRepository);
+
+        // 2. Determinamos la configuración de colapso según el escenario
+        ConfiguracionColapsoDTO configColapso = null;
         if (fechaFin == null) {
-            fechaFin = fechaInicio.plusDays(1);
-        }
-        return crearJobNormal(fechaInicio, fechaFin, k, algoritmo);
-    }
-
-    public String crearJobColapso(LocalDate fechaInicio, int k, String algoritmo) {
-        String simulacionId = UUID.randomUUID().toString();
-        ConfiguracionColapsoDTO configColapso = crearConfiguracionColapsoPorDefecto();
-        SimulacionJob job = new SimulacionJob(
-                simulacionId, fechaInicio, null, k, algoritmo,
-                planificadorService, aeropuertoRepository, webSocketPublisher, configColapso
-        );
-        iniciarJob(simulacionId, job);
-        return simulacionId;
-    }
-
-    private String crearJobNormal(LocalDate fechaInicio, LocalDate fechaFin, int k, String algoritmo) {
-        if (fechaInicio.isAfter(fechaFin) || fechaInicio.isEqual(fechaFin)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La fecha fin debe ser mayor a la fecha inicio.");
+            configColapso = crearConfiguracionColapsoPorDefecto();
+            state.setModoSimulacion("COLAPSO");
+        } else {
+            if (fechaInicio.isAfter(fechaFin) || fechaInicio.isEqual(fechaFin)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La fecha fin debe ser mayor a la fecha inicio.");
+            }
+            state.setModoSimulacion("ESTANDAR");
         }
 
-        String simulacionId = UUID.randomUUID().toString();
-        SimulacionJob job = new SimulacionJob(
-                simulacionId, fechaInicio, (int) ChronoUnit.DAYS.between(fechaInicio, fechaFin), k, algoritmo,
-                planificadorService, aeropuertoRepository, webSocketPublisher, null
-        );
-        iniciarJob(simulacionId, job);
-        return simulacionId;
-    }
+        // 3. Instanciamos la fábrica de eventos pasándole la configuración
+        SimulacionEventosFactory eventosFactory = new SimulacionEventosFactory(configColapso);
 
-    private void iniciarJob(String simulacionId, SimulacionJob job) {
+        // 4. Armamos el Job con todas sus dependencias
+        SimulacionJob job = new SimulacionJob(
+                simulacionId,
+                fechaInicio,
+                fechaFin,
+                k,
+                algoritmo,
+                planificadorService,
+                aeropuertoRepository,
+                webSocketPublisher,
+                eventosFactory,
+                state,
+                configColapso,
+                mutator
+        );
+
         trabajosActivos.put(simulacionId, job);
+
+        return simulacionId;
+    }
+
+    public void arrancarJob(String simulacionId) {
+        SimulacionJob job = trabajosActivos.get(simulacionId);
+        if (job == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Simulación no encontrada: " + simulacionId);
+        }
+        if (!"CREADA".equals(job.getState().getEstado())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "La simulacion ya fue arrancada: " + simulacionId);
+        }
         Thread thread = new Thread(job, "simulacion-" + simulacionId);
         job.asignarHilo(thread);
         thread.start();
+    }
+
+    public String crearYArrancarJob(LocalDateTime fechaInicio, LocalDateTime fechaFin, int k, String algoritmo) {
+        String simulacionId = crearJob(fechaInicio, fechaFin, k, algoritmo);
+        arrancarJob(simulacionId);
+        return simulacionId;
+    }
+
+    public String crearYArrancarJobColapso(LocalDateTime fechaInicio, int k, String algoritmo) {
+        return crearYArrancarJob(fechaInicio, null, k, algoritmo);
     }
 
     private ConfiguracionColapsoDTO crearConfiguracionColapsoPorDefecto() {
@@ -85,13 +111,6 @@ public class SimulacionManager {
         obtenerJob(simulacionId).reanudar();
     }
 
-    public void cambiarVelocidad(String simulacionId, long saMs) {
-        if (saMs < 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La velocidad no puede ser negativa.");
-        }
-        obtenerJob(simulacionId).cambiarVelocidad(saMs);
-    }
-
     public SimulacionEstadoDTO obtenerEstado(String simulacionId) {
         SimulacionJob job = obtenerJob(simulacionId);
         SimulacionState state = job.getState();
@@ -101,13 +120,13 @@ public class SimulacionManager {
                 state.getEstado(),
                 job.estaPausada(),
                 job.estaDetenida(),
-                state.getVelocidadMs(),
+                job.getSaMs(),
                 state.getUltimoLoteEmitidoNumero().get(),
                 job.getAlgoritmo(),
                 job.getK(),
                 job.getFechaInicio().toString(),
                 job.getFechaCreacion().toString(),
-                state.getTiempoSimuladoActual() != null ? state.getTiempoSimuladoActual().toString() : null
+                state.getTiempoActual() != null ? state.getTiempoActual().toString() : null
         );
     }
 
