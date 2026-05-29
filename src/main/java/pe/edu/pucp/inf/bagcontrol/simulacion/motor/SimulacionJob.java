@@ -183,16 +183,18 @@ public class SimulacionJob implements Runnable {
             listaEventosBatch.sort(Comparator.comparing(e -> Instant.parse(e.getFechaHoraEvento())));
 
             // 6. Manejo de Colapso y Envío
-            //TODO (Faltaría identificar el momento exacto en donde se colapsó, DEBERÍA ESTAR JUSTO DEPUÉS DEL EVENTO QUE HIZO COLAPSAR)
             if (colapso) {
                 state.setEstado("COLAPSADA");
                 String causaPrincipal = state.getMotivoColapso() != null
                         ? state.getMotivoColapso()
                         : (criteriosColapso.isEmpty() ? "COLAPSO_DETECTADO" : criteriosColapso.get(0));
+                Instant instanteColapso = determinarInstanteColapso(listaEventosBatch, criteriosColapso, causaPrincipal, finVentanaActual);
+                Instant finalInstanteColapso = instanteColapso;
+                listaEventosBatch.removeIf(evento -> Instant.parse(evento.getFechaHoraEvento()).isAfter(finalInstanteColapso));
                 listaEventosBatch.add(new EventoColapsoDTO(
-                        proximoTiempo.toInstant(ZoneOffset.UTC).toString(),
+                        instanteColapso.toString(),
                         simulacionId,
-                        proximoTiempo.toInstant(ZoneOffset.UTC).toString(),
+                        instanteColapso.toString(),
                         ciclo,
                         causaPrincipal,
                         criteriosColapso,
@@ -231,7 +233,7 @@ public class SimulacionJob implements Runnable {
     }
 
     // =========================================================================================
-    // MÉTODOS DE LÓGICA DE EVENTOS Y FÍSICA
+    // Metodos de logica de eventos y fisica
     // =========================================================================================
 
     private void verificarEventosPostergados(Instant finVentanaActual, List<EventoBaseDTO> listaEventosBatch, List<EventoBaseDTO> listaEventosPostergados) {
@@ -316,13 +318,61 @@ public class SimulacionJob implements Runnable {
         return horasEsperando > horasLimite;
     }
 
+    private Instant determinarInstanteColapso(
+            List<EventoBaseDTO> eventos,
+            List<String> criteriosColapso,
+            String causaPrincipal,
+            Instant finVentanaActual
+    ) {
+        if (criteriosColapso.contains("AEROPUERTO_SATURADO")) {
+            return eventos.stream()
+                    .filter(EventoAeropuertoDTO.class::isInstance)
+                    .map(EventoAeropuertoDTO.class::cast)
+                    .filter(evento -> evento.getMaletasActuales() >= evento.getCapacidadAlmacen()
+                            || superaUmbralAeropuerto(evento.getPorcentajeOcupacion()))
+                    .map(evento -> Instant.parse(evento.getFechaHoraEvento()))
+                    .min(Instant::compareTo)
+                    .orElse(finVentanaActual);
+        }
+
+        if (criteriosColapso.contains("VUELOS_SOBRECARGADOS")) {
+            return eventos.stream()
+                    .filter(EventoVueloDTO.class::isInstance)
+                    .map(EventoVueloDTO.class::cast)
+                    .filter(evento -> evento.getEstado() == EstadoCapacidad.ROJO)
+                    .map(evento -> Instant.parse(evento.getFechaHoraEvento()))
+                    .min(Instant::compareTo)
+                    .orElse(finVentanaActual);
+        }
+
+        if ("SLA_INCUMPLIDO_PLANIFICADO".equals(causaPrincipal)
+                || "SLA_INCUMPLIDO_TIEMPO_DE_ESPERA".equals(causaPrincipal)
+                || criteriosColapso.contains("PORCENTAJE_SLA_INCUMPLIDO")
+                || criteriosColapso.contains("PORCENTAJE_SIN_ITINERARIO")) {
+            return state.getTiempoActual().toInstant(ZoneOffset.UTC);
+        }
+
+        return eventos.stream()
+                .map(EventoBaseDTO::getFechaHoraEvento)
+                .map(Instant::parse)
+                .max(Instant::compareTo)
+                .orElse(finVentanaActual);
+    }
+
+    private boolean superaUmbralAeropuerto(double porcentajeOcupacion) {
+        if (configuracionColapsoDTO == null) {
+            return false;
+        }
+        return porcentajeOcupacion >= configuracionColapsoDTO.getUmbralAeropuerto() * 100.0;
+    }
+
     // =========================================================================================
-    // MÉTODOS DE PUBLICACIÓN Y COMUNICACIÓN (WEBSOCKETS)
+    // Metodos de publicacion y comunicacion (WebSockets)
     // =========================================================================================
 
     private void publicarControl(TipoEvento tipoEvento) {
-        EventoBaseDTO evento = new EventoBaseDTO(tipoEvento, LocalDateTime.now().toString());
         Instant ventana = state.getTiempoActual() != null ? state.getTiempoActual().toInstant(ZoneOffset.UTC) : Instant.now();
+        EventoBaseDTO evento = new EventoBaseDTO(tipoEvento, ventana.toString());
         publicarLote(List.of(evento), ventana, ventana);
     }
 
@@ -339,7 +389,7 @@ public class SimulacionJob implements Runnable {
     }
 
     // =========================================================================================
-    // MÉTODOS DE CONTROL DEL HILO (PAUSA, REANUDAR, DETENER, VELOCIDAD)
+    // Metodos de control del hilo (pausa, reanudar, detener, velocidad)
     // =========================================================================================
 
     private void esperarConControl() {
