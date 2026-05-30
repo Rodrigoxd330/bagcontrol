@@ -8,7 +8,6 @@ import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.service.PlanificadorService;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
-import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MetricasColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.*;
 
 import java.time.Instant;
@@ -23,7 +22,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SimulacionJob implements Runnable {
 
     @Getter
-    private final int saMs = 30_000;
+    private final int saMs = 12_000;
 
     private final String simulacionId;
     private final LocalDateTime horaInicio;
@@ -101,12 +100,11 @@ public class SimulacionJob implements Runnable {
         state.setTiempoActual(horaInicio);
         LocalDateTime tiempoFin = (horaFin == null) ? LocalDateTime.MAX : horaFin;
 
-        // La lista global que perdura entre ciclos
         List<EventoBaseDTO> listaEventosPostergados = new ArrayList<>();
 
         while (state.getTiempoActual().isBefore(tiempoFin)) {
             long t0 = System.currentTimeMillis();
-            List<EventoBaseDTO> listaEventosBatch = new ArrayList<>(); // Lo que se envía al Front en este ciclo
+            List<EventoBaseDTO> listaEventosBatch = new ArrayList<>();
 
             verificarDetencion();
             esperarSiPausadaODetenida();
@@ -116,16 +114,16 @@ public class SimulacionJob implements Runnable {
             int ciclo = state.getCicloActual() + 1;
             state.setCicloActual(ciclo);
 
-            // 1. Ver si los eventos (vuelos) postergados se van a procesar en esta iteración (se agregan a listaBatch)
+            // 1. Procesar eventos de vuelos postergados que pertenecen a esta ventana física
             verificarEventosPostergados(finVentanaActual, listaEventosBatch, listaEventosPostergados);
             agregarEventosVuelosCancelados(state.getTiempoActual(), proximoTiempo, listaEventosBatch);
 
-            // 2. Calcular Solución
+            // 2. Calcular Solución del Planificador
             SolucionRuta solucionActual = planificadorService.calcularSolucion(algoritmo, state.getTiempoActual(), proximoTiempo, state.getEnviosPendientes());
             state.setSolucionActual(solucionActual);
             simulacionStateMutator.indexarEnviosPorVuelo(solucionActual);
 
-            // 3. Se registran las nuevas maletas
+            // 3. Registrar entrada de nuevas maletas (Check-in) al iniciar la ventana
             for (RutaAsignada asignacion : solucionActual.getAsignaciones()) {
                 Envio envio = asignacion.getEnvio();
                 String origen = envio.getOrigenIata();
@@ -137,41 +135,17 @@ public class SimulacionJob implements Runnable {
                 Instant tiempoCheckIn = envio.getFechaHora().toInstant(ZoneOffset.UTC);
                 listaEventosBatch.add(simulacionEventosFactory.crearEventoAeropuerto(aero, inv, tiempoCheckIn));
             }
-            List<Envio> nuevosVentana = planificadorService.obtenerEnviosEnVentana(state.getTiempoActual(), proximoTiempo);
-            List<Envio> enviosAProcesar = new ArrayList<>(nuevosVentana);
-            enviosAProcesar.addAll(state.getEnviosPendientes());
-            MetricasColapsoDTO metricasColapso = simulacionEventosFactory.calcularMetricasColapso(
-                    ciclo,
-                    state.getTiempoActual(),
-                    proximoTiempo,
-                    nuevosVentana,
-                    state.getEnviosPendientes(),
-                    enviosAProcesar,
-                    solucionActual,
-                    state.getAeropuertosSnapshot()
-            );
-            List<String> criteriosColapso = configuracionColapsoDTO != null
-                    ? simulacionEventosFactory.detectarCriteriosColapso(metricasColapso)
-                    : new ArrayList<>();
-            boolean colapso = verificarCondicionesColapso(solucionActual) || !criteriosColapso.isEmpty();
-            metricasColapso.setMotivoColapso(state.getMotivoColapso());
-            state.setMetricasColapsoActuales(metricasColapso);
-            if (configuracionColapsoDTO != null) {
-                listaEventosBatch.add(new EventoCicloColapsoDTO(
-                        state.getTiempoActual().toInstant(ZoneOffset.UTC).toString(),
-                        ciclo,
-                        metricasColapso
-                ));
-            }
 
-            // 4. Extraer eventos de la solución y separar Actuales de Futuros
+            // Verificar si el planificador ya reportó colapso por SLA
+            boolean colapsoPorSla = verificarConditionsColapso(solucionActual);
+
+            // 4. Extraer eventos de la solución y separar los que ocurren ahora de los futuros
             SimulacionEventosFactory.ResultadoEventosVuelo eventosVuelos =
                     simulacionEventosFactory.generarEventosVuelo(solucionActual, finVentanaActual);
 
-            // Los futuros se van a la refrigeradora global
             listaEventosPostergados.addAll(eventosVuelos.futuros());
 
-            // Los actuales entran al Batch y generan los batch de actualización de aeropuertos (la resta)
+            // Ejecutar la física de los vuelos actuales en esta ventana
             for (EventoBaseDTO eventoActual : eventosVuelos.actuales()) {
                 listaEventosBatch.add(eventoActual);
                 if (eventoActual instanceof EventoVueloDTO evVuelo) {
@@ -179,38 +153,63 @@ public class SimulacionJob implements Runnable {
                     aplicarFisicaVuelo(evVuelo, horaEvento, listaEventosBatch);
                 }
             }
-            // 5. Ordenar el Lote cronológicamente
+
+            // 5. Ordenar cronológicamente para inspeccionar la línea de tiempo real
             listaEventosBatch.sort(Comparator.comparing(e -> Instant.parse(e.getFechaHoraEvento())));
 
-            // 6. Manejo de Colapso y Envío
-            if (colapso) {
-                state.setEstado("COLAPSADA");
-                String causaPrincipal = state.getMotivoColapso() != null
-                        ? state.getMotivoColapso()
-                        : (criteriosColapso.isEmpty() ? "COLAPSO_DETECTADO" : criteriosColapso.get(0));
-                Instant instanteColapso = determinarInstanteColapso(listaEventosBatch, criteriosColapso, causaPrincipal, finVentanaActual);
-                Instant finalInstanteColapso = instanteColapso;
-                listaEventosBatch.removeIf(evento -> Instant.parse(evento.getFechaHoraEvento()).isAfter(finalInstanteColapso));
-                listaEventosBatch.add(new EventoColapsoDTO(
-                        instanteColapso.toString(),
-                        simulacionId,
-                        instanteColapso.toString(),
-                        ciclo,
-                        causaPrincipal,
-                        criteriosColapso,
-                        metricasColapso
-                ));
-                System.out.println("SIMULACION COLAPSADA");
+            // 6. Análisis dinámico y eficiente de Colapso por Almacén
+            Instant instanteColapso = null;
+            String causaColapso = null;
+
+            if (colapsoPorSla) {
+                instanteColapso = state.getTiempoActual().toInstant(ZoneOffset.UTC);
+                causaColapso = state.getMotivoColapso();
+            } else {
+                // Evaluamos los eventos ordenados para ver EXACTAMENTE cuál rompió el límite de almacenamiento
+                double umbralConfigurado = (configuracionColapsoDTO != null) ? configuracionColapsoDTO.getUmbralAeropuerto() : 1.0;
+
+                for (EventoBaseDTO evento : listaEventosBatch) {
+                    if (evento instanceof EventoAeropuertoDTO evAero) {
+                        double ocupacion = (double) evAero.getMaletasActuales() / evAero.getCapacidadAlmacen();
+                        if (ocupacion >= umbralConfigurado) {
+                            instanteColapso = Instant.parse(evAero.getFechaHoraEvento());
+                            causaColapso = "AEROPUERTO_SATURADO";
+                            state.setMotivoColapso(causaColapso);
+                            break; // Rompemos en el primer instante cronológico exacto
+                        }
+                    }
+                }
             }
-            listaEventosBatch.sort(Comparator.comparing(e -> Instant.parse(e.getFechaHoraEvento())));
-            //7 Se publica el nuevo lote
+
+            // 7. Si hay colapso, cortar eventos futuros y despachar el evento definitivo de colapso
+            if (causaColapso != null) {
+                state.setEstado("COLAPSADA");
+                Instant finalInstanteColapso = instanteColapso;
+
+                // Remover eventos que teóricamente pasaban después del segundo exacto del colapso
+                listaEventosBatch.removeIf(evento -> Instant.parse(evento.getFechaHoraEvento()).isAfter(finalInstanteColapso));
+
+                // Agregar el DTO informativo de colapso al final del lote reducido
+                listaEventosBatch.add(new EventoColapsoDTO(
+                        finalInstanteColapso.toString(),
+                        simulacionId,
+                        finalInstanteColapso.toString(),
+                        ciclo,
+                        causaColapso,
+                        List.of(causaColapso),
+                        null // Ya no necesitas inyectar un objeto Metricas pesado e innecesario
+                ));
+                System.out.println("SIMULACION COLAPSADA POR: " + causaColapso + " EN " + finalInstanteColapso);
+            }
+
+            // 8. Publicar lote al Frontend
             publicarLote(listaEventosBatch, state.getTiempoActual().toInstant(ZoneOffset.UTC), finVentanaActual);
-            if(colapso) {
+            if (causaColapso != null) {
                 publicarControl(TipoEvento.SIMULACION_FINALIZADA);
                 break;
             }
 
-            // 8. Se actualizan los pendientes para el siguiente coclo
+            // 9. Actualizar pendientes para el siguiente ciclo
             actualizarPendientesParaSiguienteCiclo(solucionActual);
 
             long tLote = System.currentTimeMillis() - t0;
@@ -233,20 +232,18 @@ public class SimulacionJob implements Runnable {
     }
 
     // =========================================================================================
-    // Metodos de logica de eventos y fisica
+    // Metodos auxiliares de logica de eventos y fisica
     // =========================================================================================
 
     private void verificarEventosPostergados(Instant finVentanaActual, List<EventoBaseDTO> listaEventosBatch, List<EventoBaseDTO> listaEventosPostergados) {
         Iterator<EventoBaseDTO> it = listaEventosPostergados.iterator();
-
         while (it.hasNext()) {
             EventoBaseDTO evento = it.next();
             Instant horaEvento = Instant.parse(evento.getFechaHoraEvento());
 
             if (!horaEvento.isAfter(finVentanaActual)) {
-                it.remove(); // Sale de la sala de espera
-                listaEventosBatch.add(evento); // Entra al envío actual
-
+                it.remove();
+                listaEventosBatch.add(evento);
                 if (evento instanceof EventoVueloDTO evVuelo) {
                     aplicarFisicaVuelo(evVuelo, horaEvento, listaEventosBatch);
                 }
@@ -286,7 +283,7 @@ public class SimulacionJob implements Runnable {
         }
     }
 
-    private boolean verificarCondicionesColapso(SolucionRuta solucion) {
+    private boolean verificarConditionsColapso(SolucionRuta solucion) {
         if (solucion.getExcedeSlaCount() > 0) {
             state.setMotivoColapso("SLA_INCUMPLIDO_PLANIFICADO");
             return true;
@@ -318,58 +315,6 @@ public class SimulacionJob implements Runnable {
         return horasEsperando > horasLimite;
     }
 
-    private Instant determinarInstanteColapso(
-            List<EventoBaseDTO> eventos,
-            List<String> criteriosColapso,
-            String causaPrincipal,
-            Instant finVentanaActual
-    ) {
-        if (criteriosColapso.contains("AEROPUERTO_SATURADO")) {
-            return eventos.stream()
-                    .filter(EventoAeropuertoDTO.class::isInstance)
-                    .map(EventoAeropuertoDTO.class::cast)
-                    .filter(evento -> evento.getMaletasActuales() >= evento.getCapacidadAlmacen()
-                            || superaUmbralAeropuerto(evento.getPorcentajeOcupacion()))
-                    .map(evento -> Instant.parse(evento.getFechaHoraEvento()))
-                    .min(Instant::compareTo)
-                    .orElse(finVentanaActual);
-        }
-
-        if (criteriosColapso.contains("VUELOS_SOBRECARGADOS")) {
-            return eventos.stream()
-                    .filter(EventoVueloDTO.class::isInstance)
-                    .map(EventoVueloDTO.class::cast)
-                    .filter(evento -> evento.getEstado() == EstadoCapacidad.ROJO)
-                    .map(evento -> Instant.parse(evento.getFechaHoraEvento()))
-                    .min(Instant::compareTo)
-                    .orElse(finVentanaActual);
-        }
-
-        if ("SLA_INCUMPLIDO_PLANIFICADO".equals(causaPrincipal)
-                || "SLA_INCUMPLIDO_TIEMPO_DE_ESPERA".equals(causaPrincipal)
-                || criteriosColapso.contains("PORCENTAJE_SLA_INCUMPLIDO")
-                || criteriosColapso.contains("PORCENTAJE_SIN_ITINERARIO")) {
-            return state.getTiempoActual().toInstant(ZoneOffset.UTC);
-        }
-
-        return eventos.stream()
-                .map(EventoBaseDTO::getFechaHoraEvento)
-                .map(Instant::parse)
-                .max(Instant::compareTo)
-                .orElse(finVentanaActual);
-    }
-
-    private boolean superaUmbralAeropuerto(double porcentajeOcupacion) {
-        if (configuracionColapsoDTO == null) {
-            return false;
-        }
-        return porcentajeOcupacion >= configuracionColapsoDTO.getUmbralAeropuerto() * 100.0;
-    }
-
-    // =========================================================================================
-    // Metodos de publicacion y comunicacion (WebSockets)
-    // =========================================================================================
-
     private void publicarControl(TipoEvento tipoEvento) {
         Instant ventana = state.getTiempoActual() != null ? state.getTiempoActual().toInstant(ZoneOffset.UTC) : Instant.now();
         EventoBaseDTO evento = new EventoBaseDTO(tipoEvento, ventana.toString());
@@ -387,10 +332,6 @@ public class SimulacionJob implements Runnable {
         state.setUltimoLoteEmitido(lote);
         webSocketPublisher.publicarLote(simulacionId, lote);
     }
-
-    // =========================================================================================
-    // Metodos de control del hilo (pausa, reanudar, detener, velocidad)
-    // =========================================================================================
 
     private void esperarConControl() {
         long acumulado = 0L;
@@ -457,17 +398,9 @@ public class SimulacionJob implements Runnable {
         if (hilo != null) hilo.interrupt();
     }
 
-    public boolean estaPausada() {
-        return pausada.get();
-    }
-
-    public boolean estaDetenida() {
-        return detenida.get();
-    }
-
-    public LocalDateTime getFechaInicio() {
-        return horaInicio;
-    }
+    public boolean estaPausada() { return pausada.get(); }
+    public boolean estaDetenida() { return detenida.get(); }
+    public LocalDateTime getFechaInicio() { return horaInicio; }
 
     private static class SimulacionDetenidaException extends RuntimeException {}
 }
