@@ -112,6 +112,9 @@ public class PlanificadorUtils {
             Map<VueloInstanciado, Integer> cargaAcumulada
     ) {
         for (VueloInstanciado vuelo : itinerario.getVuelos()) {
+            if (vuelo.isEstaCancelado()) {
+                return false;
+            }
             int cargaActual = cargaAcumulada.getOrDefault(vuelo, 0);
             if (cargaActual + envio.getCantidadMaletas() > vuelo.getCapacidadMax()) {
                 return false;

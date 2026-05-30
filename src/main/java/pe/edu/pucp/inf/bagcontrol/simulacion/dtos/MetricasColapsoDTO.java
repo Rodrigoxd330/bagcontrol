@@ -29,4 +29,9 @@ public class MetricasColapsoDTO {
     private double ocupacionAeropuertoMaxima;
     private double fitnessUltimaSolucion;
     private String motivoColapso;
+    private String codigoAeropuertoColapsado;
+    private Integer maletasActualesAeropuerto;
+    private Integer capacidadAeropuerto;
+    private Double porcentajeOcupacionAeropuerto;
+    private String causaPrincipal;
 }

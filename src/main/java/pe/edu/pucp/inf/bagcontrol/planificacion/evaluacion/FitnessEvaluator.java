@@ -20,11 +20,13 @@ public class FitnessEvaluator {
     private static final double PENALIZACION_SOBRECARGA_VUELO = 50.0;
     private static final double PENALIZACION_SOBRECARGA_AEROPUERTO = 10.0;
     private static final double PENALIZACION_ESCALA = 10.0;
+    private static final double PENALIZACION_VUELO_CANCELADO = 100000.0;
 
     public double evaluar(SolucionRuta solucion, Map<String, Aeropuerto> mapaAeropuertos) {
         double fitness = 0.0;
         int sinItinerario = 0;
         int excedeSla = 0;
+        int vuelosCanceladosUsados = 0;
 
         Map<VueloInstanciado, Integer> cargaPorVuelo = new HashMap<>();
         Map<String, Integer> cargaPorAeropuerto = new HashMap<>();
@@ -46,6 +48,11 @@ public class FitnessEvaluator {
                 fitness += (itinerario.getCantidadVuelos() - 1) * PENALIZACION_ESCALA;
             }
 
+            if (itinerario.contieneVueloCancelado()) {
+                vuelosCanceladosUsados++;
+                fitness += PENALIZACION_VUELO_CANCELADO;
+            }
+
             // Contador de incumplimiento de SLA en vuelo
             if (PlanificadorUtils.excedePlazoMaximo(envio, itinerario, mapaAeropuertos)) {
                 excedeSla++;
@@ -63,19 +70,23 @@ public class FitnessEvaluator {
         }
 
         // Penalizaciones por capacidad de vuelo
+        int vuelosSobrecargados = 0;
         for (Map.Entry<VueloInstanciado, Integer> entry : cargaPorVuelo.entrySet()) {
             VueloInstanciado vuelo = entry.getKey();
             int cargaActual = entry.getValue();
             if (cargaActual > vuelo.getCapacidadMax()) {
+                vuelosSobrecargados++;
                 int exceso = cargaActual - vuelo.getCapacidadMax();
                 fitness += Math.pow(exceso, 2) * PENALIZACION_SOBRECARGA_VUELO;
             }
         }
 
         // Penalizaciones por capacidad de aeropuerto
+        int aeropuertosSaturados = 0;
         for (Map.Entry<String, Integer> entry : cargaPorAeropuerto.entrySet()) {
             Aeropuerto aeropuerto = mapaAeropuertos.get(entry.getKey());
             if (aeropuerto != null && entry.getValue() > aeropuerto.getCapacidadAlmacen()) {
+                aeropuertosSaturados++;
                 int exceso = entry.getValue() - aeropuerto.getCapacidadAlmacen();
                 fitness += exceso * PENALIZACION_SOBRECARGA_AEROPUERTO;
             }
@@ -85,6 +96,9 @@ public class FitnessEvaluator {
         solucion.setFitness(fitness);
         solucion.setSinItinerarioCount(sinItinerario);
         solucion.setExcedeSlaCount(excedeSla);
+        solucion.setVuelosCanceladosUsadosCount(vuelosCanceladosUsados);
+        solucion.setVuelosSobrecargadosCount(vuelosSobrecargados);
+        solucion.setAeropuertosSaturadosCount(aeropuertosSaturados);
 
         return fitness;
     }

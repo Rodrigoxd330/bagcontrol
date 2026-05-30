@@ -13,6 +13,9 @@ public class SolucionRuta {
     private double fitness;
     private int sinItinerarioCount;
     private int excedeSlaCount;
+    private int vuelosCanceladosUsadosCount;
+    private int vuelosSobrecargadosCount;
+    private int aeropuertosSaturadosCount;
 
     public void agregarAsignacion(Envio envio, Itinerario itinerario) {
         asignaciones.add(new RutaAsignada(envio, itinerario, false)); //El excedeSLA se evalua después
@@ -38,6 +41,9 @@ public class SolucionRuta {
         copia.setFitness(this.fitness);
         copia.setSinItinerarioCount(this.sinItinerarioCount);
         copia.setExcedeSlaCount(this.excedeSlaCount);
+        copia.setVuelosCanceladosUsadosCount(this.vuelosCanceladosUsadosCount);
+        copia.setVuelosSobrecargadosCount(this.vuelosSobrecargadosCount);
+        copia.setAeropuertosSaturadosCount(this.aeropuertosSaturadosCount);
 
         for (RutaAsignada asignacion : this.asignaciones) {
             copia.getAsignaciones().add(new RutaAsignada(

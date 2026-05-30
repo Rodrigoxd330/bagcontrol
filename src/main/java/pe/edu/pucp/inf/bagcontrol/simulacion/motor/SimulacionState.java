@@ -5,6 +5,7 @@ import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.DetalleColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.LoteEventosDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MetricasColapsoDTO;
 
@@ -37,6 +38,7 @@ public class SimulacionState {
     //Colapso
     private MetricasColapsoDTO metricasColapsoActuales;
     private String motivoColapso;
+    private DetalleColapsoDTO detalleColapso;
 
     public SimulacionState(String simulacionId) {
         this.simulacionId = simulacionId;

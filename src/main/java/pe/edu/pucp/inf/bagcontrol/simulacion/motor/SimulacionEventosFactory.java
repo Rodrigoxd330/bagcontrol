@@ -161,7 +161,8 @@ public class SimulacionEventosFactory {
                 enviosProcesados > 0 ? enviosSinItinerario / (double) enviosProcesados : 0.0,
                 slaIncumplidos,
                 enviosProcesados > 0 ? slaIncumplidos / (double) enviosProcesados : 0.0,
-                vuelosSobrecargados, aeropuertosSaturados, ocupacionAeropuertoMaxima, solucion.getFitness(), null
+                vuelosSobrecargados, aeropuertosSaturados, ocupacionAeropuertoMaxima, solucion.getFitness(), null,
+                null, null, null, null, null
         );
     }
 

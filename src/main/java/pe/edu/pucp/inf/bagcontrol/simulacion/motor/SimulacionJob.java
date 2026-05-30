@@ -4,10 +4,13 @@ import lombok.Getter;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
+import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.service.PlanificadorService;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.DetalleColapsoDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MetricasColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.*;
 
 import java.time.Instant;
@@ -175,6 +178,14 @@ public class SimulacionJob implements Runnable {
                             instanteColapso = Instant.parse(evAero.getFechaHoraEvento());
                             causaColapso = "AEROPUERTO_SATURADO";
                             state.setMotivoColapso(causaColapso);
+                            state.setDetalleColapso(crearDetalleColapsoAeropuerto(evAero));
+                            state.setMetricasColapsoActuales(crearMetricasColapsoAeropuerto(
+                                    ciclo,
+                                    state.getTiempoActual(),
+                                    proximoTiempo,
+                                    evAero,
+                                    solucionActual
+                            ));
                             break; // Rompemos en el primer instante cronológico exacto
                         }
                     }
@@ -197,7 +208,8 @@ public class SimulacionJob implements Runnable {
                         ciclo,
                         causaColapso,
                         List.of(causaColapso),
-                        null // Ya no necesitas inyectar un objeto Metricas pesado e innecesario
+                        state.getMetricasColapsoActuales(),
+                        state.getDetalleColapso()
                 ));
                 System.out.println("SIMULACION COLAPSADA POR: " + causaColapso + " EN " + finalInstanteColapso);
             }
@@ -284,18 +296,112 @@ public class SimulacionJob implements Runnable {
     }
 
     private boolean verificarConditionsColapso(SolucionRuta solucion) {
+        if (solucion.getVuelosCanceladosUsadosCount() > 0) {
+            solucion.getAsignaciones().stream()
+                    .filter(a -> a.getItinerario() != null && a.getItinerario().contieneVueloCancelado())
+                    .findFirst()
+                    .ifPresent(a -> state.setDetalleColapso(crearDetalleColapso(a, "VUELO_CANCELADO")));
+            state.setMotivoColapso("VUELO_CANCELADO");
+            return true;
+        }
+
         if (solucion.getExcedeSlaCount() > 0) {
-            state.setMotivoColapso("SLA_INCUMPLIDO_PLANIFICADO");
+            solucion.getAsignaciones().stream()
+                    .filter(RutaAsignada::isExcedeSla)
+                    .findFirst()
+                    .ifPresent(a -> state.setDetalleColapso(crearDetalleColapso(a, "SLA_INCUMPLIDO")));
+            state.setMotivoColapso("SLA_INCUMPLIDO");
             return true;
         }
 
         for (Envio pendiente : solucion.obtenerEnviosConConflictos()) {
             if (excedeTiempoEsperaEnAeropuerto(pendiente)) {
-                state.setMotivoColapso("SLA_INCUMPLIDO_TIEMPO_DE_ESPERA");
+                state.setDetalleColapso(crearDetalleColapso(pendiente, "SIN_ITINERARIO"));
+                state.setMotivoColapso("SIN_ITINERARIO");
                 return true;
             }
         }
         return false;
+    }
+
+    private MetricasColapsoDTO crearMetricasColapsoAeropuerto(
+            int ciclo,
+            LocalDateTime ventanaInicio,
+            LocalDateTime ventanaFin,
+            EventoAeropuertoDTO eventoAeropuerto,
+            SolucionRuta solucion
+    ) {
+        double ocupacion = eventoAeropuerto.getCapacidadAlmacen() > 0
+                ? eventoAeropuerto.getMaletasActuales() / (double) eventoAeropuerto.getCapacidadAlmacen()
+                : 0.0;
+
+        MetricasColapsoDTO metricas = new MetricasColapsoDTO();
+        metricas.setCiclo(ciclo);
+        metricas.setVentanaInicio(ventanaInicio.toString());
+        metricas.setVentanaFin(ventanaFin.toString());
+        metricas.setAeropuertosSaturados(1);
+        metricas.setOcupacionAeropuertoMaxima(ocupacion);
+        metricas.setFitnessUltimaSolucion(solucion != null ? solucion.getFitness() : 0.0);
+        metricas.setMotivoColapso("AEROPUERTO_SATURADO");
+        metricas.setCodigoAeropuertoColapsado(eventoAeropuerto.getCodigoAeropuerto());
+        metricas.setMaletasActualesAeropuerto(eventoAeropuerto.getMaletasActuales());
+        metricas.setCapacidadAeropuerto(eventoAeropuerto.getCapacidadAlmacen());
+        metricas.setPorcentajeOcupacionAeropuerto(eventoAeropuerto.getPorcentajeOcupacion());
+        metricas.setCausaPrincipal("AEROPUERTO_SATURADO");
+        return metricas;
+    }
+
+    private DetalleColapsoDTO crearDetalleColapsoAeropuerto(EventoAeropuertoDTO eventoAeropuerto) {
+        DetalleColapsoDTO detalle = new DetalleColapsoDTO();
+        detalle.setOrigenIata(eventoAeropuerto.getCodigoAeropuerto());
+        detalle.setCantidadMaletas(eventoAeropuerto.getMaletasActuales());
+        detalle.setMotivo("AEROPUERTO_SATURADO");
+        detalle.setHoraSimulada(eventoAeropuerto.getFechaHoraEvento());
+        detalle.setTipo("AEROPUERTO_SATURADO");
+        detalle.setCodigoAeropuerto(eventoAeropuerto.getCodigoAeropuerto());
+        detalle.setCapacidad(eventoAeropuerto.getCapacidadAlmacen());
+        detalle.setMaletasActuales(eventoAeropuerto.getMaletasActuales());
+        detalle.setPorcentajeOcupacion(eventoAeropuerto.getPorcentajeOcupacion());
+        return detalle;
+    }
+
+    private DetalleColapsoDTO crearDetalleColapso(RutaAsignada asignacion, String motivo) {
+        Envio envio = asignacion.getEnvio();
+        Long vueloAfectado = null;
+        String itinerarioAfectado = null;
+        if (asignacion.getItinerario() != null) {
+            itinerarioAfectado = asignacion.getItinerario().getIdItinerario();
+            vueloAfectado = asignacion.getItinerario().getVuelos().stream()
+                    .filter(VueloInstanciado::isEstaCancelado)
+                    .map(VueloInstanciado::getCodigoBase)
+                    .findFirst()
+                    .orElseGet(() -> asignacion.getItinerario().getVuelos().isEmpty()
+                            ? null
+                            : asignacion.getItinerario().getVuelos().get(0).getCodigoBase());
+        }
+        return new DetalleColapsoDTO(
+                envio.getIdPedido(),
+                envio.getOrigenIata(),
+                envio.getDestinoIata(),
+                envio.getCantidadMaletas(),
+                motivo,
+                vueloAfectado,
+                itinerarioAfectado,
+                state.getTiempoActual().toInstant(ZoneOffset.UTC).toString()
+        );
+    }
+
+    private DetalleColapsoDTO crearDetalleColapso(Envio envio, String motivo) {
+        return new DetalleColapsoDTO(
+                envio.getIdPedido(),
+                envio.getOrigenIata(),
+                envio.getDestinoIata(),
+                envio.getCantidadMaletas(),
+                motivo,
+                null,
+                null,
+                state.getTiempoActual().toInstant(ZoneOffset.UTC).toString()
+        );
     }
 
     private boolean excedeTiempoEsperaEnAeropuerto(Envio envio) {
