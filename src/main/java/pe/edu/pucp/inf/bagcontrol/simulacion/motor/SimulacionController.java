@@ -37,7 +37,7 @@ public class SimulacionController {
 
             @RequestParam(value = "fechaFin", required = false) String fechaFin,
 
-            @RequestParam(value = "k", defaultValue = "15") int k,
+            @RequestParam(value = "k", defaultValue = "30") int k,
 
             @RequestParam(value = "algoritmo", defaultValue = "TABU") String algoritmo
     ) {

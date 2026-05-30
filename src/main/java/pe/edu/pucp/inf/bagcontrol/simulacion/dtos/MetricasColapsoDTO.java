@@ -34,4 +34,9 @@ public class MetricasColapsoDTO {
     private Integer capacidadAeropuerto;
     private Double porcentajeOcupacionAeropuerto;
     private String causaPrincipal;
+    private String fechaHoraColapsoExacta;
+    private int enviosSlaIncumplidos;
+    private String primerEnvioIncumplido;
+    private String deadlinePrimerIncumplido;
+    private long retrasoMinutos;
 }

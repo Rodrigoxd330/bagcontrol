@@ -112,6 +112,18 @@ public class SimulacionEventosFactory {
                 estadoSemaforo, porcentaje,maletasActuales, aeropuerto.getCapacidadAlmacen());
     }
 
+    public EventoAeropuertoDTO crearAlertaAeropuertoSaturado(EventoAeropuertoDTO evento) {
+        return new EventoAeropuertoDTO(
+                TipoEvento.ALERTA_AEROPUERTO_SATURADO,
+                evento.getFechaHoraEvento(),
+                evento.getCodigoAeropuerto(),
+                evento.getEstadoCapacidad(),
+                evento.getPorcentajeOcupacion(),
+                evento.getMaletasActuales(),
+                evento.getCapacidadAlmacen()
+        );
+    }
+
     public MetricasColapsoDTO calcularMetricasColapso(
             int ciclo, LocalDateTime ventanaInicio, LocalDateTime ventanaFin,
             List<Envio> nuevos, List<Envio> pendientes, List<Envio> enviosAProcesar,
@@ -153,17 +165,26 @@ public class SimulacionEventosFactory {
             }
         }
 
-        return new MetricasColapsoDTO(
-                ciclo, ventanaInicio.toString(), ventanaFin.toString(),
-                nuevos.size(), nuevos.stream().mapToInt(Envio::getCantidadMaletas).sum(),
-                pendientes.size(), pendientes.stream().mapToInt(Envio::getCantidadMaletas).sum(),
-                enviosProcesados, maletasProcesadas, enviosSinItinerario, 0,
-                enviosProcesados > 0 ? enviosSinItinerario / (double) enviosProcesados : 0.0,
-                slaIncumplidos,
-                enviosProcesados > 0 ? slaIncumplidos / (double) enviosProcesados : 0.0,
-                vuelosSobrecargados, aeropuertosSaturados, ocupacionAeropuertoMaxima, solucion.getFitness(), null,
-                null, null, null, null, null
-        );
+        MetricasColapsoDTO metricas = new MetricasColapsoDTO();
+        metricas.setCiclo(ciclo);
+        metricas.setVentanaInicio(ventanaInicio.toString());
+        metricas.setVentanaFin(ventanaFin.toString());
+        metricas.setEnviosNuevos(nuevos.size());
+        metricas.setMaletasNuevas(nuevos.stream().mapToInt(Envio::getCantidadMaletas).sum());
+        metricas.setEnviosPendientes(pendientes.size());
+        metricas.setMaletasPendientes(pendientes.stream().mapToInt(Envio::getCantidadMaletas).sum());
+        metricas.setEnviosProcesados(enviosProcesados);
+        metricas.setMaletasProcesadas(maletasProcesadas);
+        metricas.setEnviosSinItinerario(enviosSinItinerario);
+        metricas.setPorcentajeSinItinerario(enviosProcesados > 0 ? enviosSinItinerario / (double) enviosProcesados : 0.0);
+        metricas.setSlaIncumplidos(slaIncumplidos);
+        metricas.setEnviosSlaIncumplidos(slaIncumplidos);
+        metricas.setPorcentajeSlaIncumplido(enviosProcesados > 0 ? slaIncumplidos / (double) enviosProcesados : 0.0);
+        metricas.setVuelosSobrecargados(vuelosSobrecargados);
+        metricas.setAeropuertosSaturados(aeropuertosSaturados);
+        metricas.setOcupacionAeropuertoMaxima(ocupacionAeropuertoMaxima);
+        metricas.setFitnessUltimaSolucion(solucion.getFitness());
+        return metricas;
     }
 
     public List<String> detectarCriteriosColapso(MetricasColapsoDTO metricas) {
@@ -183,7 +204,7 @@ public class SimulacionEventosFactory {
         }
         if (metricas.getAeropuertosSaturados() > 0
                 || superaUmbral(metricas.getOcupacionAeropuertoMaxima(), configuracionColapso.getUmbralAeropuerto())) {
-            criterios.add("AEROPUERTO_SATURADO");
+            criterios.add("ALERTA_AEROPUERTO_SATURADO");
         }
         if (metricas.getVuelosSobrecargados() > 0) {
             criterios.add("VUELOS_SOBRECARGADOS");

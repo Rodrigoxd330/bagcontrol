@@ -288,7 +288,10 @@ public class PlanificadorService {
     ) {
         if (!fin.isAfter(inicio)) throw new IllegalArgumentException("La fecha fin debe ser mayor a la inicio.");
 
+        long inicioTotal = System.currentTimeMillis();
+        long inicioCargaEnvios = System.currentTimeMillis();
         List<Envio> enviosVentana = envioDataStore.obtenerEnviosEnVentana(inicio, fin);
+        long tiempoCargaEnvios = System.currentTimeMillis() - inicioCargaEnvios;
 
         // Unimos los nuevos de la ventana con los pendientes que vienen del State
         List<Envio> todosLosEnvios = new ArrayList<>(enviosVentana);
@@ -323,6 +326,18 @@ public class PlanificadorService {
         imprimirMetricasPlanificacion(algoritmo, inicio.toLocalDate(), diasGeneracion, todosLosEnvios, vuelosBase, vuelosInstanciados,
                 aeropuertos, itinerariosPorRuta, tiempoGeneracionVuelos, tiempoGeneracionItinerarios,
                 tiempoAlgoritmo, solucion);
+        System.out.println("[SIM5D-BLOQUE-PERFORMANCE] ventanaInicio=" + inicio
+                + " ventanaFin=" + fin
+                + " algoritmo=" + algoritmo.toUpperCase()
+                + " enviosNuevos=" + enviosVentana.size()
+                + " enviosPendientesEntrada=" + (pendientes == null ? 0 : pendientes.size())
+                + " cargaEnviosMs=" + tiempoCargaEnvios
+                + " generacionVuelosMs=" + tiempoGeneracionVuelos
+                + " vuelosCanceladosDetectados=" + contarVuelosCancelados(vuelosInstanciados)
+                + " generacionItinerariosMs=" + tiempoGeneracionItinerarios
+                + " tabuOAlgoritmoMs=" + tiempoAlgoritmo
+                + " vuelosCanceladosUsados=" + solucion.getVuelosCanceladosUsadosCount()
+                + " totalMs=" + (System.currentTimeMillis() - inicioTotal));
 
         return solucion;
     }
@@ -336,9 +351,11 @@ public class PlanificadorService {
         aplicarIncidencias(vuelosInstanciados);
 
         Set<String> vistos = new HashSet<>();
+        var inicioUtc = inicio.toInstant(java.time.ZoneOffset.UTC);
+        var finUtc = fin.toInstant(java.time.ZoneOffset.UTC);
         return vuelosInstanciados.stream()
                 .filter(VueloInstanciado::isEstaCancelado)
-                .filter(v -> !v.getFechaHoraSalida().isBefore(inicio) && v.getFechaHoraSalida().isBefore(fin))
+                .filter(v -> !v.getFechaHoraSalidaUtc().isBefore(inicioUtc) && v.getFechaHoraSalidaUtc().isBefore(finUtc))
                 .filter(v -> vistos.add(v.getCodigoBase() + "@" + v.getFechaHoraSalida()))
                 .toList();
     }

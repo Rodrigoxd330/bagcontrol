@@ -4,14 +4,19 @@ import lombok.Getter;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
-import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.service.PlanificadorService;
+import pe.edu.pucp.inf.bagcontrol.planificacion.utils.PlanificadorUtils;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.DetalleColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MetricasColapsoDTO;
-import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.*;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoAeropuertoDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoBaseDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoColapsoDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoVueloDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.LoteEventosDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.TipoEvento;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -20,6 +25,8 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SimulacionJob implements Runnable {
@@ -41,7 +48,6 @@ public class SimulacionJob implements Runnable {
     private final LocalDateTime fechaCreacion = LocalDateTime.now();
 
     private final PlanificadorService planificadorService;
-    private final AeropuertoRepository aeropuertoRepository;
     private final WebSocketPublisher webSocketPublisher;
     private final ConfiguracionColapsoDTO configuracionColapsoDTO;
     private final SimulacionEventosFactory simulacionEventosFactory;
@@ -54,18 +60,16 @@ public class SimulacionJob implements Runnable {
     public SimulacionJob(
             String simulacionId, LocalDateTime horaInicio, LocalDateTime horaFin, int k, String algoritmo,
             PlanificadorService planificadorService, AeropuertoRepository aeropuertoRepository,
-            WebSocketPublisher webSocketPublisher, SimulacionEventosFactory simulacionEventosFactory, SimulacionState state,
-            ConfiguracionColapsoDTO configuracionColapsoDTO, SimulacionStateMutator simulacionStateMutator
+            WebSocketPublisher webSocketPublisher, SimulacionEventosFactory simulacionEventosFactory,
+            SimulacionState state, ConfiguracionColapsoDTO configuracionColapsoDTO,
+            SimulacionStateMutator simulacionStateMutator
     ) {
         this.simulacionId = simulacionId;
         this.horaInicio = horaInicio;
         this.horaFin = horaFin;
         this.k = k;
         this.algoritmo = algoritmo;
-
-        //Dependencias
         this.planificadorService = planificadorService;
-        this.aeropuertoRepository = aeropuertoRepository;
         this.webSocketPublisher = webSocketPublisher;
         this.simulacionEventosFactory = simulacionEventosFactory;
         this.state = state;
@@ -93,148 +97,84 @@ public class SimulacionJob implements Runnable {
             publicarControl(TipoEvento.ERROR);
         } finally {
             long totalMs = System.currentTimeMillis() - inicioProceso;
-            System.out.println("[PERFORMANCE] Simulacion finalizada. Tiempo total de CPU: " + totalMs + "ms");
+            System.out.println("[SIM5D-PERFORMANCE] simulacionId=" + simulacionId
+                    + " tiempoTotalMs=" + totalMs
+                    + " bloquesProcesados=" + state.getBloquesProcesados()
+                    + " saltoAlgoritmoMinutos=" + k
+                    + " saltoConsumoDatosMinutos=" + k);
         }
     }
 
     private void ejecutarSimulacion() {
         simulacionStateMutator.inicializarAeropuertos();
-        publicarControl(TipoEvento.SIMULACION_INICIADA);
         state.setTiempoActual(horaInicio);
-        LocalDateTime tiempoFin = (horaFin == null) ? LocalDateTime.MAX : horaFin;
-
-        List<EventoBaseDTO> listaEventosPostergados = new ArrayList<>();
+        publicarControl(TipoEvento.SIMULACION_INICIADA);
+        LocalDateTime tiempoFin = horaFin == null ? LocalDateTime.MAX : horaFin;
+        List<EventoBaseDTO> eventosPostergados = new ArrayList<>();
+        publicarConfiguracionRendimiento();
 
         while (state.getTiempoActual().isBefore(tiempoFin)) {
-            long t0 = System.currentTimeMillis();
-            List<EventoBaseDTO> listaEventosBatch = new ArrayList<>();
-
+            long inicioLote = System.currentTimeMillis();
             verificarDetencion();
             esperarSiPausadaODetenida();
 
-            LocalDateTime proximoTiempo = state.getTiempoActual().plusMinutes(k);
-            Instant finVentanaActual = proximoTiempo.toInstant(ZoneOffset.UTC);
+            LocalDateTime ventanaInicio = state.getTiempoActual();
+            LocalDateTime ventanaFin = ventanaInicio.plusMinutes(k);
+            if (ventanaFin.isAfter(tiempoFin)) {
+                ventanaFin = tiempoFin;
+            }
+            Instant ventanaFinUtc = ventanaFin.toInstant(ZoneOffset.UTC);
             int ciclo = state.getCicloActual() + 1;
             state.setCicloActual(ciclo);
 
-            // 1. Procesar eventos de vuelos postergados que pertenecen a esta ventana física
-            verificarEventosPostergados(finVentanaActual, listaEventosBatch, listaEventosPostergados);
-            agregarEventosVuelosCancelados(state.getTiempoActual(), proximoTiempo, listaEventosBatch);
+            List<EventoBaseDTO> eventosBatch = new ArrayList<>();
+            extraerEventosPostergados(ventanaFinUtc, eventosBatch, eventosPostergados);
+            agregarEventosVuelosCancelados(ventanaInicio, ventanaFin, eventosBatch);
 
-            // 2. Calcular Solución del Planificador
-            SolucionRuta solucionActual = planificadorService.calcularSolucion(algoritmo, state.getTiempoActual(), proximoTiempo, state.getEnviosPendientes());
-            state.setSolucionActual(solucionActual);
-            simulacionStateMutator.indexarEnviosPorVuelo(solucionActual);
+            SolucionRuta solucion = planificadorService.calcularSolucion(
+                    algoritmo, ventanaInicio, ventanaFin, state.getEnviosPendientes()
+            );
+            state.setSolucionActual(solucion);
+            simulacionStateMutator.indexarEnviosPorVuelo(solucion);
+            registrarEnviosNuevos(solucion, eventosBatch);
 
-            // 3. Registrar entrada de nuevas maletas (Check-in) al iniciar la ventana
-            for (RutaAsignada asignacion : solucionActual.getAsignaciones()) {
-                Envio envio = asignacion.getEnvio();
-                String origen = envio.getOrigenIata();
-
-                simulacionStateMutator.sumarMaletas(origen, envio.getCantidadMaletas());
-
-                Aeropuerto aero = state.getAeropuertosSnapshot().get(origen);
-                int inv = state.getInventarioSnapshot().getOrDefault(origen, 0);
-                Instant tiempoCheckIn = envio.getFechaHora().toInstant(ZoneOffset.UTC);
-                listaEventosBatch.add(simulacionEventosFactory.crearEventoAeropuerto(aero, inv, tiempoCheckIn));
-            }
-
-            // Verificar si el planificador ya reportó colapso por SLA
-            boolean colapsoPorSla = verificarConditionsColapso(solucionActual);
-
-            // 4. Extraer eventos de la solución y separar los que ocurren ahora de los futuros
             SimulacionEventosFactory.ResultadoEventosVuelo eventosVuelos =
-                    simulacionEventosFactory.generarEventosVuelo(solucionActual, finVentanaActual);
+                    simulacionEventosFactory.generarEventosVuelo(solucion, ventanaFinUtc);
+            eventosBatch.addAll(eventosVuelos.actuales());
+            eventosPostergados.addAll(eventosVuelos.futuros());
+            eventosBatch.sort(comparadorEventos());
 
-            listaEventosPostergados.addAll(eventosVuelos.futuros());
+            IncumplimientoSla incumplimiento = encontrarPrimerIncumplimientoSla(ventanaFinUtc).orElse(null);
+            Instant instanteColapso = incumplimiento != null ? incumplimiento.deadline() : null;
 
-            // Ejecutar la física de los vuelos actuales en esta ventana
-            for (EventoBaseDTO eventoActual : eventosVuelos.actuales()) {
-                listaEventosBatch.add(eventoActual);
-                if (eventoActual instanceof EventoVueloDTO evVuelo) {
-                    Instant horaEvento = Instant.parse(evVuelo.getFechaHoraEvento());
-                    aplicarFisicaVuelo(evVuelo, horaEvento, listaEventosBatch);
-                }
+            aplicarFisicaHasta(eventosBatch, instanteColapso);
+            marcarEnviosEntregadosHasta(instanteColapso != null ? instanteColapso : ventanaFinUtc);
+            agregarAlertasAeropuertosSaturados(eventosBatch);
+            eventosBatch.sort(comparadorEventos());
+
+            if (incumplimiento != null) {
+                registrarColapsoSla(ciclo, ventanaInicio, ventanaFin, solucion, incumplimiento, eventosBatch);
             }
 
-            // 5. Ordenar cronológicamente para inspeccionar la línea de tiempo real
-            listaEventosBatch.sort(Comparator.comparing(e -> Instant.parse(e.getFechaHoraEvento())));
+            publicarLote(eventosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
+            state.setBloquesProcesados(state.getBloquesProcesados() + 1);
 
-            // 6. Análisis dinámico y eficiente de Colapso por Almacén
-            Instant instanteColapso = null;
-            String causaColapso = null;
-
-            if (colapsoPorSla) {
-                instanteColapso = state.getTiempoActual().toInstant(ZoneOffset.UTC);
-                causaColapso = state.getMotivoColapso();
-            } else {
-                // Evaluamos los eventos ordenados para ver EXACTAMENTE cuál rompió el límite de almacenamiento
-                double umbralConfigurado = (configuracionColapsoDTO != null) ? configuracionColapsoDTO.getUmbralAeropuerto() : 1.0;
-
-                for (EventoBaseDTO evento : listaEventosBatch) {
-                    if (evento instanceof EventoAeropuertoDTO evAero) {
-                        double ocupacion = (double) evAero.getMaletasActuales() / evAero.getCapacidadAlmacen();
-                        if (ocupacion >= umbralConfigurado) {
-                            instanteColapso = Instant.parse(evAero.getFechaHoraEvento());
-                            causaColapso = "AEROPUERTO_SATURADO";
-                            state.setMotivoColapso(causaColapso);
-                            state.setDetalleColapso(crearDetalleColapsoAeropuerto(evAero));
-                            state.setMetricasColapsoActuales(crearMetricasColapsoAeropuerto(
-                                    ciclo,
-                                    state.getTiempoActual(),
-                                    proximoTiempo,
-                                    evAero,
-                                    solucionActual
-                            ));
-                            break; // Rompemos en el primer instante cronológico exacto
-                        }
-                    }
-                }
-            }
-
-            // 7. Si hay colapso, cortar eventos futuros y despachar el evento definitivo de colapso
-            if (causaColapso != null) {
-                state.setEstado("COLAPSADA");
-                Instant finalInstanteColapso = instanteColapso;
-
-                // Remover eventos que teóricamente pasaban después del segundo exacto del colapso
-                listaEventosBatch.removeIf(evento -> Instant.parse(evento.getFechaHoraEvento()).isAfter(finalInstanteColapso));
-
-                // Agregar el DTO informativo de colapso al final del lote reducido
-                listaEventosBatch.add(new EventoColapsoDTO(
-                        finalInstanteColapso.toString(),
-                        simulacionId,
-                        finalInstanteColapso.toString(),
-                        ciclo,
-                        causaColapso,
-                        List.of(causaColapso),
-                        state.getMetricasColapsoActuales(),
-                        state.getDetalleColapso()
-                ));
-                System.out.println("SIMULACION COLAPSADA POR: " + causaColapso + " EN " + finalInstanteColapso);
-            }
-
-            // 8. Publicar lote al Frontend
-            publicarLote(listaEventosBatch, state.getTiempoActual().toInstant(ZoneOffset.UTC), finVentanaActual);
-            if (causaColapso != null) {
+            if (incumplimiento != null) {
+                state.setTiempoActual(LocalDateTime.ofInstant(instanteColapso, ZoneOffset.UTC));
                 publicarControl(TipoEvento.SIMULACION_FINALIZADA);
                 break;
             }
 
-            // 9. Actualizar pendientes para el siguiente ciclo
-            actualizarPendientesParaSiguienteCiclo(solucionActual);
-
-            long tLote = System.currentTimeMillis() - t0;
-            System.out.printf("[SIMULADOR] Lote #%d publicado | eventos=%d | ventana=%s→%s | tiempoEjecucion=%dms%n",
-                    state.getUltimoLoteEmitidoNumero().get(),
-                    listaEventosBatch.size(),
-                    state.getTiempoActual(),
-                    proximoTiempo,
-                    tLote
+            actualizarPendientesParaSiguienteCiclo(solucion);
+            long tiempoLote = System.currentTimeMillis() - inicioLote;
+            System.out.printf(
+                    "[SIMULADOR] lote=%d eventos=%d ventana=%s->%s tiempoEjecucionMs=%d%n",
+                    state.getUltimoLoteEmitidoNumero().get(), eventosBatch.size(), ventanaInicio, ventanaFin, tiempoLote
             );
-
-            state.setTiempoActual(proximoTiempo);
-            esperarConControl();
+            state.setTiempoActual(ventanaFin);
+            if (state.getTiempoActual().isBefore(tiempoFin)) {
+                esperarConControl();
+            }
         }
 
         if (!esTerminal()) {
@@ -243,197 +183,272 @@ public class SimulacionJob implements Runnable {
         }
     }
 
-    // =========================================================================================
-    // Metodos auxiliares de logica de eventos y fisica
-    // =========================================================================================
+    private void registrarEnviosNuevos(SolucionRuta solucion, List<EventoBaseDTO> eventosBatch) {
+        for (RutaAsignada asignacion : solucion.getAsignaciones()) {
+            Envio envio = asignacion.getEnvio();
+            state.getEnviosEnSeguimiento().merge(
+                    envio.getIdPedido(),
+                    asignacion,
+                    (anterior, nueva) -> nueva.getItinerario() != null ? nueva : anterior
+            );
+            if (!state.getEnviosRegistrados().add(envio.getIdPedido())) {
+                continue;
+            }
 
-    private void verificarEventosPostergados(Instant finVentanaActual, List<EventoBaseDTO> listaEventosBatch, List<EventoBaseDTO> listaEventosPostergados) {
-        Iterator<EventoBaseDTO> it = listaEventosPostergados.iterator();
-        while (it.hasNext()) {
-            EventoBaseDTO evento = it.next();
-            Instant horaEvento = Instant.parse(evento.getFechaHoraEvento());
+            String origen = envio.getOrigenIata();
+            state.getUltimoAeropuertoPorEnvio().put(envio.getIdPedido(), origen);
+            simulacionStateMutator.sumarMaletas(origen, envio.getCantidadMaletas());
+            Aeropuerto aeropuerto = state.getAeropuertosSnapshot().get(origen);
+            int inventario = state.getInventarioSnapshot().getOrDefault(origen, 0);
+            eventosBatch.add(simulacionEventosFactory.crearEventoAeropuerto(
+                    aeropuerto, inventario, PlanificadorUtils.obtenerFechaIngresoUtc(envio)
+            ));
+        }
+    }
 
-            if (!horaEvento.isAfter(finVentanaActual)) {
-                it.remove();
-                listaEventosBatch.add(evento);
-                if (evento instanceof EventoVueloDTO evVuelo) {
-                    aplicarFisicaVuelo(evVuelo, horaEvento, listaEventosBatch);
-                }
+    private Optional<IncumplimientoSla> encontrarPrimerIncumplimientoSla(Instant ventanaFinUtc) {
+        Map<String, Aeropuerto> aeropuertos = state.getAeropuertosSnapshot();
+        return state.getEnviosEnSeguimiento().values().stream()
+                .filter(asignacion -> !state.getEnviosEntregados().contains(asignacion.getEnvio().getIdPedido()))
+                .map(asignacion -> new IncumplimientoSla(
+                        asignacion, PlanificadorUtils.calcularDeadlineSla(asignacion.getEnvio(), aeropuertos)
+                ))
+                .filter(incumplimiento -> !incumplimiento.deadline().isAfter(ventanaFinUtc))
+                .filter(incumplimiento -> incumplimiento.asignacion().getItinerario() == null
+                        || incumplimiento.asignacion().getItinerario().getFechaHoraLlegadaUtc()
+                        .isAfter(incumplimiento.deadline()))
+                .min(Comparator.comparing(IncumplimientoSla::deadline));
+    }
+
+    private void registrarColapsoSla(
+            int ciclo,
+            LocalDateTime ventanaInicio,
+            LocalDateTime ventanaFin,
+            SolucionRuta solucion,
+            IncumplimientoSla incumplimiento,
+            List<EventoBaseDTO> eventosBatch
+    ) {
+        Instant instante = incumplimiento.deadline();
+        state.setEstado("COLAPSADA");
+        state.setMotivoColapso("SLA_INCUMPLIDO");
+        state.setDetalleColapso(crearDetalleColapsoSla(incumplimiento));
+        state.setMetricasColapsoActuales(crearMetricasColapsoSla(
+                ciclo, ventanaInicio, ventanaFin, solucion, incumplimiento
+        ));
+
+        eventosBatch.removeIf(evento -> Instant.parse(evento.getFechaHoraEvento()).isAfter(instante));
+        eventosBatch.add(new EventoColapsoDTO(
+                instante.toString(),
+                simulacionId,
+                instante.toString(),
+                ciclo,
+                "SLA_INCUMPLIDO",
+                List.of("SLA_INCUMPLIDO", "ENVIO_NO_ENTREGADO_A_TIEMPO", "MALETA_NO_ENTREGADA_A_TIEMPO"),
+                state.getMetricasColapsoActuales(),
+                state.getDetalleColapso()
+        ));
+        System.out.println("[COLAPSO] causa=SLA_INCUMPLIDO idPedido="
+                + incumplimiento.asignacion().getEnvio().getIdPedido() + " horaExacta=" + instante);
+    }
+
+    private MetricasColapsoDTO crearMetricasColapsoSla(
+            int ciclo,
+            LocalDateTime ventanaInicio,
+            LocalDateTime ventanaFin,
+            SolucionRuta solucion,
+            IncumplimientoSla primerIncumplimiento
+    ) {
+        long pendientes = state.getEnviosEnSeguimiento().values().stream()
+                .filter(a -> !state.getEnviosEntregados().contains(a.getEnvio().getIdPedido()))
+                .count();
+        int maletasPendientes = state.getEnviosEnSeguimiento().values().stream()
+                .filter(a -> !state.getEnviosEntregados().contains(a.getEnvio().getIdPedido()))
+                .mapToInt(a -> a.getEnvio().getCantidadMaletas())
+                .sum();
+        long slaIncumplidos = state.getEnviosEnSeguimiento().values().stream()
+                .filter(a -> !state.getEnviosEntregados().contains(a.getEnvio().getIdPedido()))
+                .filter(a -> !PlanificadorUtils.calcularDeadlineSla(a.getEnvio(), state.getAeropuertosSnapshot())
+                        .isAfter(primerIncumplimiento.deadline()))
+                .count();
+        int maletasProcesadas = state.getEnviosEnSeguimiento().values().stream()
+                .mapToInt(a -> a.getEnvio().getCantidadMaletas())
+                .sum();
+
+        MetricasColapsoDTO metricas = new MetricasColapsoDTO();
+        metricas.setCiclo(ciclo);
+        metricas.setVentanaInicio(ventanaInicio.toString());
+        metricas.setVentanaFin(ventanaFin.toString());
+        metricas.setFechaHoraColapsoExacta(primerIncumplimiento.deadline().toString());
+        metricas.setEnviosProcesados(state.getEnviosRegistrados().size());
+        metricas.setMaletasProcesadas(maletasProcesadas);
+        metricas.setEnviosPendientes((int) pendientes);
+        metricas.setMaletasPendientes(maletasPendientes);
+        metricas.setSlaIncumplidos((int) slaIncumplidos);
+        metricas.setEnviosSlaIncumplidos((int) slaIncumplidos);
+        metricas.setPorcentajeSlaIncumplido(
+                state.getEnviosRegistrados().isEmpty() ? 0.0 : slaIncumplidos / (double) state.getEnviosRegistrados().size()
+        );
+        metricas.setPrimerEnvioIncumplido(primerIncumplimiento.asignacion().getEnvio().getIdPedido());
+        metricas.setDeadlinePrimerIncumplido(primerIncumplimiento.deadline().toString());
+        metricas.setRetrasoMinutos(0);
+        metricas.setFitnessUltimaSolucion(solucion.getFitness());
+        metricas.setMotivoColapso("SLA_INCUMPLIDO");
+        metricas.setCausaPrincipal("SLA_INCUMPLIDO");
+        return metricas;
+    }
+
+    private DetalleColapsoDTO crearDetalleColapsoSla(IncumplimientoSla incumplimiento) {
+        RutaAsignada asignacion = incumplimiento.asignacion();
+        Envio envio = asignacion.getEnvio();
+        DetalleColapsoDTO detalle = new DetalleColapsoDTO();
+        detalle.setIdPedido(envio.getIdPedido());
+        detalle.setOrigenIata(envio.getOrigenIata());
+        detalle.setDestinoIata(envio.getDestinoIata());
+        detalle.setCantidadMaletas(envio.getCantidadMaletas());
+        detalle.setFechaHoraRegistro(PlanificadorUtils.obtenerFechaIngresoUtc(envio).toString());
+        detalle.setDeadlineSla(incumplimiento.deadline().toString());
+        detalle.setHoraColapso(incumplimiento.deadline().toString());
+        detalle.setHoraSimulada(incumplimiento.deadline().toString());
+        detalle.setTipoSla(PlanificadorUtils.obtenerTipoSla(envio, state.getAeropuertosSnapshot()));
+        detalle.setMotivo("SLA_INCUMPLIDO");
+        detalle.setEstadoEnvio(asignacion.getItinerario() == null ? "PENDIENTE_SIN_ITINERARIO" : "ASIGNADO_NO_ENTREGADO");
+        detalle.setAeropuertoActual(state.getUltimoAeropuertoPorEnvio().get(envio.getIdPedido()));
+        if (asignacion.getItinerario() != null) {
+            detalle.setItinerarioAfectado(asignacion.getItinerario().getIdItinerario());
+            if (!asignacion.getItinerario().getVuelos().isEmpty()) {
+                detalle.setVueloAfectado(asignacion.getItinerario().getVuelos().get(0).getCodigoBase());
+            }
+        }
+        return detalle;
+    }
+
+    private void extraerEventosPostergados(
+            Instant ventanaFinUtc,
+            List<EventoBaseDTO> eventosBatch,
+            List<EventoBaseDTO> eventosPostergados
+    ) {
+        Iterator<EventoBaseDTO> iterator = eventosPostergados.iterator();
+        while (iterator.hasNext()) {
+            EventoBaseDTO evento = iterator.next();
+            if (!Instant.parse(evento.getFechaHoraEvento()).isAfter(ventanaFinUtc)) {
+                iterator.remove();
+                eventosBatch.add(evento);
             }
         }
     }
 
-    private void aplicarFisicaVuelo(EventoVueloDTO evVuelo, Instant horaEvento, List<EventoBaseDTO> listaEventosBatch) {
-        if (evVuelo.getTipo() == TipoEvento.VUELO_DESPEGA) {
-            String origen = evVuelo.getOrigenIata();
-            simulacionStateMutator.restarMaletas(origen, evVuelo.getCantidadMaletas());
-
-            Aeropuerto aero = state.getAeropuertosSnapshot().get(origen);
-            int inv = state.getInventarioSnapshot().getOrDefault(origen, 0);
-            listaEventosBatch.add(simulacionEventosFactory.crearEventoAeropuerto(aero, inv, horaEvento));
-
-        } else if (evVuelo.getTipo() == TipoEvento.VUELO_ATERRIZA) {
-            String destino = evVuelo.getDestinoIata();
-            simulacionStateMutator.sumarMaletas(destino, evVuelo.getCantidadMaletas());
-
-            Aeropuerto aero = state.getAeropuertosSnapshot().get(destino);
-            int inv = state.getInventarioSnapshot().getOrDefault(destino, 0);
-            listaEventosBatch.add(simulacionEventosFactory.crearEventoAeropuerto(aero, inv, horaEvento));
+    private void aplicarFisicaHasta(List<EventoBaseDTO> eventos, Instant instanteColapso) {
+        List<EventoVueloDTO> eventosVuelo = eventos.stream()
+                .filter(EventoVueloDTO.class::isInstance)
+                .map(EventoVueloDTO.class::cast)
+                .filter(evento -> evento.getTipo() != TipoEvento.VUELO_CANCELADO)
+                .filter(evento -> instanteColapso == null
+                        || !Instant.parse(evento.getFechaHoraEvento()).isAfter(instanteColapso))
+                .sorted(Comparator.comparing(evento -> Instant.parse(evento.getFechaHoraEvento())))
+                .toList();
+        for (EventoVueloDTO evento : eventosVuelo) {
+            aplicarFisicaVuelo(evento, Instant.parse(evento.getFechaHoraEvento()), eventos);
         }
     }
 
-    private void agregarEventosVuelosCancelados(LocalDateTime inicio, LocalDateTime fin, List<EventoBaseDTO> listaEventosBatch) {
-        for (var vuelo : planificadorService.obtenerVuelosCanceladosEnVentana(inicio, fin)) {
-            listaEventosBatch.add(simulacionEventosFactory.crearEventoVueloCancelado(vuelo));
+    private void aplicarFisicaVuelo(EventoVueloDTO evento, Instant horaEvento, List<EventoBaseDTO> eventos) {
+        if (evento.getTipo() == TipoEvento.VUELO_DESPEGA) {
+            String origen = evento.getOrigenIata();
+            simulacionStateMutator.restarMaletas(origen, evento.getCantidadMaletas());
+            agregarEventoInventario(origen, horaEvento, eventos);
+        } else if (evento.getTipo() == TipoEvento.VUELO_ATERRIZA) {
+            String destino = evento.getDestinoIata();
+            simulacionStateMutator.sumarMaletas(destino, evento.getCantidadMaletas());
+            agregarEventoInventario(destino, horaEvento, eventos);
+        }
+    }
+
+    private void agregarEventoInventario(String codigoIata, Instant horaEvento, List<EventoBaseDTO> eventos) {
+        Aeropuerto aeropuerto = state.getAeropuertosSnapshot().get(codigoIata);
+        int inventario = state.getInventarioSnapshot().getOrDefault(codigoIata, 0);
+        eventos.add(simulacionEventosFactory.crearEventoAeropuerto(aeropuerto, inventario, horaEvento));
+    }
+
+    private void marcarEnviosEntregadosHasta(Instant limite) {
+        for (RutaAsignada asignacion : state.getEnviosEnSeguimiento().values()) {
+            if (asignacion.getItinerario() == null) continue;
+            if (!asignacion.getItinerario().getFechaHoraLlegadaUtc().isAfter(limite)) {
+                String idPedido = asignacion.getEnvio().getIdPedido();
+                state.getEnviosEntregados().add(idPedido);
+                state.getUltimoAeropuertoPorEnvio().put(idPedido, asignacion.getEnvio().getDestinoIata());
+            }
+        }
+    }
+
+    private void agregarAlertasAeropuertosSaturados(List<EventoBaseDTO> eventos) {
+        double umbral = configuracionColapsoDTO != null ? configuracionColapsoDTO.getUmbralAeropuerto() : 1.0;
+        List<EventoBaseDTO> alertas = eventos.stream()
+                .filter(EventoAeropuertoDTO.class::isInstance)
+                .map(EventoAeropuertoDTO.class::cast)
+                .filter(evento -> evento.getCapacidadAlmacen() > 0)
+                .filter(evento -> evento.getMaletasActuales() / (double) evento.getCapacidadAlmacen() >= umbral)
+                .map(simulacionEventosFactory::crearAlertaAeropuertoSaturado)
+                .map(EventoBaseDTO.class::cast)
+                .toList();
+        eventos.addAll(alertas);
+    }
+
+    private void agregarEventosVuelosCancelados(
+            LocalDateTime ventanaInicio,
+            LocalDateTime ventanaFin,
+            List<EventoBaseDTO> eventos
+    ) {
+        for (var vuelo : planificadorService.obtenerVuelosCanceladosEnVentana(ventanaInicio, ventanaFin)) {
+            eventos.add(simulacionEventosFactory.crearEventoVueloCancelado(vuelo));
         }
     }
 
     private void actualizarPendientesParaSiguienteCiclo(SolucionRuta solucion) {
         state.setEnviosPendientes(solucion.obtenerEnviosConConflictos());
         if (!state.getEnviosPendientes().isEmpty()) {
-            System.out.println("[SIMULADOR] Arrastrando " + state.getEnviosPendientes().size() + " envíos pendientes al siguiente ciclo.");
+            System.out.println("[SIMULADOR] enviosPendientes=" + state.getEnviosPendientes().size());
         }
     }
 
-    private boolean verificarConditionsColapso(SolucionRuta solucion) {
-        if (solucion.getVuelosCanceladosUsadosCount() > 0) {
-            solucion.getAsignaciones().stream()
-                    .filter(a -> a.getItinerario() != null && a.getItinerario().contieneVueloCancelado())
-                    .findFirst()
-                    .ifPresent(a -> state.setDetalleColapso(crearDetalleColapso(a, "VUELO_CANCELADO")));
-            state.setMotivoColapso("VUELO_CANCELADO");
-            return true;
-        }
-
-        if (solucion.getExcedeSlaCount() > 0) {
-            solucion.getAsignaciones().stream()
-                    .filter(RutaAsignada::isExcedeSla)
-                    .findFirst()
-                    .ifPresent(a -> state.setDetalleColapso(crearDetalleColapso(a, "SLA_INCUMPLIDO")));
-            state.setMotivoColapso("SLA_INCUMPLIDO");
-            return true;
-        }
-
-        for (Envio pendiente : solucion.obtenerEnviosConConflictos()) {
-            if (excedeTiempoEsperaEnAeropuerto(pendiente)) {
-                state.setDetalleColapso(crearDetalleColapso(pendiente, "SIN_ITINERARIO"));
-                state.setMotivoColapso("SIN_ITINERARIO");
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private MetricasColapsoDTO crearMetricasColapsoAeropuerto(
-            int ciclo,
-            LocalDateTime ventanaInicio,
-            LocalDateTime ventanaFin,
-            EventoAeropuertoDTO eventoAeropuerto,
-            SolucionRuta solucion
-    ) {
-        double ocupacion = eventoAeropuerto.getCapacidadAlmacen() > 0
-                ? eventoAeropuerto.getMaletasActuales() / (double) eventoAeropuerto.getCapacidadAlmacen()
-                : 0.0;
-
-        MetricasColapsoDTO metricas = new MetricasColapsoDTO();
-        metricas.setCiclo(ciclo);
-        metricas.setVentanaInicio(ventanaInicio.toString());
-        metricas.setVentanaFin(ventanaFin.toString());
-        metricas.setAeropuertosSaturados(1);
-        metricas.setOcupacionAeropuertoMaxima(ocupacion);
-        metricas.setFitnessUltimaSolucion(solucion != null ? solucion.getFitness() : 0.0);
-        metricas.setMotivoColapso("AEROPUERTO_SATURADO");
-        metricas.setCodigoAeropuertoColapsado(eventoAeropuerto.getCodigoAeropuerto());
-        metricas.setMaletasActualesAeropuerto(eventoAeropuerto.getMaletasActuales());
-        metricas.setCapacidadAeropuerto(eventoAeropuerto.getCapacidadAlmacen());
-        metricas.setPorcentajeOcupacionAeropuerto(eventoAeropuerto.getPorcentajeOcupacion());
-        metricas.setCausaPrincipal("AEROPUERTO_SATURADO");
-        return metricas;
-    }
-
-    private DetalleColapsoDTO crearDetalleColapsoAeropuerto(EventoAeropuertoDTO eventoAeropuerto) {
-        DetalleColapsoDTO detalle = new DetalleColapsoDTO();
-        detalle.setOrigenIata(eventoAeropuerto.getCodigoAeropuerto());
-        detalle.setCantidadMaletas(eventoAeropuerto.getMaletasActuales());
-        detalle.setMotivo("AEROPUERTO_SATURADO");
-        detalle.setHoraSimulada(eventoAeropuerto.getFechaHoraEvento());
-        detalle.setTipo("AEROPUERTO_SATURADO");
-        detalle.setCodigoAeropuerto(eventoAeropuerto.getCodigoAeropuerto());
-        detalle.setCapacidad(eventoAeropuerto.getCapacidadAlmacen());
-        detalle.setMaletasActuales(eventoAeropuerto.getMaletasActuales());
-        detalle.setPorcentajeOcupacion(eventoAeropuerto.getPorcentajeOcupacion());
-        return detalle;
-    }
-
-    private DetalleColapsoDTO crearDetalleColapso(RutaAsignada asignacion, String motivo) {
-        Envio envio = asignacion.getEnvio();
-        Long vueloAfectado = null;
-        String itinerarioAfectado = null;
-        if (asignacion.getItinerario() != null) {
-            itinerarioAfectado = asignacion.getItinerario().getIdItinerario();
-            vueloAfectado = asignacion.getItinerario().getVuelos().stream()
-                    .filter(VueloInstanciado::isEstaCancelado)
-                    .map(VueloInstanciado::getCodigoBase)
-                    .findFirst()
-                    .orElseGet(() -> asignacion.getItinerario().getVuelos().isEmpty()
-                            ? null
-                            : asignacion.getItinerario().getVuelos().get(0).getCodigoBase());
-        }
-        return new DetalleColapsoDTO(
-                envio.getIdPedido(),
-                envio.getOrigenIata(),
-                envio.getDestinoIata(),
-                envio.getCantidadMaletas(),
-                motivo,
-                vueloAfectado,
-                itinerarioAfectado,
-                state.getTiempoActual().toInstant(ZoneOffset.UTC).toString()
-        );
-    }
-
-    private DetalleColapsoDTO crearDetalleColapso(Envio envio, String motivo) {
-        return new DetalleColapsoDTO(
-                envio.getIdPedido(),
-                envio.getOrigenIata(),
-                envio.getDestinoIata(),
-                envio.getCantidadMaletas(),
-                motivo,
-                null,
-                null,
-                state.getTiempoActual().toInstant(ZoneOffset.UTC).toString()
-        );
-    }
-
-    private boolean excedeTiempoEsperaEnAeropuerto(Envio envio) {
-        Aeropuerto origen = state.getAeropuertosSnapshot().get(envio.getOrigenIata());
-        Aeropuerto destino = state.getAeropuertosSnapshot().get(envio.getDestinoIata());
-
-        if (origen == null || destino == null) return false;
-
-        boolean mismoContinente = origen.getContinente().equalsIgnoreCase(destino.getContinente());
-        double horasLimite = mismoContinente ? 24.0 : 48.0;
-
-        long horasEsperando = java.time.Duration.between(
-                envio.getFechaHora(),
-                state.getTiempoActual()
-        ).toHours();
-
-        return horasEsperando > horasLimite;
+    private Comparator<EventoBaseDTO> comparadorEventos() {
+        return Comparator.comparing(evento -> Instant.parse(evento.getFechaHoraEvento()));
     }
 
     private void publicarControl(TipoEvento tipoEvento) {
-        Instant ventana = state.getTiempoActual() != null ? state.getTiempoActual().toInstant(ZoneOffset.UTC) : Instant.now();
-        EventoBaseDTO evento = new EventoBaseDTO(tipoEvento, ventana.toString());
-        publicarLote(List.of(evento), ventana, ventana);
+        Instant ventana = state.getTiempoActual() != null
+                ? state.getTiempoActual().toInstant(ZoneOffset.UTC)
+                : Instant.now();
+        publicarLote(List.of(new EventoBaseDTO(tipoEvento, ventana.toString())), ventana, ventana);
+    }
+
+    private void publicarConfiguracionRendimiento() {
+        if (horaFin == null) {
+            System.out.println("[SIMULACION-CONFIG] modo=COLAPSO saltoAlgoritmoMinutos=" + k
+                    + " saltoConsumoDatosMinutos=" + k + " esperaEntreBloquesMs=" + saMs);
+            return;
+        }
+        long minutosSimulados = java.time.Duration.between(horaInicio, horaFin).toMinutes();
+        long bloques = (long) Math.ceil(minutosSimulados / (double) k);
+        double duracionEstimadaMinutos = Math.max(bloques - 1, 0) * saMs / 60_000.0;
+        System.out.println("[SIM5D-CONFIG] inicio=" + horaInicio
+                + " fin=" + horaFin
+                + " minutosSimulados=" + minutosSimulados
+                + " bloquesEstimados=" + bloques
+                + " saltoAlgoritmoMinutos=" + k
+                + " saltoConsumoDatosMinutos=" + k
+                + " esperaEntreBloquesMs=" + saMs
+                + " duracionEstimadaMinutos=" + duracionEstimadaMinutos);
     }
 
     private void publicarLote(List<EventoBaseDTO> eventos, Instant ventanaInicio, Instant ventanaFin) {
         if (eventos.isEmpty()) return;
         LoteEventosDTO lote = new LoteEventosDTO(
-                simulacionId, state.siguienteLote(),
+                simulacionId,
+                state.siguienteLote(),
                 ventanaInicio != null ? ventanaInicio.toString() : null,
                 ventanaFin != null ? ventanaFin.toString() : null,
-                eventos.size(), eventos
+                eventos.size(),
+                eventos
         );
         state.setUltimoLoteEmitido(lote);
         webSocketPublisher.publicarLote(simulacionId, lote);
@@ -504,9 +519,21 @@ public class SimulacionJob implements Runnable {
         if (hilo != null) hilo.interrupt();
     }
 
-    public boolean estaPausada() { return pausada.get(); }
-    public boolean estaDetenida() { return detenida.get(); }
-    public LocalDateTime getFechaInicio() { return horaInicio; }
+    public boolean estaPausada() {
+        return pausada.get();
+    }
 
-    private static class SimulacionDetenidaException extends RuntimeException {}
+    public boolean estaDetenida() {
+        return detenida.get();
+    }
+
+    public LocalDateTime getFechaInicio() {
+        return horaInicio;
+    }
+
+    private record IncumplimientoSla(RutaAsignada asignacion, Instant deadline) {
+    }
+
+    private static class SimulacionDetenidaException extends RuntimeException {
+    }
 }

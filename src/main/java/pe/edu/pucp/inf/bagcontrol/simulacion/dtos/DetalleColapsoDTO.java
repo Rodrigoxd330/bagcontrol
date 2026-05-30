@@ -23,6 +23,12 @@ public class DetalleColapsoDTO {
     private Integer capacidad;
     private Integer maletasActuales;
     private Double porcentajeOcupacion;
+    private String fechaHoraRegistro;
+    private String deadlineSla;
+    private String horaColapso;
+    private String tipoSla;
+    private String estadoEnvio;
+    private String aeropuertoActual;
 
     public DetalleColapsoDTO(
             String idPedido,

@@ -4,6 +4,7 @@ import lombok.Data;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
+import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.DetalleColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.LoteEventosDTO;
@@ -14,6 +15,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -26,6 +28,11 @@ public class SimulacionState {
     private Map<Long, List<EnvioDTO>> enviosPorVuelo = new ConcurrentHashMap<>();
     private LocalDateTime tiempoActual;
     private List<Envio> enviosPendientes = new ArrayList<>();
+    private Map<String, RutaAsignada> enviosEnSeguimiento = new ConcurrentHashMap<>();
+    private Set<String> enviosRegistrados = ConcurrentHashMap.newKeySet();
+    private Set<String> enviosEntregados = ConcurrentHashMap.newKeySet();
+    private Map<String, String> ultimoAeropuertoPorEnvio = new ConcurrentHashMap<>();
+    private long bloquesProcesados;
 
     //Simulacion-metadatos
     private final String simulacionId;

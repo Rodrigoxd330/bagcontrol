@@ -45,13 +45,6 @@ public class EnvioDataStore {
     }
 
     /**
-     * Elimina datos previos a un límite dado.
-     */
-    public synchronized void purgarDatosPasados(LocalDateTime limite) {
-        enviosPorTiempo.headMap(limite).clear();
-    }
-
-    /**
      * Retorna el total de envíos cargados.
      */
     public synchronized int getTotalEnviosCargados() {

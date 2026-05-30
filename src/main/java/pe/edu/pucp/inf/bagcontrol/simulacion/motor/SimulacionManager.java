@@ -27,6 +27,12 @@ public class SimulacionManager {
     private final ConcurrentHashMap<String, SimulacionJob> trabajosActivos = new ConcurrentHashMap<>();
 
     public String crearJob(LocalDateTime fechaInicio, LocalDateTime fechaFin, int k, String algoritmo) {
+        if (fechaInicio == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La fecha inicio es obligatoria.");
+        }
+        if (k <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El salto k debe ser mayor que cero.");
+        }
         String simulacionId = UUID.randomUUID().toString();
 
         // 1. Instanciamos la memoria y su mutador para este job específico
