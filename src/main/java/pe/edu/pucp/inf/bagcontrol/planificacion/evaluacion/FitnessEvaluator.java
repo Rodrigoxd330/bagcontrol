@@ -18,7 +18,7 @@ public class FitnessEvaluator {
     private static final double PENALIZACION_SIN_ITINERARIO = 10000.0;
     private static final double PENALIZACION_EXCEDE_SLA = 5000.0;
     private static final double PENALIZACION_SOBRECARGA_VUELO = 50.0;
-    private static final double PENALIZACION_SOBRECARGA_AEROPUERTO = 10.0;
+    private static final double PENALIZACION_SOBRECARGA_AEROPUERTO = 1000000.0;
     private static final double PENALIZACION_ESCALA = 10.0;
     private static final double PENALIZACION_VUELO_CANCELADO = 100000.0;
 

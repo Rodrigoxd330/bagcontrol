@@ -286,6 +286,16 @@ public class PlanificadorService {
             LocalDateTime fin,
             List<Envio> pendientes
     ) {
+        return calcularSolucion(algoritmo, inicio, fin, pendientes, Map.of());
+    }
+
+    public SolucionRuta calcularSolucion(
+            String algoritmo,
+            LocalDateTime inicio,
+            LocalDateTime fin,
+            List<Envio> pendientes,
+            Map<String, Integer> inventarioActual
+    ) {
         if (!fin.isAfter(inicio)) throw new IllegalArgumentException("La fecha fin debe ser mayor a la inicio.");
 
         long inicioTotal = System.currentTimeMillis();
@@ -318,8 +328,12 @@ public class PlanificadorService {
         long inicioAlgoritmo = System.currentTimeMillis();
 
         // IMPORTANTE: Pasamos 'todosLosEnvios' al algoritmo en lugar de solo los de la ventana
+        Map<String, Integer> inventarioInicial = new java.util.HashMap<>(inventarioActual);
+        Set<String> enviosNuevos = enviosVentana.stream()
+                .map(Envio::getIdPedido)
+                .collect(java.util.stream.Collectors.toSet());
         SolucionRuta solucion = algoritmo.equalsIgnoreCase("TABU")
-                ? tabuSearch.ejecutar(todosLosEnvios, itinerariosPorRuta, aeropuertos)
+                ? tabuSearch.ejecutar(todosLosEnvios, itinerariosPorRuta, aeropuertos, inventarioInicial, enviosNuevos)
                 : graspSearch.ejecutar(todosLosEnvios, itinerariosPorRuta, aeropuertos);
 
         long tiempoAlgoritmo = System.currentTimeMillis() - inicioAlgoritmo;
@@ -331,6 +345,7 @@ public class PlanificadorService {
                 + " algoritmo=" + algoritmo.toUpperCase()
                 + " enviosNuevos=" + enviosVentana.size()
                 + " enviosPendientesEntrada=" + (pendientes == null ? 0 : pendientes.size())
+                + " aeropuertosSinCapacidad=" + contarAeropuertosSinCapacidad(inventarioInicial, aeropuertos)
                 + " cargaEnviosMs=" + tiempoCargaEnvios
                 + " generacionVuelosMs=" + tiempoGeneracionVuelos
                 + " vuelosCanceladosDetectados=" + contarVuelosCancelados(vuelosInstanciados)
@@ -481,6 +496,17 @@ public class PlanificadorService {
 
     private int contarVuelosCancelados(List<VueloInstanciado> vuelosInstanciados) {
         return (int) vuelosInstanciados.stream().filter(VueloInstanciado::isEstaCancelado).count();
+    }
+
+    private int contarAeropuertosSinCapacidad(Map<String, Integer> inventario, List<Aeropuerto> aeropuertos) {
+        Map<String, Aeropuerto> mapaAeropuertos = aeropuertos.stream()
+                .collect(java.util.stream.Collectors.toMap(Aeropuerto::getCodigoIata, aeropuerto -> aeropuerto));
+        return (int) inventario.entrySet().stream()
+                .filter(entry -> {
+                    Aeropuerto aeropuerto = mapaAeropuertos.get(entry.getKey());
+                    return aeropuerto != null && entry.getValue() >= aeropuerto.getCapacidadAlmacen();
+                })
+                .count();
     }
 
     private int calcularDiasGeneracion(LocalDateTime inicio, LocalDateTime fin) {

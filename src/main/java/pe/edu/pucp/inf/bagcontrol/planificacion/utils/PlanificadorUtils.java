@@ -101,7 +101,12 @@ public class PlanificadorUtils {
         List<Movimiento> movimientos = new ArrayList<>();
 
         List<RutaAsignada> asignaciones = new ArrayList<>(solucion.getAsignaciones());
-        Collections.shuffle(asignaciones);
+        asignaciones.sort(Comparator
+                .comparing((RutaAsignada asignacion) -> asignacion.getItinerario() != null)
+                .thenComparing(asignacion -> calcularDeadlineSla(asignacion.getEnvio(), mapaAeropuertos))
+                .thenComparing(Comparator.comparingInt(
+                        (RutaAsignada asignacion) -> asignacion.getEnvio().getCantidadMaletas()
+                ).reversed()));
 
         for (RutaAsignada asignacion : asignaciones) {
             var envio = asignacion.getEnvio();
@@ -155,5 +160,107 @@ public class PlanificadorUtils {
         for (VueloInstanciado vuelo : itinerario.getVuelos()) {
             cargaAcumulada.merge(vuelo, envio.getCantidadMaletas(), Integer::sum);
         }
+    }
+
+    public static boolean solucionRespetaCapacidadAeropuertos(
+            SolucionRuta solucion,
+            Map<String, Aeropuerto> mapaAeropuertos,
+            Map<String, Integer> inventarioInicial
+    ) {
+        return solucionRespetaCapacidadAeropuertos(
+                solucion, mapaAeropuertos, inventarioInicial, Collections.emptySet()
+        );
+    }
+
+    public static boolean solucionRespetaCapacidadAeropuertos(
+            SolucionRuta solucion,
+            Map<String, Aeropuerto> mapaAeropuertos,
+            Map<String, Integer> inventarioInicial,
+            Set<String> enviosNuevos
+    ) {
+        Map<String, NavigableMap<Instant, Integer>> movimientosPorAeropuerto = new HashMap<>();
+
+        for (RutaAsignada asignacion : solucion.getAsignaciones()) {
+            if (asignacion.getItinerario() == null) {
+                continue;
+            }
+            if (enviosNuevos.contains(asignacion.getEnvio().getIdPedido())) {
+                registrarMovimiento(
+                        movimientosPorAeropuerto,
+                        asignacion.getEnvio().getOrigenIata(),
+                        obtenerFechaIngresoUtc(asignacion.getEnvio()),
+                        asignacion.getEnvio().getCantidadMaletas()
+                );
+            }
+            registrarMovimientosAeropuertos(
+                    asignacion.getItinerario(),
+                    asignacion.getEnvio().getCantidadMaletas(),
+                    movimientosPorAeropuerto
+            );
+        }
+
+        Set<String> aeropuertosEvaluados = new HashSet<>(inventarioInicial.keySet());
+        aeropuertosEvaluados.addAll(movimientosPorAeropuerto.keySet());
+        for (String codigoIata : aeropuertosEvaluados) {
+            Aeropuerto aeropuerto = mapaAeropuertos.get(codigoIata);
+            if (aeropuerto == null) {
+                return false;
+            }
+
+            int ocupacion = inventarioInicial.getOrDefault(codigoIata, 0);
+            if (ocupacion < 0 || ocupacion > aeropuerto.getCapacidadAlmacen()) {
+                return false;
+            }
+
+            for (int variacion : movimientosPorAeropuerto
+                    .getOrDefault(codigoIata, Collections.emptyNavigableMap())
+                    .values()) {
+                ocupacion += variacion;
+                if (ocupacion < 0 || ocupacion > aeropuerto.getCapacidadAlmacen()) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    public static Map<String, Integer> construirInventarioInicial(
+            List<Envio> envios,
+            Map<String, Integer> inventarioActual
+    ) {
+        Map<String, Integer> inventarioInicial = new HashMap<>();
+        if (inventarioActual != null) {
+            inventarioInicial.putAll(inventarioActual);
+        }
+        for (Envio envio : envios) {
+            inventarioInicial.merge(envio.getOrigenIata(), envio.getCantidadMaletas(), Integer::sum);
+        }
+        return inventarioInicial;
+    }
+
+    private static void registrarMovimientosAeropuertos(
+            Itinerario itinerario,
+            int cantidadMaletas,
+            Map<String, NavigableMap<Instant, Integer>> movimientosPorAeropuerto
+    ) {
+        for (VueloInstanciado vuelo : itinerario.getVuelos()) {
+            registrarMovimiento(
+                    movimientosPorAeropuerto, vuelo.getOrigenIata(), vuelo.getFechaHoraSalidaUtc(), -cantidadMaletas
+            );
+            registrarMovimiento(
+                    movimientosPorAeropuerto, vuelo.getDestinoIata(), vuelo.getFechaHoraLlegadaUtc(), cantidadMaletas
+            );
+        }
+    }
+
+    private static void registrarMovimiento(
+            Map<String, NavigableMap<Instant, Integer>> movimientosPorAeropuerto,
+            String codigoIata,
+            Instant instante,
+            int variacion
+    ) {
+        movimientosPorAeropuerto
+                .computeIfAbsent(codigoIata, key -> new TreeMap<>())
+                .merge(instante, variacion, Integer::sum);
     }
 }

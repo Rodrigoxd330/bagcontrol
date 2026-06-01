@@ -34,7 +34,7 @@ class SimulacionJobTest {
         AeropuertoRepository aeropuertoRepository = mock(AeropuertoRepository.class);
         when(aeropuertoRepository.findAll()).thenReturn(List.of(origen, destino));
         PlanificadorService planificador = mock(PlanificadorService.class);
-        when(planificador.calcularSolucion(anyString(), any(), any(), any())).thenReturn(solucion);
+        when(planificador.calcularSolucion(anyString(), any(), any(), any(), any())).thenReturn(solucion);
         when(planificador.obtenerVuelosCanceladosEnVentana(any(), any())).thenReturn(List.of());
         WebSocketPublisher publisher = mock(WebSocketPublisher.class);
         SimulacionState state = new SimulacionState("sim-test");

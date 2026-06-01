@@ -131,12 +131,13 @@ public class SimulacionJob implements Runnable {
             extraerEventosPostergados(ventanaFinUtc, eventosBatch, eventosPostergados);
             agregarEventosVuelosCancelados(ventanaInicio, ventanaFin, eventosBatch);
 
+            Map<String, Integer> inventarioReservado = construirInventarioReservado();
             SolucionRuta solucion = planificadorService.calcularSolucion(
-                    algoritmo, ventanaInicio, ventanaFin, state.getEnviosPendientes()
+                    algoritmo, ventanaInicio, ventanaFin, state.getEnviosPendientes(), inventarioReservado
             );
             state.setSolucionActual(solucion);
             simulacionStateMutator.indexarEnviosPorVuelo(solucion);
-            registrarEnviosNuevos(solucion, eventosBatch);
+            registrarEnviosNuevos(solucion, eventosBatch, inventarioReservado);
 
             SimulacionEventosFactory.ResultadoEventosVuelo eventosVuelos =
                     simulacionEventosFactory.generarEventosVuelo(solucion, ventanaFinUtc);
@@ -148,7 +149,10 @@ public class SimulacionJob implements Runnable {
             Instant instanteColapso = incumplimiento != null ? incumplimiento.deadline() : null;
 
             aplicarFisicaHasta(eventosBatch, instanteColapso);
-            marcarEnviosEntregadosHasta(instanteColapso != null ? instanteColapso : ventanaFinUtc);
+            marcarEnviosEntregadosHasta(
+                    instanteColapso != null ? instanteColapso : ventanaFinUtc,
+                    eventosBatch
+            );
             agregarAlertasAeropuertosSaturados(eventosBatch);
             eventosBatch.sort(comparadorEventos());
 
@@ -158,6 +162,7 @@ public class SimulacionJob implements Runnable {
 
             publicarLote(eventosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
             state.setBloquesProcesados(state.getBloquesProcesados() + 1);
+            publicarMetricasCapacidad(solucion);
 
             if (incumplimiento != null) {
                 state.setTiempoActual(LocalDateTime.ofInstant(instanteColapso, ZoneOffset.UTC));
@@ -183,7 +188,12 @@ public class SimulacionJob implements Runnable {
         }
     }
 
-    private void registrarEnviosNuevos(SolucionRuta solucion, List<EventoBaseDTO> eventosBatch) {
+    private void registrarEnviosNuevos(
+            SolucionRuta solucion,
+            List<EventoBaseDTO> eventosBatch,
+            Map<String, Integer> inventarioReservado
+    ) {
+        reservarEscalasSolucion(solucion, inventarioReservado);
         for (RutaAsignada asignacion : solucion.getAsignaciones()) {
             Envio envio = asignacion.getEnvio();
             state.getEnviosEnSeguimiento().merge(
@@ -197,13 +207,56 @@ public class SimulacionJob implements Runnable {
 
             String origen = envio.getOrigenIata();
             state.getUltimoAeropuertoPorEnvio().put(envio.getIdPedido(), origen);
-            simulacionStateMutator.sumarMaletas(origen, envio.getCantidadMaletas());
             Aeropuerto aeropuerto = state.getAeropuertosSnapshot().get(origen);
+            int cantidadMaletas = envio.getCantidadMaletas();
+            int inventarioComprometido = inventarioReservado.getOrDefault(origen, 0);
+            boolean registrado = aeropuerto != null
+                    && inventarioComprometido + cantidadMaletas <= aeropuerto.getCapacidadAlmacen()
+                    && simulacionStateMutator.sumarMaletas(origen, cantidadMaletas);
+            if (!registrado) {
+                System.out.println("[SIMULADOR-CAPACIDAD] envioPendientePorCapacidad idPedido=" + envio.getIdPedido()
+                        + " aeropuerto=" + origen
+                        + " maletas=" + cantidadMaletas);
+            } else {
+                inventarioReservado.merge(origen, cantidadMaletas, Integer::sum);
+            }
             int inventario = state.getInventarioSnapshot().getOrDefault(origen, 0);
             eventosBatch.add(simulacionEventosFactory.crearEventoAeropuerto(
                     aeropuerto, inventario, PlanificadorUtils.obtenerFechaIngresoUtc(envio)
             ));
         }
+    }
+
+    private void reservarEscalasSolucion(SolucionRuta solucion, Map<String, Integer> inventarioReservado) {
+        Map<String, Integer> variacionAcumulada = new java.util.HashMap<>();
+        Map<String, Integer> reservaPico = new java.util.HashMap<>();
+        List<MovimientoInventario> movimientos = new ArrayList<>();
+
+        for (RutaAsignada asignacion : solucion.getAsignaciones()) {
+            if (asignacion.getItinerario() == null) {
+                continue;
+            }
+            var vuelos = asignacion.getItinerario().getVuelos();
+            int cantidad = asignacion.getEnvio().getCantidadMaletas();
+            for (int i = 0; i < vuelos.size() - 1; i++) {
+                movimientos.add(new MovimientoInventario(
+                        vuelos.get(i).getFechaHoraLlegadaUtc(), vuelos.get(i).getDestinoIata(), cantidad
+                ));
+                movimientos.add(new MovimientoInventario(
+                        vuelos.get(i + 1).getFechaHoraSalidaUtc(), vuelos.get(i + 1).getOrigenIata(), -cantidad
+                ));
+            }
+        }
+
+        movimientos.stream()
+                .sorted(Comparator.comparing(MovimientoInventario::instante))
+                .forEach(movimiento -> {
+                    int acumulado = variacionAcumulada.merge(
+                            movimiento.codigoIata(), movimiento.variacion(), Integer::sum
+                    );
+                    reservaPico.merge(movimiento.codigoIata(), Math.max(acumulado, 0), Math::max);
+                });
+        reservaPico.forEach((codigoIata, reserva) -> inventarioReservado.merge(codigoIata, reserva, Integer::sum));
     }
 
     private Optional<IncumplimientoSla> encontrarPrimerIncumplimientoSla(Instant ventanaFinUtc) {
@@ -348,6 +401,7 @@ public class SimulacionJob implements Runnable {
                 .toList();
         for (EventoVueloDTO evento : eventosVuelo) {
             aplicarFisicaVuelo(evento, Instant.parse(evento.getFechaHoraEvento()), eventos);
+            marcarEnviosEntregadosHasta(Instant.parse(evento.getFechaHoraEvento()), eventos);
         }
     }
 
@@ -358,9 +412,32 @@ public class SimulacionJob implements Runnable {
             agregarEventoInventario(origen, horaEvento, eventos);
         } else if (evento.getTipo() == TipoEvento.VUELO_ATERRIZA) {
             String destino = evento.getDestinoIata();
-            simulacionStateMutator.sumarMaletas(destino, evento.getCantidadMaletas());
-            agregarEventoInventario(destino, horaEvento, eventos);
+            int entregadasEnDestino = registrarEntregasDirectas(evento, horaEvento);
+            int maletasParaAlmacenar = evento.getCantidadMaletas() - entregadasEnDestino;
+            if (maletasParaAlmacenar <= 0
+                    || simulacionStateMutator.sumarMaletas(destino, maletasParaAlmacenar)) {
+                agregarEventoInventario(destino, horaEvento, eventos);
+            }
         }
+    }
+
+    private int registrarEntregasDirectas(EventoVueloDTO evento, Instant horaEvento) {
+        int entregadas = 0;
+        for (RutaAsignada asignacion : state.getEnviosEnSeguimiento().values()) {
+            String idPedido = asignacion.getEnvio().getIdPedido();
+            if (asignacion.getItinerario() == null || state.getEnviosEntregados().contains(idPedido)) {
+                continue;
+            }
+            var ultimoVuelo = asignacion.getItinerario().getVuelos()
+                    .get(asignacion.getItinerario().getVuelos().size() - 1);
+            if (ultimoVuelo.getCodigoBase().equals(evento.getCodigoVuelo())
+                    && ultimoVuelo.getFechaHoraLlegadaUtc().equals(horaEvento)) {
+                state.getEnviosEntregados().add(idPedido);
+                state.getUltimoAeropuertoPorEnvio().put(idPedido, asignacion.getEnvio().getDestinoIata());
+                entregadas += asignacion.getEnvio().getCantidadMaletas();
+            }
+        }
+        return entregadas;
     }
 
     private void agregarEventoInventario(String codigoIata, Instant horaEvento, List<EventoBaseDTO> eventos) {
@@ -369,12 +446,17 @@ public class SimulacionJob implements Runnable {
         eventos.add(simulacionEventosFactory.crearEventoAeropuerto(aeropuerto, inventario, horaEvento));
     }
 
-    private void marcarEnviosEntregadosHasta(Instant limite) {
+    private void marcarEnviosEntregadosHasta(Instant limite, List<EventoBaseDTO> eventos) {
         for (RutaAsignada asignacion : state.getEnviosEnSeguimiento().values()) {
             if (asignacion.getItinerario() == null) continue;
             if (!asignacion.getItinerario().getFechaHoraLlegadaUtc().isAfter(limite)) {
                 String idPedido = asignacion.getEnvio().getIdPedido();
-                state.getEnviosEntregados().add(idPedido);
+                if (!state.getEnviosEntregados().add(idPedido)) {
+                    continue;
+                }
+                String destino = asignacion.getEnvio().getDestinoIata();
+                simulacionStateMutator.restarMaletas(destino, asignacion.getEnvio().getCantidadMaletas());
+                agregarEventoInventario(destino, asignacion.getItinerario().getFechaHoraLlegadaUtc(), eventos);
                 state.getUltimoAeropuertoPorEnvio().put(idPedido, asignacion.getEnvio().getDestinoIata());
             }
         }
@@ -408,6 +490,63 @@ public class SimulacionJob implements Runnable {
         if (!state.getEnviosPendientes().isEmpty()) {
             System.out.println("[SIMULADOR] enviosPendientes=" + state.getEnviosPendientes().size());
         }
+    }
+
+    private void publicarMetricasCapacidad(SolucionRuta solucion) {
+        int enviosSlaIncumplidos = state.getMetricasColapsoActuales() != null
+                ? state.getMetricasColapsoActuales().getEnviosSlaIncumplidos()
+                : solucion.getExcedeSlaCount();
+        System.out.println("[SIMULADOR-CAPACIDAD-METRICA] maxOcupacionAeropuerto="
+                + simulacionStateMutator.obtenerMaxOcupacionAeropuerto()
+                + " aeropuertosSobreCapacidad=" + simulacionStateMutator.contarAeropuertosSobreCapacidad()
+                + " enviosPendientesPorCapacidad=" + solucion.getSinItinerarioCount()
+                + " enviosSlaIncumplidos=" + enviosSlaIncumplidos);
+    }
+
+    private Map<String, Integer> construirInventarioReservado() {
+        Map<String, Integer> variacionAcumulada = new java.util.HashMap<>();
+        Map<String, Integer> reservaPico = new java.util.HashMap<>();
+        Instant referencia = state.getTiempoActual().toInstant(ZoneOffset.UTC);
+        List<MovimientoInventario> movimientos = new ArrayList<>();
+
+        for (RutaAsignada asignacion : state.getEnviosEnSeguimiento().values()) {
+            if (asignacion.getItinerario() == null
+                    || state.getEnviosEntregados().contains(asignacion.getEnvio().getIdPedido())) {
+                continue;
+            }
+            List<pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado> vuelos =
+                    asignacion.getItinerario().getVuelos();
+            int cantidad = asignacion.getEnvio().getCantidadMaletas();
+            for (int i = 0; i < vuelos.size(); i++) {
+                var vuelo = vuelos.get(i);
+                if (!vuelo.getFechaHoraSalidaUtc().isBefore(referencia)) {
+                    movimientos.add(new MovimientoInventario(
+                            vuelo.getFechaHoraSalidaUtc(), vuelo.getOrigenIata(), -cantidad
+                    ));
+                }
+                if (i < vuelos.size() - 1 && !vuelo.getFechaHoraLlegadaUtc().isBefore(referencia)) {
+                    movimientos.add(new MovimientoInventario(
+                            vuelo.getFechaHoraLlegadaUtc(), vuelo.getDestinoIata(), cantidad
+                    ));
+                }
+            }
+        }
+
+        movimientos.stream()
+                .sorted(Comparator.comparing(MovimientoInventario::instante))
+                .forEach(movimiento -> {
+                    int acumulado = variacionAcumulada.merge(
+                            movimiento.codigoIata(), movimiento.variacion(), Integer::sum
+                    );
+                    reservaPico.merge(movimiento.codigoIata(), Math.max(acumulado, 0), Math::max);
+                });
+
+        Map<String, Integer> inventarioReservado = new java.util.HashMap<>(state.getInventarioSnapshot());
+        reservaPico.forEach((codigoIata, reserva) -> inventarioReservado.merge(codigoIata, reserva, Integer::sum));
+        return inventarioReservado;
+    }
+
+    private record MovimientoInventario(Instant instante, String codigoIata, int variacion) {
     }
 
     private Comparator<EventoBaseDTO> comparadorEventos() {
