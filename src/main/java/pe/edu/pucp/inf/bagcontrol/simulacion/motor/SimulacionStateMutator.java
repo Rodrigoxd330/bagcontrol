@@ -1,7 +1,7 @@
 package pe.edu.pucp.inf.bagcontrol.simulacion.motor;
 
-import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.model.Aeropuerto;
-import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.repo.AeropuertoRepository;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
@@ -67,8 +67,18 @@ public class SimulacionStateMutator {
         state.setEnviosPorVuelo(indice);
     }
 
-    public void sumarMaletas(String aeropuertoIata, int cantidad) {
-        state.getInventarioSnapshot().merge(aeropuertoIata, cantidad, Integer::sum);
+    public boolean sumarMaletas(String aeropuertoIata, int cantidad) {
+        Aeropuerto aeropuerto = state.getAeropuertosSnapshot().get(aeropuertoIata);
+        int actual = state.getInventarioSnapshot().getOrDefault(aeropuertoIata, 0);
+        if (aeropuerto == null || actual + cantidad > aeropuerto.getCapacidadAlmacen()) {
+            System.out.println("[SIMULADOR-CAPACIDAD] aeropuertoSinCapacidad=" + aeropuertoIata
+                    + " inventarioActual=" + actual
+                    + " maletasRechazadas=" + cantidad
+                    + " capacidad=" + (aeropuerto != null ? aeropuerto.getCapacidadAlmacen() : "DESCONOCIDA"));
+            return false;
+        }
+        state.getInventarioSnapshot().put(aeropuertoIata, actual + cantidad);
+        return true;
     }
 
     public void restarMaletas(String aeropuertoIata, int cantidad) {
@@ -90,5 +100,18 @@ public class SimulacionStateMutator {
         for (String codigoIata : state.getAeropuertosSnapshot().keySet()) {
             state.getInventarioSnapshot().put(codigoIata, cargaPorAeropuerto.getOrDefault(codigoIata, 0));
         }
+    }
+
+    public int obtenerMaxOcupacionAeropuerto() {
+        return state.getInventarioSnapshot().values().stream().mapToInt(Integer::intValue).max().orElse(0);
+    }
+
+    public long contarAeropuertosSobreCapacidad() {
+        return state.getInventarioSnapshot().entrySet().stream()
+                .filter(entry -> {
+                    Aeropuerto aeropuerto = state.getAeropuertosSnapshot().get(entry.getKey());
+                    return aeropuerto != null && entry.getValue() > aeropuerto.getCapacidadAlmacen();
+                })
+                .count();
     }
 }

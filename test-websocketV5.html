@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BagControl Simulacion WS V5</title>
+  <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #1f2933; }
+    label { display: block; margin: 10px 0 4px; font-size: 13px; font-weight: 700; }
+    input, select, button { padding: 8px; font-size: 14px; }
+    button { margin-right: 8px; cursor: pointer; }
+    .row { display: flex; flex-wrap: wrap; gap: 16px; align-items: end; }
+    .panel { border: 1px solid #cfd7df; border-radius: 6px; padding: 16px; margin-bottom: 16px; }
+    .status { font-weight: 700; }
+    pre { background: #111827; color: #e5e7eb; padding: 12px; overflow: auto; max-height: 420px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+    th, td { border-bottom: 1px solid #d9e2ec; padding: 8px; text-align: left; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>BagControl Simulacion WS V5</h1>
+
+  <div class="panel">
+    <div class="row">
+      <div>
+        <label for="fechaInicio">fechaInicio</label>
+        <input id="fechaInicio" type="datetime-local" value="2026-02-20T08:30">
+      </div>
+      <div>
+        <label for="fechaFin">fechaFin opcional</label>
+        <input id="fechaFin" type="datetime-local" value="2026-02-21T08:30">
+      </div>
+      <div>
+        <label for="k">k minutos</label>
+        <input id="k" type="number" min="1" value="15">
+      </div>
+      <div>
+        <label for="algoritmo">algoritmo</label>
+        <select id="algoritmo">
+          <option>TABU</option>
+          <option>GRASP</option>
+        </select>
+      </div>
+    </div>
+    <p>Deja fechaFin vacio para probar modo COLAPSO.</p>
+    <button onclick="preparar()">1. Preparar</button>
+    <button onclick="conectar()">2. Conectar WS</button>
+    <button onclick="arrancar()">3. Arrancar</button>
+    <button onclick="limpiar()">Limpiar</button>
+  </div>
+
+  <div class="panel">
+    <div>API_BASE: <span id="apiBase"></span></div>
+    <div>WS_URL: <span id="wsUrl"></span></div>
+    <div>Simulacion: <span id="simulacionId" class="status">-</span></div>
+    <div>Topic: <span id="topic" class="status">-</span></div>
+    <div>Modo: <span id="modo" class="status">-</span></div>
+    <div>WS: <span id="wsEstado" class="status">desconectado</span></div>
+  </div>
+
+  <div class="panel">
+    <h2>Resumen de lotes</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Lote</th>
+          <th>Ventana</th>
+          <th>Total</th>
+          <th>Ciclo colapso</th>
+          <th>Colapso</th>
+          <th>Cancelados</th>
+          <th>Causa</th>
+        </tr>
+      </thead>
+      <tbody id="resumen"></tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h2>Log completo</h2>
+    <pre id="log"></pre>
+  </div>
+
+  <script>
+    const API_BASE = 'http://localhost:8090/api/simulacion';
+    const WS_URL = 'http://localhost:8090/ws/simulacion';
+
+    let simulacionId = null;
+    let websocketTopic = null;
+    let stompClient = null;
+
+    document.getElementById('apiBase').textContent = API_BASE;
+    document.getElementById('wsUrl').textContent = WS_URL;
+
+    function valor(id) {
+      return document.getElementById(id).value;
+    }
+
+    function log(obj) {
+      const el = document.getElementById('log');
+      el.textContent += JSON.stringify(obj, null, 2) + '\n\n';
+      el.scrollTop = el.scrollHeight;
+    }
+
+    async function preparar() {
+      const params = new URLSearchParams();
+      params.set('fechaInicio', valor('fechaInicio'));
+      if (valor('fechaFin')) params.set('fechaFin', valor('fechaFin'));
+      params.set('k', valor('k'));
+      params.set('algoritmo', valor('algoritmo'));
+
+      const res = await fetch(`${API_BASE}/preparar?${params.toString()}`, { method: 'POST' });
+      const body = await res.json();
+      if (!res.ok) throw new Error(JSON.stringify(body));
+
+      simulacionId = body.simulacionId;
+      websocketTopic = body.websocketTopic || body.topic;
+      document.getElementById('simulacionId').textContent = simulacionId;
+      document.getElementById('topic').textContent = websocketTopic;
+      document.getElementById('modo').textContent = body.modo || '-';
+      log({ preparar: body });
+    }
+
+    function conectar() {
+      if (!websocketTopic) throw new Error('Primero prepara la simulacion.');
+      const socket = new SockJS(WS_URL);
+      stompClient = Stomp.over(socket);
+      stompClient.debug = null;
+      stompClient.connect({}, () => {
+        document.getElementById('wsEstado').textContent = 'conectado';
+        stompClient.subscribe(websocketTopic, (message) => {
+          const lote = JSON.parse(message.body);
+          renderLote(lote);
+          log(lote);
+        });
+      }, (error) => {
+        document.getElementById('wsEstado').textContent = 'error';
+        log({ wsError: error });
+      });
+    }
+
+    async function arrancar() {
+      if (!simulacionId) throw new Error('Primero prepara la simulacion.');
+      const res = await fetch(`${API_BASE}/iniciar/${simulacionId}/arrancar`, { method: 'POST' });
+      const body = await res.json();
+      log({ arrancar: body });
+    }
+
+    function renderLote(lote) {
+      const eventos = lote.eventos || [];
+      const ciclo = eventos.filter(e => e.tipo === 'CICLO_COLAPSO_EVALUADO').length;
+      const colapso = eventos.filter(e => e.tipo === 'COLAPSO_DETECTADO').length;
+      const cancelados = eventos.filter(e => e.tipo === 'VUELO_CANCELADO' || e.tipo === 'INCIDENCIA_APLICADA').length;
+      const colapsoEvento = eventos.find(e => e.tipo === 'COLAPSO_DETECTADO');
+      const causa = colapsoEvento ? `${colapsoEvento.causaPrincipal || ''} ${JSON.stringify(colapsoEvento.metricas || {})}` : '';
+
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${lote.numeroLote}</td>
+        <td>${lote.ventanaInicio || ''} - ${lote.ventanaFin || ''}</td>
+        <td>${lote.cantidadEventos}</td>
+        <td>${ciclo}</td>
+        <td>${colapso}</td>
+        <td>${cancelados}</td>
+        <td>${causa}</td>
+      `;
+      document.getElementById('resumen').appendChild(tr);
+    }
+
+    function limpiar() {
+      document.getElementById('resumen').textContent = '';
+      document.getElementById('log').textContent = '';
+    }
+  </script>
+</body>
+</html>

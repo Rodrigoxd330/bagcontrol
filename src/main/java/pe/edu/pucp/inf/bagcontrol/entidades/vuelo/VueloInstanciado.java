@@ -18,6 +18,24 @@ public class VueloInstanciado {
     private Instant fechaHoraSalidaUtc;
     private Instant fechaHoraLlegadaUtc;
     private int ocupacionActual = 0;
+    private boolean canceladoPorIncidencia = false;
+    private String motivoCancelacion;
+
+    public VueloInstanciado(
+            Vuelo vueloBase,
+            LocalDateTime fechaHoraSalida,
+            LocalDateTime fechaHoraLlegada,
+            Instant fechaHoraSalidaUtc,
+            Instant fechaHoraLlegadaUtc,
+            int ocupacionActual
+    ) {
+        this.vueloBase = vueloBase;
+        this.fechaHoraSalida = fechaHoraSalida;
+        this.fechaHoraLlegada = fechaHoraLlegada;
+        this.fechaHoraSalidaUtc = fechaHoraSalidaUtc;
+        this.fechaHoraLlegadaUtc = fechaHoraLlegadaUtc;
+        this.ocupacionActual = ocupacionActual;
+    }
 
     public VueloInstanciado(
             Vuelo vueloBase,
@@ -48,7 +66,7 @@ public class VueloInstanciado {
     }
 
     public boolean isEstaCancelado() {
-        return vueloBase != null && vueloBase.isEstaCancelado();
+        return canceladoPorIncidencia || (vueloBase != null && vueloBase.isEstaCancelado());
     }
 
     public boolean tieneCapacidadDisponible(int cantidadMaletas) {

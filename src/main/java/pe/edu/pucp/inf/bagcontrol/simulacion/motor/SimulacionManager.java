@@ -4,14 +4,14 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
-import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.repo.AeropuertoRepository;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.service.PlanificadorService;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
 
-import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -26,7 +26,13 @@ public class SimulacionManager {
 
     private final ConcurrentHashMap<String, SimulacionJob> trabajosActivos = new ConcurrentHashMap<>();
 
-    public String crearJob(LocalDate fechaInicio, LocalDate fechaFin, int k, String algoritmo) {
+    public String crearJob(LocalDateTime fechaInicio, LocalDateTime fechaFin, int k, String algoritmo) {
+        if (fechaInicio == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La fecha inicio es obligatoria.");
+        }
+        if (k <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El salto k debe ser mayor que cero.");
+        }
         String simulacionId = UUID.randomUUID().toString();
 
         // 1. Instanciamos la memoria y su mutador para este job específico
@@ -82,13 +88,13 @@ public class SimulacionManager {
         thread.start();
     }
 
-    public String crearYArrancarJob(LocalDate fechaInicio, LocalDate fechaFin, int k, String algoritmo) {
+    public String crearYArrancarJob(LocalDateTime fechaInicio, LocalDateTime fechaFin, int k, String algoritmo) {
         String simulacionId = crearJob(fechaInicio, fechaFin, k, algoritmo);
         arrancarJob(simulacionId);
         return simulacionId;
     }
 
-    public String crearYArrancarJobColapso(LocalDate fechaInicio, int k, String algoritmo) {
+    public String crearYArrancarJobColapso(LocalDateTime fechaInicio, int k, String algoritmo) {
         return crearYArrancarJob(fechaInicio, null, k, algoritmo);
     }
 

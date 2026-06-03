@@ -1,7 +1,6 @@
 package pe.edu.pucp.inf.bagcontrol.simulacion.motor;
 
 import lombok.RequiredArgsConstructor;
-import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -13,6 +12,8 @@ import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.out.RespuestaInicioSimulacionDTO;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
 
@@ -32,21 +33,33 @@ public class SimulacionController {
      */
     @PostMapping("/preparar")
     public RespuestaInicioSimulacionDTO preparaSimulacion(
-            @RequestParam("fechaInicio")
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaInicio,
+            @RequestParam("fechaInicio") String fechaInicio,
 
-            @RequestParam(value = "fechaFin", required = false)
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaFin,
+            @RequestParam(value = "fechaFin", required = false) String fechaFin,
 
-            @RequestParam(value = "k", defaultValue = "15") int k,
+            @RequestParam(value = "k", defaultValue = "30") int k,
 
             @RequestParam(value = "algoritmo", defaultValue = "TABU") String algoritmo
     ) {
         System.out.println("FRONTEND MANDÓ: " + fechaFin);
-        String simulacionId = simulacionManager.crearJob(fechaInicio, fechaFin, k, algoritmo);
-        String modo = (fechaFin == null) ? MODO_COLAPSO : MODO_NORMAL;
+        LocalDateTime inicio = parseFechaHoraFlexible(fechaInicio);
+        LocalDateTime fin = parseFechaHoraFlexible(fechaFin);
+        String simulacionId = simulacionManager.crearJob(inicio, fin, k, algoritmo);
+        String modo = (fin == null) ? MODO_COLAPSO : MODO_NORMAL;
         String topic = "/topic/simulacion/" + simulacionId + "/eventos";
         return new RespuestaInicioSimulacionDTO(simulacionId, topic, modo);
+    }
+
+    private LocalDateTime parseFechaHoraFlexible(String valor) {
+        if (valor == null || valor.isBlank()) {
+            return null;
+        }
+        String limpio = valor.trim();
+        try {
+            return LocalDateTime.parse(limpio);
+        } catch (DateTimeParseException ignored) {
+            return LocalDate.parse(limpio).atStartOfDay();
+        }
     }
 
     /*

@@ -3,6 +3,7 @@ package pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos;
 public enum TipoEvento {
     SIMULACION_INICIADA,
     AEROPUERTO_ACTUALIZADO,
+    ALERTA_AEROPUERTO_SATURADO,
     VUELO_DESPEGA,
     VUELO_ATERRIZA,
     VUELO_CANCELADO,

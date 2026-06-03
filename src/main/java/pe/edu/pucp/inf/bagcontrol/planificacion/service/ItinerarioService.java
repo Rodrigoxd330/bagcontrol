@@ -14,7 +14,8 @@ public class ItinerarioService {
 
     private static final int MIN_CONEXION_MINUTOS = 30;
     private static final int MAX_ESPERA_ESCALA_HORAS = 12;
-    private static final int MAX_ITINERARIOS_POR_RUTA = 300;
+    private static final int MAX_ITINERARIOS_POR_RUTA_POR_DIA = 200;
+    private static final int MAX_ITINERARIOS_POR_RUTA_MIN = 500;
 
     public Map<String, List<Itinerario>> generarItinerariosPorRuta(List<VueloInstanciado> vuelos) {
         long inicio = System.currentTimeMillis();
@@ -66,13 +67,22 @@ public class ItinerarioService {
         }
 
         int totalAntesRecorte = itinerariosPorRuta.values().stream().mapToInt(List::size).sum();
+        int diasInstanciados = Math.max(1, (int) vuelos.stream()
+                .map(v -> v.getFechaHoraSalida().toLocalDate())
+                .distinct()
+                .count());
+        int maxItinerariosPorRuta = Math.max(
+                MAX_ITINERARIOS_POR_RUTA_MIN,
+                diasInstanciados * MAX_ITINERARIOS_POR_RUTA_POR_DIA
+        );
+
         for (List<Itinerario> lista : itinerariosPorRuta.values()) {
             lista.sort(Comparator.comparingDouble(PlanificadorUtils::calcularDuracionItinerarioHoras));
 
-            if (lista.size() > MAX_ITINERARIOS_POR_RUTA) {
+            if (lista.size() > maxItinerariosPorRuta) {
                 rutasRecortadas++;
-                itinerariosEliminadosPorRecorte += lista.size() - MAX_ITINERARIOS_POR_RUTA;
-                lista.subList(MAX_ITINERARIOS_POR_RUTA, lista.size()).clear();
+                itinerariosEliminadosPorRecorte += lista.size() - maxItinerariosPorRuta;
+                lista.subList(maxItinerariosPorRuta, lista.size()).clear();
             }
         }
 
@@ -82,6 +92,8 @@ public class ItinerarioService {
                 + " itinerariosDirectos=" + itinerariosDirectos
                 + " itinerariosConEscala=" + itinerariosConEscala
                 + " totalRutas=" + itinerariosPorRuta.size()
+                + " diasInstanciados=" + diasInstanciados
+                + " maxItinerariosPorRuta=" + maxItinerariosPorRuta
                 + " totalAntesRecorte=" + totalAntesRecorte
                 + " rutasRecortadas=" + rutasRecortadas
                 + " itinerariosEliminadosPorRecorte=" + itinerariosEliminadosPorRecorte

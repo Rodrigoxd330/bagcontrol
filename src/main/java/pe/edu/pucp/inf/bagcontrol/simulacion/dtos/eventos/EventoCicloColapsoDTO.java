@@ -11,10 +11,12 @@ import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MetricasColapsoDTO;
 @EqualsAndHashCode(callSuper = true)
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class EventoCicloColapsoDTO extends EventoBaseDTO {
+    private int ciclo;
     private MetricasColapsoDTO metricas;
 
-    public EventoCicloColapsoDTO(String fechaHoraEvento, MetricasColapsoDTO metricas) {
+    public EventoCicloColapsoDTO(String fechaHoraEvento, int ciclo, MetricasColapsoDTO metricas) {
         super(TipoEvento.CICLO_COLAPSO_EVALUADO, fechaHoraEvento);
+        this.ciclo = ciclo;
         this.metricas = metricas;
     }
 }

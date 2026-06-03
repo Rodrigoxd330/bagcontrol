@@ -2,7 +2,7 @@ package pe.edu.pucp.inf.bagcontrol.planificacion.algoritmo;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
-import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.model.Aeropuerto;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.evaluacion.FitnessEvaluator;
@@ -19,10 +19,30 @@ import java.util.stream.Collectors;
 public class TabuSearch {
 
     private final FitnessEvaluator fitnessEvaluator;
-    private final Random random = new Random();
-
     public SolucionRuta ejecutar(List<Envio> envios, Map<String, List<Itinerario>> itinerariosPorRuta, List<Aeropuerto> aeropuertos) {
-        return ejecutarConParametros(envios, itinerariosPorRuta, aeropuertos, 120, 12, 50);
+        Map<String, Integer> inventarioInicial = PlanificadorUtils.construirInventarioInicial(envios, Map.of());
+        return ejecutarConParametros(envios, itinerariosPorRuta, aeropuertos, inventarioInicial, Set.of(), 120, 12, 50);
+    }
+
+    public SolucionRuta ejecutar(
+            List<Envio> envios,
+            Map<String, List<Itinerario>> itinerariosPorRuta,
+            List<Aeropuerto> aeropuertos,
+            Map<String, Integer> inventarioInicial
+    ) {
+        return ejecutar(envios, itinerariosPorRuta, aeropuertos, inventarioInicial, Set.of());
+    }
+
+    public SolucionRuta ejecutar(
+            List<Envio> envios,
+            Map<String, List<Itinerario>> itinerariosPorRuta,
+            List<Aeropuerto> aeropuertos,
+            Map<String, Integer> inventarioInicial,
+            Set<String> enviosNuevos
+    ) {
+        return ejecutarConParametros(
+                envios, itinerariosPorRuta, aeropuertos, inventarioInicial, enviosNuevos, 120, 12, 50
+        );
     }
 
     public SolucionRuta ejecutarConParametros(
@@ -33,18 +53,38 @@ public class TabuSearch {
             int tenure,
             int maxVecinos
     ) {
+        Map<String, Integer> inventarioInicial = PlanificadorUtils.construirInventarioInicial(envios, Map.of());
+        return ejecutarConParametros(
+                envios, itinerariosPorRuta, aeropuertos, inventarioInicial, Set.of(), iteraciones, tenure, maxVecinos
+        );
+    }
+
+    public SolucionRuta ejecutarConParametros(
+            List<Envio> envios,
+            Map<String, List<Itinerario>> itinerariosPorRuta,
+            List<Aeropuerto> aeropuertos,
+            Map<String, Integer> inventarioInicial,
+            Set<String> enviosNuevos,
+            int iteraciones,
+            int tenure,
+            int maxVecinos
+    ) {
         long inicio = System.currentTimeMillis();
         Set<String> listaTabu = new LinkedHashSet<>();
         int iteracionesEjecutadas = 0;
         int vecinosGenerados = 0;
         int vecinosEvaluados = 0;
+        int rutasDescartadasPorCapacidadAeropuerto = 0;
         int movimientosAceptados = 0;
         int mejorasGlobales = 0;
 
         Map<String, Aeropuerto> mapaAeropuertos = aeropuertos.stream()
                 .collect(Collectors.toMap(Aeropuerto::getCodigoIata, a -> a));
 
-        SolucionRuta actual = generarSolucionInicial(envios, itinerariosPorRuta, mapaAeropuertos);
+        ResultadoSolucionInicial resultadoInicial =
+                generarSolucionInicial(envios, itinerariosPorRuta, mapaAeropuertos, inventarioInicial, enviosNuevos);
+        SolucionRuta actual = resultadoInicial.solucion();
+        rutasDescartadasPorCapacidadAeropuerto += resultadoInicial.rutasDescartadasPorCapacidadAeropuerto();
         double actualFitness = fitnessEvaluator.evaluar(actual, mapaAeropuertos);
 
         SolucionRuta mejor = actual.clonar();
@@ -68,6 +108,14 @@ public class TabuSearch {
                 String id = mov.getIdMovimientoTabu();
 
                 actual.aplicarMovimientoDefinitivo(mov);
+                if (!PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
+                        actual, mapaAeropuertos, inventarioInicial, enviosNuevos
+                )) {
+                    rutasDescartadasPorCapacidadAeropuerto++;
+                    actual.deshacerMovimiento(mov);
+                    actual.setFitness(actualFitness);
+                    continue;
+                }
                 double fitnessCandidato = fitnessEvaluator.evaluar(actual, mapaAeropuertos);
 
                 boolean esMejorGlobal = fitnessCandidato < mejorFitnessGlobal;
@@ -105,49 +153,89 @@ public class TabuSearch {
         }
 
         long tiempoTotal = System.currentTimeMillis() - inicio;
-//        System.out.println("[METRICA TABU] enviosRecibidos=" + envios.size()
-//                + " iteracionesConfiguradas=" + iteraciones
-//                + " tenure=" + tenure
-//                + " maxVecinos=" + maxVecinos
-//                + " iteracionesEjecutadas=" + iteracionesEjecutadas
-//                + " vecinosGenerados=" + vecinosGenerados
-//                + " vecinosEvaluados=" + vecinosEvaluados
-//                + " movimientosAceptados=" + movimientosAceptados
-//                + " mejorasGlobales=" + mejorasGlobales
-//                + " mejorFitnessFinal=" + mejorFitnessGlobal
-//                + " tiempoTotalMs=" + tiempoTotal);
+        System.out.println("[METRICA TABU] enviosRecibidos=" + envios.size()
+                + " iteracionesConfiguradas=" + iteraciones
+                + " tenure=" + tenure
+                + " maxVecinos=" + maxVecinos
+                + " iteracionesEjecutadas=" + iteracionesEjecutadas
+                + " vecinosGenerados=" + vecinosGenerados
+                + " vecinosEvaluados=" + vecinosEvaluados
+                + " movimientosAceptados=" + movimientosAceptados
+                + " mejorasGlobales=" + mejorasGlobales
+                + " rutasDescartadasPorCapacidadAeropuerto=" + rutasDescartadasPorCapacidadAeropuerto
+                + " enviosPendientesPorCapacidad=" + resultadoInicial.enviosPendientesPorCapacidad()
+                + " enviosReplanificadosPorCapacidad=" + movimientosAceptados
+                + " mejorFitnessFinal=" + mejorFitnessGlobal
+                + " tiempoTotalMs=" + tiempoTotal);
         return mejor;
     }
 
-    private SolucionRuta generarSolucionInicial(
+    private ResultadoSolucionInicial generarSolucionInicial(
             List<Envio> envios,
             Map<String, List<Itinerario>> itinerariosPorRuta,
-            Map<String, Aeropuerto> mapaAeropuertos
+            Map<String, Aeropuerto> mapaAeropuertos,
+            Map<String, Integer> inventarioInicial,
+            Set<String> enviosNuevos
     ) {
         SolucionRuta solucion = new SolucionRuta();
         Map<VueloInstanciado, Integer> cargaAcumulada = new HashMap<>();
+        int rutasDescartadasPorCapacidadAeropuerto = 0;
+        int enviosPendientesPorCapacidad = 0;
 
-        for (Envio envio : envios) {
+        List<Envio> enviosPriorizados = envios.stream()
+                .sorted(Comparator
+                        .comparing((Envio envio) -> PlanificadorUtils.calcularDeadlineSla(envio, mapaAeropuertos))
+                        .thenComparing(Comparator.comparingInt(Envio::getCantidadMaletas).reversed()))
+                .toList();
+
+        for (Envio envio : enviosPriorizados) {
             List<Itinerario> posibles = PlanificadorUtils.buscarItinerariosViablesParaEnvio(
                             envio, itinerariosPorRuta, mapaAeropuertos)
                     .stream()
                     .filter(i -> PlanificadorUtils.itinerarioTieneCapacidad(i, envio, cargaAcumulada))
                     // Ordenar por duración ascendente = itinerario más rápido primero
-                    .sorted(Comparator.comparingDouble(
-                            i -> PlanificadorUtils.calcularDuracionItinerarioHoras(i)))
+                    .sorted(Comparator
+                            .comparing(Itinerario::getFechaHoraSalidaUtc)
+                            .thenComparing(Itinerario::getFechaHoraLlegadaUtc)
+                            .thenComparingInt(Itinerario::getCantidadVuelos))
                     .toList();
 
-            if (posibles.isEmpty()) {
+            List<Itinerario> viablesPorAeropuerto = new ArrayList<>();
+            for (Itinerario posible : posibles) {
+                solucion.agregarAsignacion(envio, posible);
+                boolean capacidadDisponible = PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
+                        solucion, mapaAeropuertos, inventarioInicial, enviosNuevos
+                );
+                solucion.getAsignaciones().remove(solucion.getAsignaciones().size() - 1);
+                if (capacidadDisponible) {
+                    viablesPorAeropuerto.add(posible);
+                } else {
+                    rutasDescartadasPorCapacidadAeropuerto++;
+                }
+            }
+
+            if (viablesPorAeropuerto.isEmpty()) {
                 solucion.agregarAsignacion(envio, null);
+                if (!posibles.isEmpty()) {
+                    enviosPendientesPorCapacidad++;
+                }
             } else {
                 // Elegir aleatoriamente entre el top 20% de mejores itinerarios
-                int limite = Math.max(1, (int) Math.ceil(0.2 * posibles.size()));
-                Itinerario elegido = posibles.get(random.nextInt(limite));
+                Itinerario elegido = viablesPorAeropuerto.get(0);
                 PlanificadorUtils.acumularCargaItinerario(elegido, envio, cargaAcumulada);
                 solucion.agregarAsignacion(envio, elegido);
             }
         }
 
-        return solucion;
+        return new ResultadoSolucionInicial(
+                solucion, rutasDescartadasPorCapacidadAeropuerto, enviosPendientesPorCapacidad
+        );
+    }
+
+    private record ResultadoSolucionInicial(
+            SolucionRuta solucion,
+            int rutasDescartadasPorCapacidadAeropuerto,
+            int enviosPendientesPorCapacidad
+    ) {
     }
 }

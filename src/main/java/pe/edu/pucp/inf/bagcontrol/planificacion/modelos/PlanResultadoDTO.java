@@ -15,4 +15,17 @@ public class PlanResultadoDTO {
     private double fitness;
     private int totalAsignaciones;
     private List<AsignacionPlanDTO> plan;
+    private int totalEnviosVentana;
+    private int totalMaletasVentana;
+    private int totalVuelosInstanciados;
+    private int totalItinerariosGenerados;
+    private int enviosSinItinerario;
+    private int enviosSlaIncumplido;
+    private int vuelosCanceladosDetectados;
+    private int vuelosCanceladosUsadosEnSolucion;
+    private long tiempoCargaEnviosMs;
+    private long tiempoGeneracionVuelosMs;
+    private long tiempoGeneracionItinerariosMs;
+    private long tiempoAlgoritmoMs;
+    private long tiempoTotalPlanificacionMs;
 }
