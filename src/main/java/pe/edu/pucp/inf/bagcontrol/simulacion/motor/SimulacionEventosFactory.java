@@ -58,11 +58,13 @@ public class SimulacionEventosFactory {
         );
     }
 
-    private void actualizarSemaforoVuelo(EventoVueloDTO dto, int nuevasMaletas, int capacidadMax) {
+    public void actualizarSemaforoVuelo(EventoVueloDTO dto, int nuevasMaletas, int capacidadMax) {
+        dto.setCapacidadMax(capacidadMax);
         int totalMaletas = dto.getCantidadMaletas() + nuevasMaletas;
         dto.setCantidadMaletas(totalMaletas);
 
         double porcentaje = capacidadMax > 0 ? (totalMaletas * 100.0) / capacidadMax : 0.0;
+        dto.setPorcentajeOcupacion(porcentaje);
 
         if (porcentaje >= COTA_ROJO) {
             dto.setEstado(EstadoCapacidad.ROJO);
@@ -71,6 +73,10 @@ public class SimulacionEventosFactory {
         } else {
             dto.setEstado(EstadoCapacidad.VERDE);
         }
+    }
+
+    public void fusionarEventoVuelo(EventoVueloDTO existente, EventoVueloDTO nuevo) {
+        actualizarSemaforoVuelo(existente, nuevo.getCantidadMaletas(), existente.getCapacidadMax());
     }
 
     public EventoVueloDTO crearEventoVuelo(VueloInstanciado vuelo, TipoEvento tipoEvento) {

@@ -54,6 +54,7 @@ public class SimulacionJob implements Runnable {
     @Getter
     private final SimulacionState state;
     private final SimulacionStateMutator simulacionStateMutator;
+    private long tiempoUltimoLoteMs = 0L;
 
     private volatile Thread hilo;
 
@@ -110,7 +111,7 @@ public class SimulacionJob implements Runnable {
         state.setTiempoActual(horaInicio);
         publicarControl(TipoEvento.SIMULACION_INICIADA);
         LocalDateTime tiempoFin = horaFin == null ? LocalDateTime.MAX : horaFin;
-        List<EventoBaseDTO> eventosPostergados = new ArrayList<>();
+        Map<String, EventoVueloDTO> eventosVueloPostergados = new java.util.LinkedHashMap<>();
         publicarConfiguracionRendimiento();
 
         while (state.getTiempoActual().isBefore(tiempoFin)) {
@@ -128,7 +129,7 @@ public class SimulacionJob implements Runnable {
             state.setCicloActual(ciclo);
 
             List<EventoBaseDTO> eventosBatch = new ArrayList<>();
-            extraerEventosPostergados(ventanaFinUtc, eventosBatch, eventosPostergados);
+            extraerEventosVueloPostergados(ventanaFinUtc, eventosBatch, eventosVueloPostergados);
             agregarEventosVuelosCancelados(ventanaInicio, ventanaFin, eventosBatch);
 
             Map<String, Integer> inventarioReservado = construirInventarioReservado();
@@ -142,7 +143,7 @@ public class SimulacionJob implements Runnable {
             SimulacionEventosFactory.ResultadoEventosVuelo eventosVuelos =
                     simulacionEventosFactory.generarEventosVuelo(solucion, ventanaFinUtc);
             eventosBatch.addAll(eventosVuelos.actuales());
-            eventosPostergados.addAll(eventosVuelos.futuros());
+            agregarEventosVueloPostergados(eventosVuelos.futuros(), eventosVueloPostergados);
             eventosBatch.sort(comparadorEventos());
 
             IncumplimientoSla incumplimiento = encontrarPrimerIncumplimientoSla(ventanaFinUtc).orElse(null);
@@ -160,6 +161,7 @@ public class SimulacionJob implements Runnable {
                 registrarColapsoSla(ciclo, ventanaInicio, ventanaFin, solucion, incumplimiento, eventosBatch);
             }
 
+            consolidarEventosVuelo(eventosBatch);
             publicarLote(eventosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
             state.setBloquesProcesados(state.getBloquesProcesados() + 1);
             publicarMetricasCapacidad(solucion);
@@ -172,6 +174,7 @@ public class SimulacionJob implements Runnable {
 
             actualizarPendientesParaSiguienteCiclo(solucion);
             long tiempoLote = System.currentTimeMillis() - inicioLote;
+            this.tiempoUltimoLoteMs = tiempoLote;
             System.out.printf(
                     "[SIMULADOR] lote=%d eventos=%d ventana=%s->%s tiempoEjecucionMs=%d%n",
                     state.getUltimoLoteEmitidoNumero().get(), eventosBatch.size(), ventanaInicio, ventanaFin, tiempoLote
@@ -375,19 +378,63 @@ public class SimulacionJob implements Runnable {
         return detalle;
     }
 
-    private void extraerEventosPostergados(
+    private void extraerEventosVueloPostergados(
             Instant ventanaFinUtc,
             List<EventoBaseDTO> eventosBatch,
-            List<EventoBaseDTO> eventosPostergados
+            Map<String, EventoVueloDTO> eventosPostergados
     ) {
-        Iterator<EventoBaseDTO> iterator = eventosPostergados.iterator();
+        Iterator<Map.Entry<String, EventoVueloDTO>> iterator = eventosPostergados.entrySet().iterator();
         while (iterator.hasNext()) {
-            EventoBaseDTO evento = iterator.next();
+            EventoVueloDTO evento = iterator.next().getValue();
             if (!Instant.parse(evento.getFechaHoraEvento()).isAfter(ventanaFinUtc)) {
                 iterator.remove();
                 eventosBatch.add(evento);
             }
         }
+    }
+
+    private void agregarEventosVueloPostergados(
+            List<EventoBaseDTO> eventosFuturos,
+            Map<String, EventoVueloDTO> eventosPostergados
+    ) {
+        for (EventoBaseDTO evento : eventosFuturos) {
+            if (!(evento instanceof EventoVueloDTO eventoVuelo)) {
+                continue;
+            }
+            eventosPostergados.merge(
+                    claveEventoVuelo(eventoVuelo),
+                    eventoVuelo,
+                    (existente, nuevo) -> {
+                        simulacionEventosFactory.fusionarEventoVuelo(existente, nuevo);
+                        return existente;
+                    }
+            );
+        }
+    }
+
+    private void consolidarEventosVuelo(List<EventoBaseDTO> eventos) {
+        Map<String, EventoVueloDTO> vuelosConsolidados = new java.util.LinkedHashMap<>();
+        List<EventoBaseDTO> consolidados = new ArrayList<>();
+        for (EventoBaseDTO evento : eventos) {
+            if (!(evento instanceof EventoVueloDTO eventoVuelo)) {
+                consolidados.add(evento);
+                continue;
+            }
+            String clave = claveEventoVuelo(eventoVuelo);
+            EventoVueloDTO existente = vuelosConsolidados.get(clave);
+            if (existente == null) {
+                vuelosConsolidados.put(clave, eventoVuelo);
+                consolidados.add(eventoVuelo);
+            } else {
+                simulacionEventosFactory.fusionarEventoVuelo(existente, eventoVuelo);
+            }
+        }
+        eventos.clear();
+        eventos.addAll(consolidados);
+    }
+
+    private String claveEventoVuelo(EventoVueloDTO evento) {
+        return evento.getTipo() + "|" + evento.getCodigoVuelo() + "|" + evento.getHoraSalidaUtc();
     }
 
     private void aplicarFisicaHasta(List<EventoBaseDTO> eventos, Instant instanteColapso) {
@@ -408,7 +455,12 @@ public class SimulacionJob implements Runnable {
     private void aplicarFisicaVuelo(EventoVueloDTO evento, Instant horaEvento, List<EventoBaseDTO> eventos) {
         if (evento.getTipo() == TipoEvento.VUELO_DESPEGA) {
             String origen = evento.getOrigenIata();
-            simulacionStateMutator.restarMaletas(origen, evento.getCantidadMaletas());
+            simulacionStateMutator.descontarMaletasSalidaVuelo(
+                    origen,
+                    evento.getCantidadMaletas(),
+                    evento.getCodigoVuelo(),
+                    evento.getFechaHoraEvento()
+            );
             agregarEventoInventario(origen, horaEvento, eventos);
         } else if (evento.getTipo() == TipoEvento.VUELO_ATERRIZA) {
             String destino = evento.getDestinoIata();
@@ -594,11 +646,12 @@ public class SimulacionJob implements Runnable {
     }
 
     private void esperarConControl() {
+        long tiempoRestante = Math.max(0, saMs - tiempoUltimoLoteMs);
         long acumulado = 0L;
         long paso = 200L;
-        while (acumulado < saMs) {
+        while (acumulado < tiempoRestante) {
             esperarSiPausadaODetenida();
-            long dormirMs = Math.min(paso, saMs - acumulado);
+            long dormirMs = Math.min(paso, tiempoRestante - acumulado);
             dormir(dormirMs);
             acumulado += dormirMs;
         }

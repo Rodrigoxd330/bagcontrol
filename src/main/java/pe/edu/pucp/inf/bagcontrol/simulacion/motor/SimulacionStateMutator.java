@@ -86,6 +86,25 @@ public class SimulacionStateMutator {
         state.getInventarioSnapshot().put(aeropuertoIata, Math.max(0, actual - cantidad));
     }
 
+    public boolean descontarMaletasSalidaVuelo(
+            String aeropuertoIata,
+            int cantidad,
+            Long codigoVuelo,
+            String horaEvento
+    ) {
+        int actual = state.getInventarioSnapshot().getOrDefault(aeropuertoIata, 0);
+        boolean inconsistencia = cantidad > actual;
+        if (inconsistencia) {
+            System.out.println("[BUG-CAPACIDAD-ORIGEN] aeropuerto=" + aeropuertoIata
+                    + " inventarioActual=" + actual
+                    + " maletasVuelo=" + cantidad
+                    + " codigoVuelo=" + codigoVuelo
+                    + " horaEvento=" + horaEvento);
+        }
+        state.getInventarioSnapshot().put(aeropuertoIata, Math.max(0, actual - cantidad));
+        return inconsistencia;
+    }
+
     public void actualizarInventarioDesdeSolucionColapso(SolucionRuta solucion) {
         Map<String, Integer> cargaPorAeropuerto = new LinkedHashMap<>();
         for (RutaAsignada asignacion : solucion.getAsignaciones()) {
