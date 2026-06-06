@@ -13,6 +13,7 @@ public class AeropuertoDTO {
     private String pais;
     private String continente;
     private int capacidadAlmacen;
+    private int gmt;
     private double latitud;
     private double longitud;
     private int maletasActuales;

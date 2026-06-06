@@ -103,6 +103,12 @@ public class SimulacionController {
             @PathVariable String simulacionId,
             @PathVariable Long codigoVuelo
     ) {
-        return simulacionManager.extraerEnviosPorVuelo(simulacionId, codigoVuelo);
+        System.out.println("Codigo de vuelo: "+codigoVuelo.toString());
+        List<EnvioDTO> envios = simulacionManager.extraerEnviosPorVuelo(simulacionId, codigoVuelo);
+        System.out.println("Envios: ");
+        for(EnvioDTO envio : envios){
+            System.out.println(envio.getIdPedido());
+        }
+        return envios;
     }
 }
