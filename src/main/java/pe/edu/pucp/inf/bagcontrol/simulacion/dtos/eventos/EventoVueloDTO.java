@@ -19,6 +19,8 @@ public class EventoVueloDTO extends EventoBaseDTO {
     private String destinoIata;
     private EstadoCapacidad estado;
     private int cantidadMaletas;
+    private int capacidadMax;
+    private double porcentajeOcupacion;
     private String horaSalidaLocal;
     private String horaLlegadaLocal;
     private String horaSalidaUtc;
