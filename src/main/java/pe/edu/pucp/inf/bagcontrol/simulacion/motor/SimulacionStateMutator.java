@@ -89,7 +89,8 @@ public class SimulacionStateMutator {
             String aeropuertoIata,
             int cantidad,
             Long codigoVuelo,
-            String horaEvento
+            String horaEvento,
+            boolean esPostergado
     ) {
         int actual = state.getInventarioSnapshot().getOrDefault(aeropuertoIata, 0);
         boolean inconsistencia = cantidad > actual;
@@ -98,7 +99,8 @@ public class SimulacionStateMutator {
                     + " inventarioActual=" + actual
                     + " maletasVuelo=" + cantidad
                     + " codigoVuelo=" + codigoVuelo
-                    + " horaEvento=" + horaEvento);
+                    + " horaEvento=" + horaEvento
+                    + " origen=" + (esPostergado ? "POSTERGADO" : "ACTUAL"));
         }
         state.getInventarioSnapshot().put(aeropuertoIata, Math.max(0, actual - cantidad));
         return inconsistencia;

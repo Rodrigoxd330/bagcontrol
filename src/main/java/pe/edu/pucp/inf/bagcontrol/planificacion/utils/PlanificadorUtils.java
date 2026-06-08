@@ -299,6 +299,8 @@ public class PlanificadorUtils {
 
         Map<String, Integer> inventarioReservado = new HashMap<>(inventarioSnapshot);
         reservaPico.forEach((codigoIata, reserva) -> inventarioReservado.merge(codigoIata, reserva, Integer::sum));
+        inventarioReservado.replaceAll((codigoIata, reservado) ->
+                Math.min(reservado, inventarioSnapshot.getOrDefault(codigoIata, 0)));
         return inventarioReservado;
     }
 

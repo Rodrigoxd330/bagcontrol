@@ -6,6 +6,7 @@ import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.Vuelo;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.Itinerario;
+import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 
 import java.time.Instant;
@@ -102,6 +103,25 @@ class PlanificadorUtilsTest {
         assertThat(PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
                 solucion, aeropuertos, Map.of("LIM", 3)
         )).isTrue();
+    }
+
+    @Test
+    void inventarioReservadoNoSuperaInventarioFisicoActual() {
+        Envio envio = crearEnvio("PED-6", "LIM", "MAD", LocalDateTime.of(2026, 7, 20, 8, 15));
+        envio.setCantidadMaletas(5);
+        Itinerario itinerario = new Itinerario(List.of(
+                crearVuelo("LIM", "BOG", "2026-07-20T09:00:00Z", "2026-07-20T10:00:00Z"),
+                crearVuelo("BOG", "MAD", "2026-07-20T11:00:00Z", "2026-07-20T13:00:00Z")
+        ));
+
+        Map<String, Integer> inventarioReservado = PlanificadorUtils.construirInventarioReservado(
+                Map.of(envio.getIdPedido(), new RutaAsignada(envio, itinerario, false)),
+                java.util.Set.of(),
+                Map.of("LIM", 0, "BOG", 0, "MAD", 0),
+                Instant.parse("2026-07-20T08:30:00Z")
+        );
+
+        assertThat(inventarioReservado.get("BOG")).isZero();
     }
 
     private Envio crearEnvio(String id, String origen, String destino, LocalDateTime fechaHoraUtc) {
