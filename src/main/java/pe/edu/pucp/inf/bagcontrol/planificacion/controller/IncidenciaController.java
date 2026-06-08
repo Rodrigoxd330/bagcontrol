@@ -14,7 +14,9 @@ import pe.edu.pucp.inf.bagcontrol.entidades.incidencias.Incidencia;
 import pe.edu.pucp.inf.bagcontrol.entidades.incidencias.IncidenciaRepository;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.IncidenciaDTO;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequiredArgsConstructor
@@ -30,18 +32,36 @@ public class IncidenciaController {
                 .toList();
     }
 
+    @GetMapping("/api/incidencias/{id}")
+    public ResponseEntity<IncidenciaDTO> obtenerIncidencia(@PathVariable Long id) {
+        return incidenciaRepository.findById(id)
+                .map(incidencia -> ResponseEntity.ok(toDto(incidencia)))
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
     @PostMapping("/api/incidencias")
-    public ResponseEntity<IncidenciaDTO> crearIncidencia(@RequestBody IncidenciaDTO dto) {
+    public ResponseEntity<?> crearIncidencia(@RequestBody IncidenciaDTO dto) {
+        String error = validar(dto);
+        if (error != null) {
+            return ResponseEntity.badRequest().body(Map.of("error", error));
+        }
         Incidencia incidencia = new Incidencia();
         aplicarCampos(incidencia, dto);
+        if (incidencia.getFechaHora() == null) {
+            incidencia.setFechaHora(LocalDateTime.now());
+        }
         return ResponseEntity.status(HttpStatus.CREATED).body(toDto(incidenciaRepository.save(incidencia)));
     }
 
     @PutMapping("/api/incidencias/{id}")
-    public ResponseEntity<IncidenciaDTO> actualizarIncidencia(
+    public ResponseEntity<?> actualizarIncidencia(
             @PathVariable Long id,
             @RequestBody IncidenciaDTO dto
     ) {
+        String error = validar(dto);
+        if (error != null) {
+            return ResponseEntity.badRequest().body(Map.of("error", error));
+        }
         return incidenciaRepository.findById(id)
                 .map(incidencia -> {
                     aplicarCampos(incidencia, dto);
@@ -66,6 +86,19 @@ public class IncidenciaController {
         incidencia.setNoPuedeRecibir(dto.isNoPuedeRecibir());
         incidencia.setNoPuedeEnviar(dto.isNoPuedeEnviar());
         incidencia.setTiempoRecuperacionMinutos(dto.getTiempoRecuperacionMinutos());
+    }
+
+    private String validar(IncidenciaDTO dto) {
+        if (dto.getOrigenIata() == null || dto.getOrigenIata().isBlank()) {
+            return "El codigo IATA del aeropuerto afectado es obligatorio";
+        }
+        if (!dto.isNoPuedeRecibir() && !dto.isNoPuedeEnviar()) {
+            return "La incidencia debe bloquear al menos una operacion";
+        }
+        if (dto.getTiempoRecuperacionMinutos() <= 0) {
+            return "El tiempo de recuperacion debe ser mayor a 0 minutos";
+        }
+        return null;
     }
 
     private IncidenciaDTO toDto(Incidencia incidencia) {

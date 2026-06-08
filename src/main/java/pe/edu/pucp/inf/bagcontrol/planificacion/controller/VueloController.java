@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.Vuelo;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloRepository;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.VueloDTO;
@@ -21,6 +22,7 @@ import java.util.List;
 public class VueloController {
 
     private final VueloRepository vueloRepository;
+    private final AeropuertoRepository aeropuertoRepository;
 
     @GetMapping("/api/vuelos")
     public List<VueloDTO> listarVuelos() {
@@ -32,8 +34,7 @@ public class VueloController {
 
     @PostMapping("/api/vuelos")
     public ResponseEntity<VueloDTO> crearVuelo(@RequestBody VueloDTO dto) {
-        if (dto.getOrigenIata() == null || dto.getDestinoIata() == null
-                || dto.getHoraSalida() == null || dto.getHoraLlegada() == null) {
+        if (!esVueloValido(dto)) {
             return ResponseEntity.badRequest().build();
         }
         Vuelo vuelo = new Vuelo();
@@ -43,6 +44,9 @@ public class VueloController {
 
     @PutMapping("/api/vuelos/{id}")
     public ResponseEntity<VueloDTO> actualizarVuelo(@PathVariable Long id, @RequestBody VueloDTO dto) {
+        if (!esVueloValido(dto)) {
+            return ResponseEntity.badRequest().build();
+        }
         return vueloRepository.findById(id)
                 .map(vuelo -> {
                     aplicarCampos(vuelo, dto);
@@ -77,6 +81,25 @@ public class VueloController {
         vuelo.setHoraLlegada(dto.getHoraLlegada());
         vuelo.setCapacidadMax(dto.getCapacidadMax());
         vuelo.setEstaCancelado(dto.isEstaCancelado());
+    }
+
+    private boolean esVueloValido(VueloDTO dto) {
+        if (dto.getOrigenIata() == null || dto.getDestinoIata() == null
+                || dto.getHoraSalida() == null || dto.getHoraLlegada() == null) {
+            return false;
+        }
+        String origenIata = dto.getOrigenIata().toUpperCase();
+        String destinoIata = dto.getDestinoIata().toUpperCase();
+        if (origenIata.equals(destinoIata)) {
+            return false;
+        }
+        if (!aeropuertoRepository.existsById(origenIata) || !aeropuertoRepository.existsById(destinoIata)) {
+            return false;
+        }
+        if (!dto.getHoraSalida().isBefore(dto.getHoraLlegada())) {
+            return false;
+        }
+        return dto.getCapacidadMax() > 0;
     }
 
     private VueloDTO toDto(Vuelo vuelo) {

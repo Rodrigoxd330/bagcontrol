@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
+import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloRepository;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.AeropuertoDTO;
 
 import java.util.List;
@@ -21,6 +22,7 @@ import java.util.List;
 public class AeropuertoController {
 
     private final AeropuertoRepository aeropuertoRepository;
+    private final VueloRepository vueloRepository;
 
     @GetMapping("/api/aeropuertos")
     public List<AeropuertoDTO> listarAeropuertos() {
@@ -60,9 +62,15 @@ public class AeropuertoController {
     }
 
     @DeleteMapping("/api/aeropuertos/{iata}")
-    public ResponseEntity<Void> eliminarAeropuerto(@PathVariable String iata) {
+    public ResponseEntity<?> eliminarAeropuerto(@PathVariable String iata) {
         if (!aeropuertoRepository.existsById(iata)) {
             return ResponseEntity.notFound().build();
+        }
+        boolean tieneVuelos = vueloRepository.findAll().stream()
+                .anyMatch(vuelo -> !vuelo.isEstaCancelado()
+                        && (iata.equals(vuelo.getOrigenIata()) || iata.equals(vuelo.getDestinoIata())));
+        if (tieneVuelos) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).build();
         }
         aeropuertoRepository.deleteById(iata);
         return ResponseEntity.noContent().build();
