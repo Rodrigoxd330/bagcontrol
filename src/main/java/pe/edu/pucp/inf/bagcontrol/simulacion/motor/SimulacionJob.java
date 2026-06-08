@@ -132,7 +132,12 @@ public class SimulacionJob implements Runnable {
             extraerEventosVueloPostergados(ventanaFinUtc, eventosBatch, eventosVueloPostergados);
             agregarEventosVuelosCancelados(ventanaInicio, ventanaFin, eventosBatch);
 
-            Map<String, Integer> inventarioReservado = construirInventarioReservado();
+            Map<String, Integer> inventarioReservado = PlanificadorUtils.construirInventarioReservado(
+                    state.getEnviosEnSeguimiento(),
+                    state.getEnviosEntregados(),
+                    state.getInventarioSnapshot(),
+                    state.getTiempoActual().toInstant(ZoneOffset.UTC)
+            );
             SolucionRuta solucion = planificadorService.calcularSolucion(
                     algoritmo, ventanaInicio, ventanaFin, state.getEnviosPendientes(), inventarioReservado
             );
@@ -196,7 +201,7 @@ public class SimulacionJob implements Runnable {
             List<EventoBaseDTO> eventosBatch,
             Map<String, Integer> inventarioReservado
     ) {
-        reservarEscalasSolucion(solucion, inventarioReservado);
+        PlanificadorUtils.reservarEscalasSolucion(solucion, inventarioReservado);
         for (RutaAsignada asignacion : solucion.getAsignaciones()) {
             Envio envio = asignacion.getEnvio();
             state.getEnviosEnSeguimiento().merge(
@@ -212,54 +217,19 @@ public class SimulacionJob implements Runnable {
             state.getUltimoAeropuertoPorEnvio().put(envio.getIdPedido(), origen);
             Aeropuerto aeropuerto = state.getAeropuertosSnapshot().get(origen);
             int cantidadMaletas = envio.getCantidadMaletas();
-            int inventarioComprometido = inventarioReservado.getOrDefault(origen, 0);
-            boolean registrado = aeropuerto != null
-                    && inventarioComprometido + cantidadMaletas <= aeropuerto.getCapacidadAlmacen()
-                    && simulacionStateMutator.sumarMaletas(origen, cantidadMaletas);
+            boolean registrado = simulacionStateMutator.sumarMaletas(origen, cantidadMaletas);
             if (!registrado) {
-                System.out.println("[SIMULADOR-CAPACIDAD] envioPendientePorCapacidad idPedido=" + envio.getIdPedido()
+                System.out.println("[SIMULADOR-INVENTARIO] checkInNoRegistrado idPedido=" + envio.getIdPedido()
                         + " aeropuerto=" + origen
-                        + " maletas=" + cantidadMaletas);
-            } else {
-                inventarioReservado.merge(origen, cantidadMaletas, Integer::sum);
+                        + " maletas=" + cantidadMaletas
+                        + " causa=SUMAR_MALETAS_FALLO");
             }
+            inventarioReservado.merge(origen, cantidadMaletas, Integer::sum);
             int inventario = state.getInventarioSnapshot().getOrDefault(origen, 0);
             eventosBatch.add(simulacionEventosFactory.crearEventoAeropuerto(
                     aeropuerto, inventario, PlanificadorUtils.obtenerFechaIngresoUtc(envio)
             ));
         }
-    }
-
-    private void reservarEscalasSolucion(SolucionRuta solucion, Map<String, Integer> inventarioReservado) {
-        Map<String, Integer> variacionAcumulada = new java.util.HashMap<>();
-        Map<String, Integer> reservaPico = new java.util.HashMap<>();
-        List<MovimientoInventario> movimientos = new ArrayList<>();
-
-        for (RutaAsignada asignacion : solucion.getAsignaciones()) {
-            if (asignacion.getItinerario() == null) {
-                continue;
-            }
-            var vuelos = asignacion.getItinerario().getVuelos();
-            int cantidad = asignacion.getEnvio().getCantidadMaletas();
-            for (int i = 0; i < vuelos.size() - 1; i++) {
-                movimientos.add(new MovimientoInventario(
-                        vuelos.get(i).getFechaHoraLlegadaUtc(), vuelos.get(i).getDestinoIata(), cantidad
-                ));
-                movimientos.add(new MovimientoInventario(
-                        vuelos.get(i + 1).getFechaHoraSalidaUtc(), vuelos.get(i + 1).getOrigenIata(), -cantidad
-                ));
-            }
-        }
-
-        movimientos.stream()
-                .sorted(Comparator.comparing(MovimientoInventario::instante))
-                .forEach(movimiento -> {
-                    int acumulado = variacionAcumulada.merge(
-                            movimiento.codigoIata(), movimiento.variacion(), Integer::sum
-                    );
-                    reservaPico.merge(movimiento.codigoIata(), Math.max(acumulado, 0), Math::max);
-                });
-        reservaPico.forEach((codigoIata, reserva) -> inventarioReservado.merge(codigoIata, reserva, Integer::sum));
     }
 
     private Optional<IncumplimientoSla> encontrarPrimerIncumplimientoSla(Instant ventanaFinUtc) {
@@ -553,52 +523,6 @@ public class SimulacionJob implements Runnable {
                 + " aeropuertosSobreCapacidad=" + simulacionStateMutator.contarAeropuertosSobreCapacidad()
                 + " enviosPendientesPorCapacidad=" + solucion.getSinItinerarioCount()
                 + " enviosSlaIncumplidos=" + enviosSlaIncumplidos);
-    }
-
-    private Map<String, Integer> construirInventarioReservado() {
-        Map<String, Integer> variacionAcumulada = new java.util.HashMap<>();
-        Map<String, Integer> reservaPico = new java.util.HashMap<>();
-        Instant referencia = state.getTiempoActual().toInstant(ZoneOffset.UTC);
-        List<MovimientoInventario> movimientos = new ArrayList<>();
-
-        for (RutaAsignada asignacion : state.getEnviosEnSeguimiento().values()) {
-            if (asignacion.getItinerario() == null
-                    || state.getEnviosEntregados().contains(asignacion.getEnvio().getIdPedido())) {
-                continue;
-            }
-            List<pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado> vuelos =
-                    asignacion.getItinerario().getVuelos();
-            int cantidad = asignacion.getEnvio().getCantidadMaletas();
-            for (int i = 0; i < vuelos.size(); i++) {
-                var vuelo = vuelos.get(i);
-                if (!vuelo.getFechaHoraSalidaUtc().isBefore(referencia)) {
-                    movimientos.add(new MovimientoInventario(
-                            vuelo.getFechaHoraSalidaUtc(), vuelo.getOrigenIata(), -cantidad
-                    ));
-                }
-                if (i < vuelos.size() - 1 && !vuelo.getFechaHoraLlegadaUtc().isBefore(referencia)) {
-                    movimientos.add(new MovimientoInventario(
-                            vuelo.getFechaHoraLlegadaUtc(), vuelo.getDestinoIata(), cantidad
-                    ));
-                }
-            }
-        }
-
-        movimientos.stream()
-                .sorted(Comparator.comparing(MovimientoInventario::instante))
-                .forEach(movimiento -> {
-                    int acumulado = variacionAcumulada.merge(
-                            movimiento.codigoIata(), movimiento.variacion(), Integer::sum
-                    );
-                    reservaPico.merge(movimiento.codigoIata(), Math.max(acumulado, 0), Math::max);
-                });
-
-        Map<String, Integer> inventarioReservado = new java.util.HashMap<>(state.getInventarioSnapshot());
-        reservaPico.forEach((codigoIata, reserva) -> inventarioReservado.merge(codigoIata, reserva, Integer::sum));
-        return inventarioReservado;
-    }
-
-    private record MovimientoInventario(Instant instante, String codigoIata, int variacion) {
     }
 
     private Comparator<EventoBaseDTO> comparadorEventos() {

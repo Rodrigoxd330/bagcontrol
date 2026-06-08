@@ -238,6 +238,70 @@ public class PlanificadorUtils {
         return inventarioInicial;
     }
 
+    public static void reservarEscalasSolucion(SolucionRuta solucion, Map<String, Integer> inventarioReservado) {
+        Map<String, Integer> variacionAcumulada = new HashMap<>();
+        Map<String, Integer> reservaPico = new HashMap<>();
+        List<MovimientoInventario> movimientos = new ArrayList<>();
+
+        for (RutaAsignada asignacion : solucion.getAsignaciones()) {
+            if (asignacion.getItinerario() == null) {
+                continue;
+            }
+            List<VueloInstanciado> vuelos = asignacion.getItinerario().getVuelos();
+            int cantidad = asignacion.getEnvio().getCantidadMaletas();
+            for (int i = 0; i < vuelos.size() - 1; i++) {
+                movimientos.add(new MovimientoInventario(
+                        vuelos.get(i).getFechaHoraLlegadaUtc(), vuelos.get(i).getDestinoIata(), cantidad
+                ));
+                movimientos.add(new MovimientoInventario(
+                        vuelos.get(i + 1).getFechaHoraSalidaUtc(), vuelos.get(i + 1).getOrigenIata(), -cantidad
+                ));
+            }
+        }
+
+        acumularReservaPico(movimientos, variacionAcumulada, reservaPico);
+        reservaPico.forEach((codigoIata, reserva) -> inventarioReservado.merge(codigoIata, reserva, Integer::sum));
+    }
+
+    public static Map<String, Integer> construirInventarioReservado(
+            Map<String, RutaAsignada> enviosEnSeguimiento,
+            Set<String> enviosEntregados,
+            Map<String, Integer> inventarioSnapshot,
+            Instant referencia
+    ) {
+        Map<String, Integer> variacionAcumulada = new HashMap<>();
+        Map<String, Integer> reservaPico = new HashMap<>();
+        List<MovimientoInventario> movimientos = new ArrayList<>();
+
+        for (RutaAsignada asignacion : enviosEnSeguimiento.values()) {
+            if (asignacion.getItinerario() == null
+                    || enviosEntregados.contains(asignacion.getEnvio().getIdPedido())) {
+                continue;
+            }
+            List<VueloInstanciado> vuelos = asignacion.getItinerario().getVuelos();
+            int cantidad = asignacion.getEnvio().getCantidadMaletas();
+            for (int i = 0; i < vuelos.size(); i++) {
+                VueloInstanciado vuelo = vuelos.get(i);
+                if (!vuelo.getFechaHoraSalidaUtc().isBefore(referencia)) {
+                    movimientos.add(new MovimientoInventario(
+                            vuelo.getFechaHoraSalidaUtc(), vuelo.getOrigenIata(), -cantidad
+                    ));
+                }
+                if (i < vuelos.size() - 1 && !vuelo.getFechaHoraLlegadaUtc().isBefore(referencia)) {
+                    movimientos.add(new MovimientoInventario(
+                            vuelo.getFechaHoraLlegadaUtc(), vuelo.getDestinoIata(), cantidad
+                    ));
+                }
+            }
+        }
+
+        acumularReservaPico(movimientos, variacionAcumulada, reservaPico);
+
+        Map<String, Integer> inventarioReservado = new HashMap<>(inventarioSnapshot);
+        reservaPico.forEach((codigoIata, reserva) -> inventarioReservado.merge(codigoIata, reserva, Integer::sum));
+        return inventarioReservado;
+    }
+
     private static void registrarMovimientosAeropuertos(
             Itinerario itinerario,
             int cantidadMaletas,
@@ -262,5 +326,23 @@ public class PlanificadorUtils {
         movimientosPorAeropuerto
                 .computeIfAbsent(codigoIata, key -> new TreeMap<>())
                 .merge(instante, variacion, Integer::sum);
+    }
+
+    private static void acumularReservaPico(
+            List<MovimientoInventario> movimientos,
+            Map<String, Integer> variacionAcumulada,
+            Map<String, Integer> reservaPico
+    ) {
+        movimientos.stream()
+                .sorted(Comparator.comparing(MovimientoInventario::instante))
+                .forEach(movimiento -> {
+                    int acumulado = variacionAcumulada.merge(
+                            movimiento.codigoIata(), movimiento.variacion(), Integer::sum
+                    );
+                    reservaPico.merge(movimiento.codigoIata(), Math.max(acumulado, 0), Math::max);
+                });
+    }
+
+    private record MovimientoInventario(Instant instante, String codigoIata, int variacion) {
     }
 }
