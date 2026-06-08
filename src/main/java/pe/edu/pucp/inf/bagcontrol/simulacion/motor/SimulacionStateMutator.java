@@ -76,11 +76,10 @@ public class SimulacionStateMutator {
     public boolean sumarMaletas(String aeropuertoIata, int cantidad) {
         Aeropuerto aeropuerto = state.getAeropuertosSnapshot().get(aeropuertoIata);
         int actual = state.getInventarioSnapshot().getOrDefault(aeropuertoIata, 0);
-        if (aeropuerto == null || actual + cantidad > aeropuerto.getCapacidadAlmacen()) {
-            System.out.println("[SIMULADOR-CAPACIDAD] aeropuertoSinCapacidad=" + aeropuertoIata
+        if (aeropuerto == null) {
+            System.out.println("[SIMULADOR-INVENTARIO] aeropuertoDesconocido=" + aeropuertoIata
                     + " inventarioActual=" + actual
-                    + " maletasRechazadas=" + cantidad
-                    + " capacidad=" + (aeropuerto != null ? aeropuerto.getCapacidadAlmacen() : "DESCONOCIDA"));
+                    + " maletasNoRegistradas=" + cantidad);
             return false;
         }
         state.getInventarioSnapshot().put(aeropuertoIata, actual + cantidad);
