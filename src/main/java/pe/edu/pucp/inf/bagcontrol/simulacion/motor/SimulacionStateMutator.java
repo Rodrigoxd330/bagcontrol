@@ -46,6 +46,8 @@ public class SimulacionStateMutator {
         }
     }
 
+    //A partir de la soluciónRuta generada por el planificador genera la estructura de todos los envíos del vuelo
+    // Los guarda en el state
     public void indexarEnviosPorVuelo(SolucionRuta solucion) {
         Map<Long, List<EnvioDTO>> indice = new LinkedHashMap<>();
 
@@ -138,4 +140,6 @@ public class SimulacionStateMutator {
                 })
                 .count();
     }
+
+
 }

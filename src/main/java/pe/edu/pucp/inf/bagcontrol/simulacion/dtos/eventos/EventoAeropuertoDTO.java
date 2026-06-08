@@ -3,6 +3,10 @@ package pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
+import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
+
+import java.util.ArrayList;
+import java.util.List;
 
 @Data
 @NoArgsConstructor
@@ -13,6 +17,7 @@ public class EventoAeropuertoDTO extends EventoBaseDTO {
     private double porcentajeOcupacion;
     private int maletasActuales;
     private int capacidadAlmacen;
+    private List<EnvioDTO> enviosProximosAVencer; //opcional
 
     public EventoAeropuertoDTO(
             TipoEvento tipo, String fechaHoraEvento, String codigoAeropuerto,
@@ -24,6 +29,20 @@ public class EventoAeropuertoDTO extends EventoBaseDTO {
         this.porcentajeOcupacion = porcentajeOcupacion;
         this.maletasActuales = maletasActuales;
         this.capacidadAlmacen = capacidadAlmacen;
+        this.enviosProximosAVencer = new ArrayList<EnvioDTO>();
+    }
+
+    public EventoAeropuertoDTO(
+            TipoEvento tipo, String fechaHoraEvento, String codigoAeropuerto,
+            EstadoCapacidad estadoCapacidad, double porcentajeOcupacion, int maletasActuales,
+            int capacidadAlmacen, List<EnvioDTO> enviosProximosAVencer) {
+        super(tipo, fechaHoraEvento);
+        this.codigoAeropuerto = codigoAeropuerto;
+        this.estadoCapacidad = estadoCapacidad;
+        this.porcentajeOcupacion = porcentajeOcupacion;
+        this.maletasActuales = maletasActuales;
+        this.capacidadAlmacen = capacidadAlmacen;
+        this.enviosProximosAVencer = enviosProximosAVencer;
     }
 
 

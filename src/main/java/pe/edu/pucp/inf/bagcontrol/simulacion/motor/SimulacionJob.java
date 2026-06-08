@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SimulacionJob implements Runnable {
 
     @Getter
-    private final int saMs = 12_000;
+    private final int saMs = 60_000;
 
     private final String simulacionId;
     private final LocalDateTime horaInicio;
@@ -110,24 +110,28 @@ public class SimulacionJob implements Runnable {
         simulacionStateMutator.inicializarAeropuertos();
         state.setTiempoActual(horaInicio);
         publicarControl(TipoEvento.SIMULACION_INICIADA);
+
         LocalDateTime tiempoFin = horaFin == null ? LocalDateTime.MAX : horaFin;
         Map<String, EventoVueloDTO> eventosVueloPostergados = new java.util.LinkedHashMap<>();
         publicarConfiguracionRendimiento();
 
         while (state.getTiempoActual().isBefore(tiempoFin)) {
-            long inicioLote = System.currentTimeMillis();
+            // --- FASE 1: INICIO DE MEDICIÓN DE TA ---
+            long inicioCronometroTa = System.currentTimeMillis();
+
             verificarDetencion();
             esperarSiPausadaODetenida();
 
             LocalDateTime ventanaInicio = state.getTiempoActual();
-            LocalDateTime ventanaFin = ventanaInicio.plusMinutes(k);
-            if (ventanaFin.isAfter(tiempoFin)) {
-                ventanaFin = tiempoFin;
-            }
+            LocalDateTime ventanaFin = ventanaInicio.plusMinutes(k); // K determina el salto simulado
+            if (ventanaFin.isAfter(tiempoFin)) {ventanaFin = tiempoFin;}
+
             Instant ventanaFinUtc = ventanaFin.toInstant(ZoneOffset.UTC);
             int ciclo = state.getCicloActual() + 1;
             state.setCicloActual(ciclo);
 
+            // --- FASE 2: EXTRACCIÓN DE CONTEXTO ---
+            //Eventos batch es la lisa de todos los eventos que se van a enviar al front
             List<EventoBaseDTO> eventosBatch = new ArrayList<>();
             extraerEventosVueloPostergados(ventanaFinUtc, eventosBatch, eventosVueloPostergados);
             agregarEventosVuelosCancelados(ventanaInicio, ventanaFin, eventosBatch);
@@ -142,23 +146,25 @@ public class SimulacionJob implements Runnable {
                     algoritmo, ventanaInicio, ventanaFin, state.getEnviosPendientes(), inventarioReservado
             );
             state.setSolucionActual(solucion);
+
+            // --- FASE 4: MUTACIÓN FÍSICA E INDEXACIÓN DEL ESTADO ---
             simulacionStateMutator.indexarEnviosPorVuelo(solucion);
             registrarEnviosNuevos(solucion, eventosBatch, inventarioReservado);
 
+            // --- FASE 5: GENERACIÓN Y ORDENAMIENTO DE EVENTOS EN LA VENTANA ---
             SimulacionEventosFactory.ResultadoEventosVuelo eventosVuelos =
                     simulacionEventosFactory.generarEventosVuelo(solucion, ventanaFinUtc);
             eventosBatch.addAll(eventosVuelos.actuales());
             agregarEventosVueloPostergados(eventosVuelos.futuros(), eventosVueloPostergados);
             eventosBatch.sort(comparadorEventos());
 
+            // --- FASE 6: CÁLCULO DE SLA Y COLAPSOS ---
             IncumplimientoSla incumplimiento = encontrarPrimerIncumplimientoSla(ventanaFinUtc).orElse(null);
             Instant instanteColapso = incumplimiento != null ? incumplimiento.deadline() : null;
 
+            // Ejecución de la física del negocio (Descontar/sumar maletas en los snapshots)
             aplicarFisicaHasta(eventosBatch, instanteColapso);
-            marcarEnviosEntregadosHasta(
-                    instanteColapso != null ? instanteColapso : ventanaFinUtc,
-                    eventosBatch
-            );
+            marcarEnviosEntregadosHasta(instanteColapso != null ? instanteColapso : ventanaFinUtc, eventosBatch);
             agregarAlertasAeropuertosSaturados(eventosBatch);
             eventosBatch.sort(comparadorEventos());
 
@@ -167,6 +173,8 @@ public class SimulacionJob implements Runnable {
             }
 
             consolidarEventosVuelo(eventosBatch);
+
+            // --- FASE 7: ENVÍO DE DATOS A FRONTEND ---
             publicarLote(eventosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
             state.setBloquesProcesados(state.getBloquesProcesados() + 1);
             publicarMetricasCapacidad(solucion);
@@ -178,15 +186,21 @@ public class SimulacionJob implements Runnable {
             }
 
             actualizarPendientesParaSiguienteCiclo(solucion);
-            long tiempoLote = System.currentTimeMillis() - inicioLote;
-            this.tiempoUltimoLoteMs = tiempoLote;
+
+            // --- FASE 8: FIN DE TA Y COMPENSACIÓN DE TIEMPO (SA - TA) ---
+            long taCalculadoMs = System.currentTimeMillis() - inicioCronometroTa;
+            this.tiempoUltimoLoteMs = taCalculadoMs; // Guarda el TA real consumido por la CPU
+
             System.out.printf(
-                    "[SIMULADOR] lote=%d eventos=%d ventana=%s->%s tiempoEjecucionMs=%d%n",
-                    state.getUltimoLoteEmitidoNumero().get(), eventosBatch.size(), ventanaInicio, ventanaFin, tiempoLote
+                    "[MOTOR-METRICAS] Lote=%d | Eventos=%d | TA=%dms | UmbralSA=%dms | AvanceSimulado(K)=%d min | Ventana=%s -> %s%n",
+                    state.getUltimoLoteEmitidoNumero().get(), eventosBatch.size(), taCalculadoMs, saMs, k, ventanaInicio, ventanaFin
             );
+
             state.setTiempoActual(ventanaFin);
+
+            // Si el tiempo real consumido de CPU (TA) fue menor que el Salto del Algoritmo (SA), dormimos el remanente
             if (state.getTiempoActual().isBefore(tiempoFin)) {
-                esperarConControl();
+                esperarConControl(); // Esto frena el hilo para ajustarse a los 12 o 30 segundos reales configurados
             }
         }
 
@@ -227,7 +241,7 @@ public class SimulacionJob implements Runnable {
             inventarioReservado.merge(origen, cantidadMaletas, Integer::sum);
             int inventario = state.getInventarioSnapshot().getOrDefault(origen, 0);
             eventosBatch.add(simulacionEventosFactory.crearEventoAeropuerto(
-                    aeropuerto, inventario, PlanificadorUtils.obtenerFechaIngresoUtc(envio)
+                    aeropuerto, inventario, PlanificadorUtils.obtenerFechaIngresoUtc(envio), this.state
             ));
         }
     }
@@ -465,7 +479,7 @@ public class SimulacionJob implements Runnable {
     private void agregarEventoInventario(String codigoIata, Instant horaEvento, List<EventoBaseDTO> eventos) {
         Aeropuerto aeropuerto = state.getAeropuertosSnapshot().get(codigoIata);
         int inventario = state.getInventarioSnapshot().getOrDefault(codigoIata, 0);
-        eventos.add(simulacionEventosFactory.crearEventoAeropuerto(aeropuerto, inventario, horaEvento));
+        eventos.add(simulacionEventosFactory.crearEventoAeropuerto(aeropuerto, inventario, horaEvento, this.state));
     }
 
     private void marcarEnviosEntregadosHasta(Instant limite, List<EventoBaseDTO> eventos) {

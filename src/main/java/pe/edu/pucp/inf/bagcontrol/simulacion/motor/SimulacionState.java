@@ -22,12 +22,22 @@ import java.util.concurrent.atomic.AtomicLong;
 @Data
 public class SimulacionState {
     //Memoria
+
+    //Usado para operaciones con aeropuertos
     private Map<String, Aeropuerto> aeropuertosSnapshot = new ConcurrentHashMap<>();
+
+    //Parece que se confunde con aeropuertosSnpashot -> revisar
     private Map<String, Integer> inventarioSnapshot = new ConcurrentHashMap<>();
     private SolucionRuta solucionActual;
+
+    //Envíos de cada vuelo (generada a partir de la solución del planificador)
     private Map<Long, List<EnvioDTO>> enviosPorVuelo = new ConcurrentHashMap<>();
     private LocalDateTime tiempoActual;
+
+    //Envíos que se procesarán en el siguiente salto
     private List<Envio> enviosPendientes = new ArrayList<>();
+
+
     private Map<String, RutaAsignada> enviosEnSeguimiento = new ConcurrentHashMap<>();
     private Set<String> enviosRegistrados = ConcurrentHashMap.newKeySet();
     private Set<String> enviosEntregados = ConcurrentHashMap.newKeySet();
@@ -53,4 +63,9 @@ public class SimulacionState {
     public long siguienteLote() {
         return ultimoLoteEmitidoNumero.incrementAndGet();
     }
+
+    public Aeropuerto obtenerAeropuerto(String idAeropuerto){
+        return this.aeropuertosSnapshot.get(idAeropuerto);
+    }
+
 }
