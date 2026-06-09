@@ -8,16 +8,14 @@ import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 public class SimulacionStateMutator {
 
     private final SimulacionState state;
     private final AeropuertoRepository aeropuertoRepository;
+    private final Long codigoVueloRegistroStep = 2000L; //se limpia EnviosPorVuelo para que no acapare toda la memoria
 
     public SimulacionStateMutator(SimulacionState state, AeropuertoRepository aeropuertoRepository) {
         this.state = state;
@@ -48,8 +46,11 @@ public class SimulacionStateMutator {
         }
     }
 
+    //A partir de la soluciónRuta generada por el planificador genera la estructura de todos los envíos del vuelo
+    // Los guarda en el state
     public void indexarEnviosPorVuelo(SolucionRuta solucion) {
         Map<Long, List<EnvioDTO>> indice = new LinkedHashMap<>();
+
         for (RutaAsignada asignacion : solucion.getAsignaciones()) {
             if (asignacion.getItinerario() == null) continue;
 
@@ -64,7 +65,14 @@ public class SimulacionStateMutator {
                 indice.computeIfAbsent(vuelo.getCodigoBase(), key -> new ArrayList<>()).add(envioDTO);
             }
         }
-        state.setEnviosPorVuelo(indice);
+        TreeMap<Long, List<EnvioDTO>> newEnvios = new TreeMap<>();
+        newEnvios.putAll(state.getEnviosPorVuelo());
+        newEnvios.putAll(indice);
+        //Limpiar envios cuando llegan al limite
+        for(int i=0;i<(newEnvios.size()-codigoVueloRegistroStep);i++){
+            newEnvios.remove(newEnvios.firstEntry().getKey());
+        }
+        state.setEnviosPorVuelo(newEnvios);
     }
 
     public boolean sumarMaletas(String aeropuertoIata, int cantidad) {
@@ -134,4 +142,6 @@ public class SimulacionStateMutator {
                 })
                 .count();
     }
+
+
 }

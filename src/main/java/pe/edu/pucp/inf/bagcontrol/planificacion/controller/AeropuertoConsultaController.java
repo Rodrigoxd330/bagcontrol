@@ -24,6 +24,7 @@ public class AeropuertoConsultaController {
                         a.getPais(),
                         a.getContinente(),
                         a.getCapacidadAlmacen(),
+                        a.getGmt(),
                         a.getLatitud(),
                         a.getLongitud(),
                         0

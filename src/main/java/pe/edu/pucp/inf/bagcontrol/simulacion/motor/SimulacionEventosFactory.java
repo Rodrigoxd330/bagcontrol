@@ -3,6 +3,7 @@ package pe.edu.pucp.inf.bagcontrol.simulacion.motor;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
+import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
@@ -105,7 +106,7 @@ public class SimulacionEventosFactory {
         return evento;
     }
 
-    public EventoAeropuertoDTO crearEventoAeropuerto(Aeropuerto aeropuerto, int maletasActuales, Instant tiempoEvento) {
+    public EventoAeropuertoDTO crearEventoAeropuerto(Aeropuerto aeropuerto, int maletasActuales, Instant tiempoEvento, SimulacionState state) {
         int capacidad = aeropuerto.getCapacidadAlmacen();
         double porcentaje = capacidad > 0 ? (maletasActuales * 100.0) / capacidad : 0.0;
 
@@ -113,9 +114,32 @@ public class SimulacionEventosFactory {
         if (porcentaje >= COTA_ROJO) estadoSemaforo = EstadoCapacidad.ROJO;
         else if (porcentaje >= COTA_AMARILLO) estadoSemaforo = EstadoCapacidad.AMARILLO;
 
+        String codigoIata = aeropuerto.getCodigoIata();
+
+        // Calcular en caliente los 5 envíos más críticos físicamente en este aeropuerto
+        List<EnvioDTO> top5Envios = state.getUltimoAeropuertoPorEnvio().entrySet().stream()
+                .filter(entry -> entry.getValue().equalsIgnoreCase(codigoIata))
+                .map(Map.Entry::getKey)
+                .filter(idPedido -> !state.getEnviosEntregados().contains(idPedido))
+                .map(id -> state.getEnviosEnSeguimiento().get(id))
+                .filter(Objects::nonNull)
+                .sorted(Comparator.comparing(asignacion ->
+                        pe.edu.pucp.inf.bagcontrol.planificacion.utils.PlanificadorUtils.calcularDeadlineSla(asignacion.getEnvio(), state.getAeropuertosSnapshot())
+                ))
+                .limit(5)
+                .map(asignacion -> {
+                    pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio e = asignacion.getEnvio();
+                    return new EnvioDTO(
+                            e.getIdPedido(), e.getOrigenIata(), e.getDestinoIata(),
+                            e.getFechaHora() != null ? e.getFechaHora().toString() : null,
+                            e.getCantidadMaletas(), e.getIdCliente()
+                    );
+                })
+                .toList();
+
         return new EventoAeropuertoDTO(
-                TipoEvento.AEROPUERTO_ACTUALIZADO, tiempoEvento.toString(), aeropuerto.getCodigoIata(),
-                estadoSemaforo, porcentaje,maletasActuales, aeropuerto.getCapacidadAlmacen());
+                TipoEvento.AEROPUERTO_ACTUALIZADO, tiempoEvento.toString(), codigoIata,
+                estadoSemaforo, porcentaje, maletasActuales, capacidad, top5Envios);
     }
 
     public EventoAeropuertoDTO crearAlertaAeropuertoSaturado(EventoAeropuertoDTO evento) {
@@ -222,4 +246,6 @@ public class SimulacionEventosFactory {
     private boolean superaUmbral(double valor, double umbral) {
         return valor > 0.0 && valor >= umbral;
     }
+
+
 }

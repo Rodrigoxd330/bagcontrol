@@ -6,14 +6,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
+import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.service.PlanificadorService;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
 
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
@@ -163,5 +163,23 @@ public class SimulacionManager {
             );
         }
         return job;
+    }
+
+    public List<RutaAsignada> obtenerEnviosEnAeropuerto(String simulacionId, String codigoIata) {
+        SimulacionState state = obtenerState(simulacionId);
+
+        // 1. Filtrar los IDs de pedidos cuyo último aeropuerto sea el solicitado
+        // y que NO hayan sido entregados todavía.
+        List<String> idsPedidosEnAeropuerto = state.getUltimoAeropuertoPorEnvio().entrySet().stream()
+                .filter(entry -> entry.getValue().equalsIgnoreCase(codigoIata))
+                .map(Map.Entry::getKey)
+                .filter(idPedido -> !state.getEnviosEntregados().contains(idPedido))
+                .toList();
+
+        // 2. Recuperar la RutaAsignada completa desde el mapa de seguimiento
+        return idsPedidosEnAeropuerto.stream()
+                .map(id -> state.getEnviosEnSeguimiento().get(id))
+                .filter(Objects::nonNull)
+                .toList();
     }
 }
