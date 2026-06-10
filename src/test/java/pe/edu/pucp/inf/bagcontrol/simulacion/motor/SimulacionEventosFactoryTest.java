@@ -17,8 +17,9 @@ class SimulacionEventosFactoryTest {
         Aeropuerto aeropuerto = new Aeropuerto();
         aeropuerto.setCodigoIata("LIM");
         aeropuerto.setCapacidadAlmacen(10);
+        SimulacionState state = new SimulacionState("test");
 
-        var actualizado = factory.crearEventoAeropuerto(aeropuerto, 10, Instant.parse("2026-07-20T08:15:00Z"));
+        var actualizado = factory.crearEventoAeropuerto(aeropuerto, 10, Instant.parse("2026-07-20T08:15:00Z"), state);
         var alerta = factory.crearAlertaAeropuertoSaturado(actualizado);
 
         assertThat(alerta.getTipo()).isEqualTo(TipoEvento.ALERTA_AEROPUERTO_SATURADO);

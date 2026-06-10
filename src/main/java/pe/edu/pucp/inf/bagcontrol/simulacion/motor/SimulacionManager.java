@@ -5,11 +5,16 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
+import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
+import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.service.PlanificadorService;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioAlmacenDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioRutaDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EscalaRutaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
 
 import java.time.LocalDateTime;
@@ -152,6 +157,81 @@ public class SimulacionManager {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "El plan aun no ha sido generado.");
         }
         return solucion;
+    }
+
+    public EnvioRutaDTO obtenerRutaEnvio(String simulacionId, String idPedido) {
+        SimulacionState state = obtenerState(simulacionId);
+        RutaAsignada asignacion = state.getEnviosEnSeguimiento().get(idPedido);
+        if (asignacion == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No existe el envio en seguimiento: " + idPedido);
+        }
+
+        String estado = state.getEnviosEntregados().contains(idPedido)
+                ? "ENTREGADO"
+                : asignacion.getItinerario() == null ? "SIN_ITINERARIO" : "EN_TRANSITO";
+        List<EscalaRutaDTO> escalas = asignacion.getItinerario() == null
+                ? List.of()
+                : asignacion.getItinerario().getVuelos().stream()
+                        .map(this::crearEscalaRuta)
+                        .toList();
+
+        return new EnvioRutaDTO(
+                crearEnvioDTO(asignacion.getEnvio()),
+                estado,
+                state.getUltimoAeropuertoPorEnvio().get(idPedido),
+                asignacion.getItinerario() != null ? asignacion.getItinerario().getIdItinerario() : null,
+                escalas
+        );
+    }
+
+    public List<EnvioAlmacenDTO> obtenerEnviosPorAlmacen(String simulacionId, String codigoAeropuerto) {
+        SimulacionState state = obtenerState(simulacionId);
+        return state.getEnviosEnSeguimiento().values().stream()
+                .filter(asignacion -> codigoAeropuerto.equals(
+                        state.getUltimoAeropuertoPorEnvio().get(asignacion.getEnvio().getIdPedido())
+                ))
+                .sorted(Comparator.comparing(asignacion -> asignacion.getEnvio().getIdPedido()))
+                .map(asignacion -> crearEnvioAlmacenDTO(state, codigoAeropuerto, asignacion))
+                .toList();
+    }
+
+    private EnvioAlmacenDTO crearEnvioAlmacenDTO(
+            SimulacionState state,
+            String codigoAeropuerto,
+            RutaAsignada asignacion
+    ) {
+        Envio envio = asignacion.getEnvio();
+        String estado = state.getEnviosEntregados().contains(envio.getIdPedido())
+                ? "ENTREGADO"
+                : asignacion.getItinerario() == null ? "SIN_ITINERARIO" : "EN_ALMACEN";
+        String tipoAlmacen = codigoAeropuerto.equals(envio.getDestinoIata()) ? "DESTINO_FINAL" : "TRANSITO";
+        return new EnvioAlmacenDTO(crearEnvioDTO(envio), codigoAeropuerto, tipoAlmacen, estado);
+    }
+
+    private EscalaRutaDTO crearEscalaRuta(VueloInstanciado vuelo) {
+        return new EscalaRutaDTO(
+                vuelo.getCodigoBase(),
+                vuelo.getOrigenIata(),
+                vuelo.getDestinoIata(),
+                vuelo.getFechaHoraSalidaUtc() != null ? vuelo.getFechaHoraSalidaUtc().toString() : null,
+                vuelo.getFechaHoraLlegadaUtc() != null ? vuelo.getFechaHoraLlegadaUtc().toString() : null,
+                vuelo.getFechaHoraSalida() != null ? vuelo.getFechaHoraSalida().toString() : null,
+                vuelo.getFechaHoraLlegada() != null ? vuelo.getFechaHoraLlegada().toString() : null,
+                vuelo.getCapacidadMax(),
+                vuelo.isEstaCancelado(),
+                vuelo.getMotivoCancelacion()
+        );
+    }
+
+    private EnvioDTO crearEnvioDTO(Envio envio) {
+        return new EnvioDTO(
+                envio.getIdPedido(),
+                envio.getOrigenIata(),
+                envio.getDestinoIata(),
+                envio.getFechaHora() != null ? envio.getFechaHora().toString() : null,
+                envio.getCantidadMaletas(),
+                envio.getIdCliente()
+        );
     }
 
     private SimulacionJob obtenerJob(String simulacionId) {
