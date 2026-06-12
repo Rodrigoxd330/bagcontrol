@@ -9,6 +9,9 @@ import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloRepository;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.VueloInstanciadoDTO;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -62,14 +65,33 @@ public class ConsultaOperativaService {
         var envios = envioDataStore.obtenerEnviosEnVentana(inicio, fin);
 
         return envios.stream()
-                .map(envio -> new EnvioDTO(
-                        envio.getIdPedido(),
-                        envio.getOrigenIata(),
-                        envio.getDestinoIata(),
-                        envio.getFechaHora().toString(),
-                        envio.getCantidadMaletas(),
-                        envio.getIdCliente()
-                ))
+                .map(this::toEnvioDTO)
                 .toList();
+    }
+
+    public Page<EnvioDTO> obtenerEnviosPorDiasPaginados(
+            LocalDate fechaInicio, int dias,
+            String origenIata, String destinoIata, String idCliente, String q,
+            Integer maletasMin, Integer maletasMax,
+            Pageable pageable
+    ) {
+        LocalDateTime inicio = fechaInicio.atStartOfDay();
+        LocalDateTime fin = fechaInicio.plusDays(dias).atStartOfDay();
+
+        return envioDataStore.obtenerEnviosEnVentanaPaginados(
+                inicio, fin, origenIata, destinoIata, idCliente, q,
+                maletasMin, maletasMax, pageable
+        ).map(this::toEnvioDTO);
+    }
+
+    private EnvioDTO toEnvioDTO(pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio envio) {
+        return new EnvioDTO(
+                envio.getIdPedido(),
+                envio.getOrigenIata(),
+                envio.getDestinoIata(),
+                envio.getFechaHora().toString(),
+                envio.getCantidadMaletas(),
+                envio.getIdCliente()
+        );
     }
 }

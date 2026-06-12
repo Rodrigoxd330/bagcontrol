@@ -37,7 +37,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SimulacionJob implements Runnable {
 
     @Getter
-    private final int saMs = 60_000;
+    private final int saMs = 90_000;
 
     private final String simulacionId;
     private final LocalDateTime horaInicio;
@@ -157,6 +157,10 @@ public class SimulacionJob implements Runnable {
             );
             state.setSolucionActual(solucion);
 
+            System.out.printf("[PLANIFICACION-OK] ventana=%s -> %s | envios=%d | algoritmo=%s | fitness=%.2f | planMs=%d%n",
+                    ventanaInicio, ventanaFin, solucion.getAsignaciones().size(),
+                    algoritmo, solucion.getFitness(), System.currentTimeMillis() - inicioCronometroTa);
+
             // --- FASE 4: MUTACIÓN FÍSICA E INDEXACIÓN DEL ESTADO ---
             simulacionStateMutator.indexarEnviosPorVuelo(solucion);
             registrarEnviosNuevos(solucion, eventosBatch, inventarioReservado);
@@ -186,12 +190,12 @@ public class SimulacionJob implements Runnable {
 
             consolidarEventosVuelo(eventosBatch);
 
-            // --- FASE 7: ENVÍO DE DATOS A FRONTEND ---
-            publicarLote(eventosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
-            state.setBloquesProcesados(state.getBloquesProcesados() + 1);
-            publicarMetricasCapacidad(solucion);
-
+            // --- FASE 7: COLAPSO ---
             if (incumplimiento != null) {
+                publicarLote(eventosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
+                state.guardarSnapshot();
+                state.setBloquesProcesados(state.getBloquesProcesados() + 1);
+                publicarMetricasCapacidad(solucion);
                 state.setTiempoActual(LocalDateTime.ofInstant(instanteColapso, ZoneOffset.UTC));
                 publicarControl(TipoEvento.SIMULACION_FINALIZADA);
                 break;
@@ -201,19 +205,26 @@ public class SimulacionJob implements Runnable {
 
             // --- FASE 8: FIN DE TA Y COMPENSACIÓN DE TIEMPO (SA - TA) ---
             long taCalculadoMs = System.currentTimeMillis() - inicioCronometroTa;
-            this.tiempoUltimoLoteMs = taCalculadoMs; // Guarda el TA real consumido por la CPU
-
-            System.out.printf(
-                    "[MOTOR-METRICAS] Lote=%d | Eventos=%d | TA=%dms | UmbralSA=%dms | AvanceSimulado(K)=%d min | Ventana=%s -> %s%n",
-                    state.getUltimoLoteEmitidoNumero().get(), eventosBatch.size(), taCalculadoMs, saMs, k, ventanaInicio, ventanaFin
-            );
+            this.tiempoUltimoLoteMs = taCalculadoMs;
 
             state.setTiempoActual(ventanaFin);
 
-            // Si el tiempo real consumido de CPU (TA) fue menor que el Salto del Algoritmo (SA), dormimos el remanente
-            if (state.getTiempoActual().isBefore(tiempoFin)) {
-                esperarConControl(); // Esto frena el hilo para ajustarse a los 12 o 30 segundos reales configurados
+            // Primer lote: publicar inmediato para arrancar el frontend. Siguientes: esperar los SA y publicar al final
+            boolean esPrimerLote = state.getBloquesProcesados() == 0;
+            if (!esPrimerLote && state.getTiempoActual().isBefore(tiempoFin)) {
+                esperarConControl();
             }
+
+            // --- FASE 9: ENVÍO DE DATOS A FRONTEND ---
+            publicarLote(eventosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
+
+            System.out.printf("[LOTE-ENVIADO] numero=%d | eventos=%d | ventana=%s -> %s | taTotal=%dms | sa=%dms%n",
+                    state.getUltimoLoteEmitidoNumero().get(), eventosBatch.size(),
+                    ventanaInicio, ventanaFin, taCalculadoMs, saMs);
+
+            state.guardarSnapshot();
+            state.setBloquesProcesados(state.getBloquesProcesados() + 1);
+            publicarMetricasCapacidad(solucion);
         }
 
         if (!esTerminal()) {

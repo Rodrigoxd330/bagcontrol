@@ -12,10 +12,7 @@ import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MetricasColapsoDTO;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -46,6 +43,8 @@ public class SimulacionState {
 
     //Simulacion-metadatos
     private final String simulacionId;
+    private LocalDateTime fechaInicioSimulacion;
+    private int kMinutos;
     private int cicloActual;
     private LoteEventosDTO ultimoLoteEmitido;
     private AtomicLong ultimoLoteEmitidoNumero = new AtomicLong(0);
@@ -57,15 +56,49 @@ public class SimulacionState {
     private String motivoColapso;
     private DetalleColapsoDTO detalleColapso;
 
+    // --- Historial por lote ---
+    private final Map<Long, Map<Long, List<EnvioDTO>>> histEnviosPorVuelo = new ConcurrentHashMap<>();
+    private final Map<Long, Set<String>> histEnviosEntregados = new ConcurrentHashMap<>();
+    private final Map<Long, Map<String, String>> histUltimoAeropuertoPorEnvio = new ConcurrentHashMap<>();
+    private final Map<Long, Map<String, RutaAsignada>> histEnviosEnSeguimiento = new ConcurrentHashMap<>();
+    private final AtomicLong ultimoLoteSnapshot = new AtomicLong(0);
+
     public SimulacionState(String simulacionId) {
         this.simulacionId = simulacionId;
     }
+
     public long siguienteLote() {
         return ultimoLoteEmitidoNumero.incrementAndGet();
     }
 
+    public long siguienteLoteSnapshot() {
+        return ultimoLoteSnapshot.incrementAndGet();
+    }
+
+    public long getUltimoLoteSnapshot() {
+        return ultimoLoteSnapshot.get();
+    }
+
     public Aeropuerto obtenerAeropuerto(String idAeropuerto){
         return this.aeropuertosSnapshot.get(idAeropuerto);
+    }
+
+    public void guardarSnapshot() {
+        long loteNum = siguienteLoteSnapshot();
+
+        histEnviosPorVuelo.put(loteNum, new TreeMap<>(enviosPorVuelo));
+        histEnviosEntregados.put(loteNum, new HashSet<>(enviosEntregados));
+        histUltimoAeropuertoPorEnvio.put(loteNum, new HashMap<>(ultimoAeropuertoPorEnvio));
+        histEnviosEnSeguimiento.put(loteNum, new HashMap<>(enviosEnSeguimiento));
+
+        // Pruning: mantener últimos 5 lotes (buffer de 2 + margen)
+        long umbral = loteNum - 5;
+        if (umbral > 0) {
+            histEnviosPorVuelo.keySet().removeIf(k -> k <= umbral);
+            histEnviosEntregados.keySet().removeIf(k -> k <= umbral);
+            histUltimoAeropuertoPorEnvio.keySet().removeIf(k -> k <= umbral);
+            histEnviosEnSeguimiento.keySet().removeIf(k -> k <= umbral);
+        }
     }
 
 }

@@ -122,29 +122,28 @@ public class SimulacionController {
     @GetMapping("/{simulacionId}/vuelos/{codigoVuelo}/envios")
     public List<EnvioDTO> obtenerEnviosPorVuelo(
             @PathVariable String simulacionId,
-            @PathVariable Long codigoVuelo
+            @PathVariable Long codigoVuelo,
+            @RequestParam("timestamp") String timestamp
     ) {
-        List<EnvioDTO> envios = simulacionManager.extraerEnviosPorVuelo(simulacionId, codigoVuelo);
-        System.out.println("Envios: ");
-        for(EnvioDTO envio : envios){
-            System.out.println(envio.getIdPedido());
-        }
+        List<EnvioDTO> envios = simulacionManager.extraerEnviosPorVuelo(simulacionId, codigoVuelo, timestamp);
         return envios;
     }
 
     @GetMapping("/{simulacionId}/envios/{idPedido}/ruta")
     public EnvioRutaDTO obtenerRutaEnvio(
             @PathVariable String simulacionId,
-            @PathVariable String idPedido
+            @PathVariable String idPedido,
+            @RequestParam("timestamp") String timestamp
     ) {
-        return simulacionManager.obtenerRutaEnvio(simulacionId, idPedido);
+        return simulacionManager.obtenerRutaEnvio(simulacionId, idPedido, timestamp);
     }
 
     @GetMapping("/{simulacionId}/aeropuertos/{codigoIata}/envios")
     public List<EnvioAlmacenDTO> obtenerEnviosPorAlmacen(
             @PathVariable String simulacionId,
-            @PathVariable String codigoIata
+            @PathVariable String codigoIata,
+            @RequestParam("timestamp") String timestamp
     ) {
-        return simulacionManager.obtenerEnviosPorAlmacen(simulacionId, codigoIata);
+        return simulacionManager.obtenerEnviosPorAlmacen(simulacionId, codigoIata, timestamp);
     }
 }

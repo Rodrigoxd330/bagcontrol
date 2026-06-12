@@ -17,7 +17,10 @@ import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioRutaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EscalaRutaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -42,6 +45,8 @@ public class SimulacionManager {
 
         // 1. Instanciamos la memoria y su mutador para este job específico
         SimulacionState state = new SimulacionState(simulacionId);
+        state.setFechaInicioSimulacion(fechaInicio);
+        state.setKMinutos(k);
         SimulacionStateMutator mutator = new SimulacionStateMutator(state, aeropuertoRepository);
 
         // 2. Determinamos la configuración de colapso según el escenario
@@ -145,10 +150,12 @@ public class SimulacionManager {
         return obtenerJob(simulacionId).getState();
     }
 
-    public List<EnvioDTO> extraerEnviosPorVuelo(String simulacionId, Long codigoVuelo) {
-        return obtenerState(simulacionId)
-                .getEnviosPorVuelo()
-                .getOrDefault(codigoVuelo, List.of());
+    public List<EnvioDTO> extraerEnviosPorVuelo(String simulacionId, Long codigoVuelo, String timestamp) {
+        SimulacionState state = obtenerState(simulacionId);
+        long lote = calcularLoteSnapshot(state, timestamp);
+        Map<Long, List<EnvioDTO>> enviosEnLote = state.getHistEnviosPorVuelo().get(lote);
+        if (enviosEnLote == null) return List.of();
+        return enviosEnLote.getOrDefault(codigoVuelo, List.of());
     }
 
     public SolucionRuta obtenerPlanCompleto(String simulacionId) {
@@ -159,39 +166,69 @@ public class SimulacionManager {
         return solucion;
     }
 
-    public EnvioRutaDTO obtenerRutaEnvio(String simulacionId, String idPedido) {
+    public EnvioRutaDTO obtenerRutaEnvio(String simulacionId, String idPedido, String timestamp) {
         SimulacionState state = obtenerState(simulacionId);
-        RutaAsignada asignacion = state.getEnviosEnSeguimiento().get(idPedido);
-        if (asignacion == null) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No existe el envio en seguimiento: " + idPedido);
+        long lote = calcularLoteSnapshot(state, timestamp);
+
+        Map<String, RutaAsignada> histSeguimiento = state.getHistEnviosEnSeguimiento().get(lote);
+        Set<String> histEntregados = state.getHistEnviosEntregados().get(lote);
+        Map<String, String> histUltimoAeropuerto = state.getHistUltimoAeropuertoPorEnvio().get(lote);
+
+        if (histSeguimiento == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                    "No hay datos historicos para el lote " + lote + " de la simulacion " + simulacionId);
         }
 
-        String estado = state.getEnviosEntregados().contains(idPedido)
-                ? "ENTREGADO"
+        RutaAsignada asignacion = histSeguimiento.get(idPedido);
+        if (asignacion == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                    "No existe el envio en seguimiento: " + idPedido + " en el lote " + lote);
+        }
+
+        boolean entregado = histEntregados != null && histEntregados.contains(idPedido);
+        String estado = entregado ? "ENTREGADO"
                 : asignacion.getItinerario() == null ? "SIN_ITINERARIO" : "EN_TRANSITO";
         List<EscalaRutaDTO> escalas = asignacion.getItinerario() == null
                 ? List.of()
                 : asignacion.getItinerario().getVuelos().stream()
                         .map(this::crearEscalaRuta)
                         .toList();
+        String aeropuertoActual = histUltimoAeropuerto != null
+                ? histUltimoAeropuerto.get(idPedido) : null;
 
         return new EnvioRutaDTO(
                 crearEnvioDTO(asignacion.getEnvio()),
                 estado,
-                state.getUltimoAeropuertoPorEnvio().get(idPedido),
+                aeropuertoActual,
                 asignacion.getItinerario() != null ? asignacion.getItinerario().getIdItinerario() : null,
                 escalas
         );
     }
 
-    public List<EnvioAlmacenDTO> obtenerEnviosPorAlmacen(String simulacionId, String codigoAeropuerto) {
+    public List<EnvioAlmacenDTO> obtenerEnviosPorAlmacen(String simulacionId, String codigoAeropuerto, String timestamp) {
         SimulacionState state = obtenerState(simulacionId);
-        return state.getEnviosEnSeguimiento().values().stream()
+        long lote = calcularLoteSnapshot(state, timestamp);
+
+        Map<String, RutaAsignada> histSeguimiento = state.getHistEnviosEnSeguimiento().get(lote);
+        Map<String, String> histUltimoAeropuerto = state.getHistUltimoAeropuertoPorEnvio().get(lote);
+        Set<String> histEntregados = state.getHistEnviosEntregados().get(lote);
+        final Set<String> entregadosFinal = histEntregados != null ? histEntregados : Set.of();
+
+        if (histSeguimiento == null || histUltimoAeropuerto == null) return List.of();
+
+        return histSeguimiento.values().stream()
                 .filter(asignacion -> codigoAeropuerto.equals(
-                        state.getUltimoAeropuertoPorEnvio().get(asignacion.getEnvio().getIdPedido())
+                        histUltimoAeropuerto.get(asignacion.getEnvio().getIdPedido())
                 ))
                 .sorted(Comparator.comparing(asignacion -> asignacion.getEnvio().getIdPedido()))
-                .map(asignacion -> crearEnvioAlmacenDTO(state, codigoAeropuerto, asignacion))
+                .map(asignacion -> {
+                    Envio envio = asignacion.getEnvio();
+                    String estado = entregadosFinal.contains(envio.getIdPedido())
+                            ? "ENTREGADO"
+                            : asignacion.getItinerario() == null ? "SIN_ITINERARIO" : "EN_ALMACEN";
+                    String tipoAlmacen = codigoAeropuerto.equals(envio.getDestinoIata()) ? "DESTINO_FINAL" : "TRANSITO";
+                    return new EnvioAlmacenDTO(crearEnvioDTO(envio), codigoAeropuerto, tipoAlmacen, estado);
+                })
                 .toList();
     }
 
@@ -232,6 +269,15 @@ public class SimulacionManager {
                 envio.getCantidadMaletas(),
                 envio.getIdCliente()
         );
+    }
+
+    private long calcularLoteSnapshot(SimulacionState state, String timestampIso) {
+        Instant ts = Instant.parse(timestampIso);
+        long minutos = Duration.between(
+                state.getFechaInicioSimulacion().toInstant(ZoneOffset.UTC), ts
+        ).toMinutes();
+        if (minutos < 0) return 1;
+        return (minutos / state.getKMinutos()) + 1;
     }
 
     private SimulacionJob obtenerJob(String simulacionId) {
