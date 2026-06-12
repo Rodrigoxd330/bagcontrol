@@ -2,7 +2,6 @@ package pe.edu.pucp.inf.bagcontrol.simulacion.motor;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -10,7 +9,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
-import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioAlmacenDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioRutaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.out.RespuestaInicioSimulacionDTO;
 
@@ -122,22 +122,28 @@ public class SimulacionController {
     @GetMapping("/{simulacionId}/vuelos/{codigoVuelo}/envios")
     public List<EnvioDTO> obtenerEnviosPorVuelo(
             @PathVariable String simulacionId,
-            @PathVariable Long codigoVuelo
+            @PathVariable Long codigoVuelo,
+            @RequestParam("timestamp") String timestamp
     ) {
-        List<EnvioDTO> envios = simulacionManager.extraerEnviosPorVuelo(simulacionId, codigoVuelo);
-        System.out.println("Envios: ");
-        for(EnvioDTO envio : envios){
-            System.out.println(envio.getIdPedido());
-        }
+        List<EnvioDTO> envios = simulacionManager.extraerEnviosPorVuelo(simulacionId, codigoVuelo, timestamp);
         return envios;
     }
 
-    @GetMapping("/{simulacionId}/aeropuertos/{codigoIata}/envios")
-    public ResponseEntity<List<RutaAsignada>> getEnviosPorAeropuerto(
+    @GetMapping("/{simulacionId}/envios/{idPedido}/ruta")
+    public EnvioRutaDTO obtenerRutaEnvio(
             @PathVariable String simulacionId,
-            @PathVariable String codigoIata) {
+            @PathVariable String idPedido,
+            @RequestParam("timestamp") String timestamp
+    ) {
+        return simulacionManager.obtenerRutaEnvio(simulacionId, idPedido, timestamp);
+    }
 
-        List<RutaAsignada> envios = simulacionManager.obtenerEnviosEnAeropuerto(simulacionId, codigoIata);
-        return ResponseEntity.ok(envios);
+    @GetMapping("/{simulacionId}/aeropuertos/{codigoIata}/envios")
+    public List<EnvioAlmacenDTO> obtenerEnviosPorAlmacen(
+            @PathVariable String simulacionId,
+            @PathVariable String codigoIata,
+            @RequestParam("timestamp") String timestamp
+    ) {
+        return simulacionManager.obtenerEnviosPorAlmacen(simulacionId, codigoIata, timestamp);
     }
 }
