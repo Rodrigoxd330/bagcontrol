@@ -32,6 +32,10 @@ public class VueloController {
 
     @PostMapping("/api/vuelos")
     public ResponseEntity<VueloDTO> crearVuelo(@RequestBody VueloDTO dto) {
+        if (dto.getOrigenIata() == null || dto.getDestinoIata() == null
+                || dto.getHoraSalida() == null || dto.getHoraLlegada() == null) {
+            return ResponseEntity.badRequest().build();
+        }
         Vuelo vuelo = new Vuelo();
         aplicarCampos(vuelo, dto);
         return ResponseEntity.status(HttpStatus.CREATED).body(toDto(vueloRepository.save(vuelo)));
@@ -67,8 +71,8 @@ public class VueloController {
     }
 
     private void aplicarCampos(Vuelo vuelo, VueloDTO dto) {
-        vuelo.setOrigenIata(dto.getOrigenIata());
-        vuelo.setDestinoIata(dto.getDestinoIata());
+        vuelo.setOrigenIata(dto.getOrigenIata() != null ? dto.getOrigenIata().toUpperCase() : null);
+        vuelo.setDestinoIata(dto.getDestinoIata() != null ? dto.getDestinoIata().toUpperCase() : null);
         vuelo.setHoraSalida(dto.getHoraSalida());
         vuelo.setHoraLlegada(dto.getHoraLlegada());
         vuelo.setCapacidadMax(dto.getCapacidadMax());

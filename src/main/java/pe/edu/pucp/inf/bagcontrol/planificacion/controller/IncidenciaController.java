@@ -62,7 +62,7 @@ public class IncidenciaController {
     private void aplicarCampos(Incidencia incidencia, IncidenciaDTO dto) {
         incidencia.setFechaHora(dto.getFechaHora());
         incidencia.setDescripcion(dto.getDescripcion());
-        incidencia.setOrigenIata(dto.getOrigenIata());
+        incidencia.setOrigenIata(dto.getOrigenIata() != null ? dto.getOrigenIata().toUpperCase() : null);
         incidencia.setNoPuedeRecibir(dto.isNoPuedeRecibir());
         incidencia.setNoPuedeEnviar(dto.isNoPuedeEnviar());
         incidencia.setTiempoRecuperacionMinutos(dto.getTiempoRecuperacionMinutos());
