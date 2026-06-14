@@ -10,9 +10,8 @@ import java.time.Instant;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class EnvioAlmacenDTO {
+public class EnvioAeropuertoDTO {
     private EnvioDTO envio;
-    private String codigoAeropuerto;
-    private String tipoAlmacen;
-    private String estadoEnvio;
+    private Instant fechaHoraSalidaUtc;
+    private Instant fechaHoraLlegadaUtc;
 }

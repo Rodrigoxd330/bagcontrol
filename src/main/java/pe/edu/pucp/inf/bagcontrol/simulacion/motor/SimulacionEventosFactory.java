@@ -7,6 +7,7 @@ import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioAeropuertoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MetricasColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.*;
 
@@ -117,7 +118,7 @@ public class SimulacionEventosFactory {
         String codigoIata = aeropuerto.getCodigoIata();
 
         // Calcular en caliente los 5 envíos más críticos físicamente en este aeropuerto
-        List<EnvioDTO> top5Envios = state.getUltimoAeropuertoPorEnvio().entrySet().stream()
+        List<EnvioAeropuertoDTO> top5Envios = state.getUltimoAeropuertoPorEnvio().entrySet().stream()
                 .filter(entry -> entry.getValue().equalsIgnoreCase(codigoIata))
                 .map(Map.Entry::getKey)
                 .filter(idPedido -> !state.getEnviosEntregados().contains(idPedido))
@@ -129,10 +130,14 @@ public class SimulacionEventosFactory {
                 .limit(5)
                 .map(asignacion -> {
                     pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio e = asignacion.getEnvio();
-                    return new EnvioDTO(
-                            e.getIdPedido(), e.getOrigenIata(), e.getDestinoIata(),
-                            e.getFechaHora() != null ? e.getFechaHora().toString() : null,
-                            e.getCantidadMaletas(), e.getIdCliente()
+                    return new EnvioAeropuertoDTO(
+                            new EnvioDTO(
+                                    e.getIdPedido(), e.getOrigenIata(), e.getDestinoIata(),
+                                    e.getFechaHora() != null ? e.getFechaHora().toString() : null,
+                                    e.getCantidadMaletas(), e.getIdCliente()
+                            ),
+                            asignacion.getItinerario().getFechaHoraSalidaUtc(),
+                            asignacion.getItinerario().getFechaHoraLlegadaUtc()
                     );
                 })
                 .toList();
