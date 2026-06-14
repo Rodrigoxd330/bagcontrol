@@ -134,14 +134,15 @@ public class SimulacionEventosFactory {
                 .limit(5)
                 .map(asignacion -> {
                     pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio e = asignacion.getEnvio();
+                    var itinerario = asignacion.getItinerario();
                     return new EnvioAeropuertoDTO(
                             new EnvioDTO(
                                     e.getIdPedido(), e.getOrigenIata(), e.getDestinoIata(),
                                     e.getFechaHora() != null ? e.getFechaHora().toString() : null,
                                     e.getCantidadMaletas(), e.getIdCliente()
                             ),
-                            asignacion.getItinerario().getFechaHoraSalidaUtc(),
-                            asignacion.getItinerario().getFechaHoraLlegadaUtc()
+                            itinerario != null ? itinerario.getFechaHoraSalidaUtc() : null,
+                            itinerario != null ? itinerario.getFechaHoraLlegadaUtc() : null
                     );
                 })
                 .toList();
