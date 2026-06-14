@@ -4,6 +4,7 @@ import lombok.Getter;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
+import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.service.PlanificadorService;
@@ -190,9 +191,13 @@ public class SimulacionJob implements Runnable {
 
             consolidarEventosVuelo(eventosBatch);
 
+            List<EnvioDTO> enviosBatch = solucion.getAsignaciones().stream().map(e -> new EnvioDTO(e.getEnvio().getIdPedido(),
+                    e.getEnvio().getOrigenIata(),e.getEnvio().getDestinoIata(),e.getEnvio().getFechaHora().toString(),
+                    e.getEnvio().getCantidadMaletas(),e.getEnvio().getIdCliente())).toList();
+
             // --- FASE 7: COLAPSO ---
             if (incumplimiento != null) {
-                publicarLote(eventosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
+                publicarLote(eventosBatch,enviosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
                 state.guardarSnapshot();
                 state.setBloquesProcesados(state.getBloquesProcesados() + 1);
                 publicarMetricasCapacidad(solucion);
@@ -216,7 +221,7 @@ public class SimulacionJob implements Runnable {
             }
 
             // --- FASE 9: ENVÍO DE DATOS A FRONTEND ---
-            publicarLote(eventosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
+            publicarLote(eventosBatch,enviosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
 
             System.out.printf("[LOTE-ENVIADO] numero=%d | eventos=%d | ventana=%s -> %s | taTotal=%dms | sa=%dms%n",
                     state.getUltimoLoteEmitidoNumero().get(), eventosBatch.size(),
@@ -685,7 +690,7 @@ public class SimulacionJob implements Runnable {
         Instant ventana = state.getTiempoActual() != null
                 ? state.getTiempoActual().toInstant(ZoneOffset.UTC)
                 : Instant.now();
-        publicarLote(List.of(new EventoBaseDTO(tipoEvento, ventana.toString())), ventana, ventana);
+        publicarLote(List.of(new EventoBaseDTO(tipoEvento, ventana.toString())), List.of(),ventana, ventana);
     }
 
     private void publicarConfiguracionRendimiento() {
@@ -707,7 +712,7 @@ public class SimulacionJob implements Runnable {
                 + " duracionEstimadaMinutos=" + duracionEstimadaMinutos);
     }
 
-    private void publicarLote(List<EventoBaseDTO> eventos, Instant ventanaInicio, Instant ventanaFin) {
+    private void publicarLote(List<EventoBaseDTO> eventos, List<EnvioDTO> envios, Instant ventanaInicio, Instant ventanaFin) {
         if (eventos.isEmpty()) return;
         LoteEventosDTO lote = new LoteEventosDTO(
                 simulacionId,
@@ -715,7 +720,8 @@ public class SimulacionJob implements Runnable {
                 ventanaInicio != null ? ventanaInicio.toString() : null,
                 ventanaFin != null ? ventanaFin.toString() : null,
                 eventos.size(),
-                eventos
+                eventos,
+                envios
         );
         state.setUltimoLoteEmitido(lote);
         webSocketPublisher.publicarLote(simulacionId, lote);

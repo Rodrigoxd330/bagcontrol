@@ -14,6 +14,7 @@ import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.*;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Stream;
 
 public class SimulacionEventosFactory {
 
@@ -46,12 +47,12 @@ public class SimulacionEventosFactory {
                 // 1. Determinar a qué mapa va el DESPEGUE y actualizar
                 Map<String, EventoVueloDTO> mapaDespegue = vuelo.getFechaHoraSalidaUtc().isAfter(ventanaFin) ? futurosMap : actualesMap;
                 EventoVueloDTO evDespega = mapaDespegue.computeIfAbsent(keyDespega, k -> crearEventoVuelo(vuelo, TipoEvento.VUELO_DESPEGA));
-                actualizarSemaforoVuelo(evDespega, cantidadMaletas, capacidadMax);
+                actualizarSemaforoVuelo(evDespega, cantidadMaletas, capacidadMax,List.of(asignacion.getEnvio().getIdPedido()));
 
                 // 2. Determinar a qué mapa va el ATERRIZAJE y actualizar
                 Map<String, EventoVueloDTO> mapaAterrizaje = vuelo.getFechaHoraLlegadaUtc().isAfter(ventanaFin) ? futurosMap : actualesMap;
                 EventoVueloDTO evAterriza = mapaAterrizaje.computeIfAbsent(keyAterriza, k -> crearEventoVuelo(vuelo, TipoEvento.VUELO_ATERRIZA));
-                actualizarSemaforoVuelo(evAterriza, cantidadMaletas, capacidadMax);
+                actualizarSemaforoVuelo(evAterriza, cantidadMaletas, capacidadMax, List.of(asignacion.getEnvio().getIdPedido()));
             }
         }
         return new ResultadoEventosVuelo(
@@ -60,10 +61,11 @@ public class SimulacionEventosFactory {
         );
     }
 
-    public void actualizarSemaforoVuelo(EventoVueloDTO dto, int nuevasMaletas, int capacidadMax) {
+    public void actualizarSemaforoVuelo(EventoVueloDTO dto, int nuevasMaletas, int capacidadMax, List<String> envios) {
         dto.setCapacidadMax(capacidadMax);
         int totalMaletas = dto.getCantidadMaletas() + nuevasMaletas;
         dto.setCantidadMaletas(totalMaletas);
+        dto.getCodigoEnvios().addAll(envios);
 
         double porcentaje = capacidadMax > 0 ? (totalMaletas * 100.0) / capacidadMax : 0.0;
         dto.setPorcentajeOcupacion(porcentaje);
@@ -78,10 +80,11 @@ public class SimulacionEventosFactory {
     }
 
     public void fusionarEventoVuelo(EventoVueloDTO existente, EventoVueloDTO nuevo) {
-        actualizarSemaforoVuelo(existente, nuevo.getCantidadMaletas(), existente.getCapacidadMax());
+        actualizarSemaforoVuelo(existente, nuevo.getCantidadMaletas(), existente.getCapacidadMax(),nuevo.getCodigoEnvios());
     }
 
     public EventoVueloDTO crearEventoVuelo(VueloInstanciado vuelo, TipoEvento tipoEvento) {
+
         Instant tiempoSimulado = (tipoEvento == TipoEvento.VUELO_DESPEGA || tipoEvento == TipoEvento.VUELO_CANCELADO)
                 ? vuelo.getFechaHoraSalidaUtc()
                 : vuelo.getFechaHoraLlegadaUtc();
@@ -96,7 +99,8 @@ public class SimulacionEventosFactory {
                 vuelo.getFechaHoraSalida().toString(),
                 vuelo.getFechaHoraLlegada().toString(),
                 vuelo.getFechaHoraSalidaUtc().toString(),
-                vuelo.getFechaHoraLlegadaUtc().toString()
+                vuelo.getFechaHoraLlegadaUtc().toString(),
+                new ArrayList<String>()
         );
     }
 
