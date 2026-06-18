@@ -22,6 +22,7 @@ public class Vuelo {
     private LocalTime horaLlegada;
     private int capacidadMax;
     private boolean estaCancelado = false;
+    private boolean creadoPorCrud = false;
 
     public Vuelo(String origenIata, String destinoIata, LocalTime horaSalida, LocalTime horaLlegada, int capacidadMax) {
         this.origenIata = origenIata;

@@ -39,7 +39,12 @@ public class VueloController {
         }
         Vuelo vuelo = new Vuelo();
         aplicarCampos(vuelo, dto);
-        return ResponseEntity.status(HttpStatus.CREATED).body(toDto(vueloRepository.save(vuelo)));
+        vuelo.setCreadoPorCrud(true);
+        Vuelo guardado = vueloRepository.save(vuelo);
+        System.out.println("[CRUD-VUELO] creado id=" + guardado.getCodigo()
+                + " origen=" + guardado.getOrigenIata()
+                + " destino=" + guardado.getDestinoIata());
+        return ResponseEntity.status(HttpStatus.CREATED).body(toDto(guardado));
     }
 
     @PutMapping("/api/vuelos/{id}")
@@ -50,7 +55,10 @@ public class VueloController {
         return vueloRepository.findById(id)
                 .map(vuelo -> {
                     aplicarCampos(vuelo, dto);
-                    return ResponseEntity.ok(toDto(vueloRepository.save(vuelo)));
+                    vuelo.setCreadoPorCrud(true);
+                    Vuelo guardado = vueloRepository.save(vuelo);
+                    System.out.println("[CRUD-VUELO] actualizado id=" + guardado.getCodigo());
+                    return ResponseEntity.ok(toDto(guardado));
                 })
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
@@ -61,6 +69,7 @@ public class VueloController {
             return ResponseEntity.notFound().build();
         }
         vueloRepository.deleteById(id);
+        System.out.println("[CRUD-VUELO] eliminado id=" + id);
         return ResponseEntity.noContent().build();
     }
 
@@ -69,14 +78,16 @@ public class VueloController {
         return vueloRepository.findById(id)
                 .map(vuelo -> {
                     vuelo.setEstaCancelado(true);
-                    return ResponseEntity.ok(toDto(vueloRepository.save(vuelo)));
+                    Vuelo guardado = vueloRepository.save(vuelo);
+                    System.out.println("[CRUD-VUELO] actualizado id=" + guardado.getCodigo());
+                    return ResponseEntity.ok(toDto(guardado));
                 })
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
     private void aplicarCampos(Vuelo vuelo, VueloDTO dto) {
-        vuelo.setOrigenIata(dto.getOrigenIata() != null ? dto.getOrigenIata().toUpperCase() : null);
-        vuelo.setDestinoIata(dto.getDestinoIata() != null ? dto.getDestinoIata().toUpperCase() : null);
+        vuelo.setOrigenIata(dto.getOrigenIata() != null ? dto.getOrigenIata().trim().toUpperCase() : null);
+        vuelo.setDestinoIata(dto.getDestinoIata() != null ? dto.getDestinoIata().trim().toUpperCase() : null);
         vuelo.setHoraSalida(dto.getHoraSalida());
         vuelo.setHoraLlegada(dto.getHoraLlegada());
         vuelo.setCapacidadMax(dto.getCapacidadMax());
@@ -88,15 +99,15 @@ public class VueloController {
                 || dto.getHoraSalida() == null || dto.getHoraLlegada() == null) {
             return false;
         }
-        String origenIata = dto.getOrigenIata().toUpperCase();
-        String destinoIata = dto.getDestinoIata().toUpperCase();
+        String origenIata = dto.getOrigenIata().trim().toUpperCase();
+        String destinoIata = dto.getDestinoIata().trim().toUpperCase();
         if (origenIata.equals(destinoIata)) {
             return false;
         }
         if (!aeropuertoRepository.existsById(origenIata) || !aeropuertoRepository.existsById(destinoIata)) {
             return false;
         }
-        if (!dto.getHoraSalida().isBefore(dto.getHoraLlegada())) {
+        if (dto.getHoraSalida().equals(dto.getHoraLlegada())) {
             return false;
         }
         return dto.getCapacidadMax() > 0;

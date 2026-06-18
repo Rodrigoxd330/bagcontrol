@@ -51,8 +51,10 @@ public class PlanificadorService {
 
         long inicioCargaEnvios = System.currentTimeMillis();
         List<Envio> envios = envioDataStore.obtenerEnviosEnVentana(inicio, fin);
+        registrarEnviosEnVentana(inicio, fin, envios);
         long tiempoCargaEnvios = System.currentTimeMillis() - inicioCargaEnvios;
         List<Vuelo> vuelosBase = vueloRepository.findAll();
+        registrarVuelosBase(vuelosBase);
         List<Aeropuerto> aeropuertos = aeropuertoRepository.findAll();
 
         // Se mantiene el margen de 2 días para cubrir el SLA máximo de 48h [cite: 12]
@@ -71,6 +73,7 @@ public class PlanificadorService {
         SolucionRuta solucion = algoritmo.equalsIgnoreCase("TABU")
                 ? tabuSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos)
                 : graspSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos);
+        registrarUsoVuelosCrud(vuelosBase, solucion);
         long tiempoAlgoritmo = System.currentTimeMillis() - inicioAlgoritmo;
 
         imprimirMetricasPlanificacion(algoritmo, fechaInicio, dias, envios, vuelosBase, vuelosInstanciados,
@@ -133,7 +136,9 @@ public class PlanificadorService {
         LocalDateTime fin = fechaInicio.plusDays(cantidadDias).atStartOfDay();
 
         List<Envio> envios = envioDataStore.obtenerEnviosEnVentana(inicio, fin);
+        registrarEnviosEnVentana(inicio, fin, envios);
         List<Vuelo> vuelosBase = vueloRepository.findAll();
+        registrarVuelosBase(vuelosBase);
         List<Aeropuerto> aeropuertos = aeropuertoRepository.findAll();
 
 
@@ -164,6 +169,7 @@ public class PlanificadorService {
         System.out.println("\n=== EJECUTANDO GRASP ===");
         long inicioGrasp = System.currentTimeMillis();
         SolucionRuta solucionGrasp = graspSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos);
+        registrarUsoVuelosCrud(vuelosBase, solucionGrasp);
         long tiempoGrasp = System.currentTimeMillis() - inicioGrasp;
         imprimirMetricasPlanificacion("GRASP", fechaInicio, cantidadDias, envios, vuelosBase, vuelosInstanciados,
                 aeropuertos, itinerariosPorRuta, tiempoGeneracionVuelos, tiempoGeneracionItinerarios,
@@ -194,6 +200,7 @@ public class PlanificadorService {
         System.out.println("\n=== EJECUTANDO TABU ===");
         long inicioTabu = System.currentTimeMillis();
         SolucionRuta solucionTabu = tabuSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos);
+        registrarUsoVuelosCrud(vuelosBase, solucionTabu);
         long tiempoTabu = System.currentTimeMillis() - inicioTabu;
         imprimirMetricasPlanificacion("TABU", fechaInicio, cantidadDias, envios, vuelosBase, vuelosInstanciados,
                 aeropuertos, itinerariosPorRuta, tiempoGeneracionVuelos, tiempoGeneracionItinerarios,
@@ -301,6 +308,7 @@ public class PlanificadorService {
         long inicioTotal = System.currentTimeMillis();
         long inicioCargaEnvios = System.currentTimeMillis();
         List<Envio> enviosVentana = envioDataStore.obtenerEnviosEnVentana(inicio, fin);
+        registrarEnviosEnVentana(inicio, fin, enviosVentana);
         long tiempoCargaEnvios = System.currentTimeMillis() - inicioCargaEnvios;
 
         // Unimos los nuevos de la ventana con los pendientes que vienen del State
@@ -310,6 +318,7 @@ public class PlanificadorService {
         }
 
         List<Vuelo> vuelosBase = vueloRepository.findAll();
+        registrarVuelosBase(vuelosBase);
         List<Aeropuerto> aeropuertos = aeropuertoRepository.findAll();
 
         long inicioGeneracionVuelos = System.currentTimeMillis();
@@ -336,6 +345,7 @@ public class PlanificadorService {
                 ? tabuSearch.ejecutar(todosLosEnvios, itinerariosPorRuta, aeropuertos, inventarioInicial, enviosNuevos)
                 : graspSearch.ejecutar(todosLosEnvios, itinerariosPorRuta, aeropuertos);
 
+        registrarUsoVuelosCrud(vuelosBase, solucion);
         long tiempoAlgoritmo = System.currentTimeMillis() - inicioAlgoritmo;
         imprimirMetricasPlanificacion(algoritmo, inicio.toLocalDate(), diasGeneracion, todosLosEnvios, vuelosBase, vuelosInstanciados,
                 aeropuertos, itinerariosPorRuta, tiempoGeneracionVuelos, tiempoGeneracionItinerarios,
@@ -359,6 +369,7 @@ public class PlanificadorService {
 
     public List<VueloInstanciado> obtenerVuelosCanceladosEnVentana(LocalDateTime inicio, LocalDateTime fin) {
         List<Vuelo> vuelosBase = vueloRepository.findAll();
+        registrarVuelosBase(vuelosBase);
         List<Aeropuerto> aeropuertos = aeropuertoRepository.findAll();
         int dias = calcularDiasGeneracion(inicio, fin);
         List<VueloInstanciado> vuelosInstanciados =
@@ -379,6 +390,41 @@ public class PlanificadorService {
 
     public List<Envio> obtenerEnviosEnVentana(LocalDateTime inicio, LocalDateTime fin) {
         return envioDataStore.obtenerEnviosEnVentana(inicio, fin);
+    }
+
+    private void registrarEnviosEnVentana(LocalDateTime inicio, LocalDateTime fin, List<Envio> envios) {
+        Set<String> idsIncluidos = envios.stream()
+                .map(Envio::getIdPedido)
+                .collect(java.util.stream.Collectors.toSet());
+        System.out.println("[PLANIFICADOR] envíos en ventana=" + envios.size()
+                + " inicio=" + inicio + " fin=" + fin);
+        for (String idPedido : envioDataStore.obtenerIdsCrudActivos()) {
+            System.out.println("[PLANIFICADOR] envío creado por CRUD incluido="
+                    + idsIncluidos.contains(idPedido) + " id=" + idPedido);
+        }
+    }
+
+    private void registrarVuelosBase(List<Vuelo> vuelosBase) {
+        System.out.println("[PLANIFICADOR] vuelosBase=" + vuelosBase.size());
+        vuelosBase.stream()
+                .filter(Vuelo::isCreadoPorCrud)
+                .forEach(vuelo -> System.out.println(
+                        "[PLANIFICADOR] vueloCrudIncluido=true id=" + vuelo.getCodigo()
+                ));
+    }
+
+    private void registrarUsoVuelosCrud(List<Vuelo> vuelosBase, SolucionRuta solucion) {
+        Set<Long> vuelosUsados = solucion.getAsignaciones().stream()
+                .filter(asignacion -> asignacion.getItinerario() != null)
+                .flatMap(asignacion -> asignacion.getItinerario().getVuelos().stream())
+                .map(VueloInstanciado::getCodigoBase)
+                .collect(java.util.stream.Collectors.toSet());
+        vuelosBase.stream()
+                .filter(Vuelo::isCreadoPorCrud)
+                .forEach(vuelo -> System.out.println(
+                        "[ITINERARIO] vueloCrudUsado=" + vuelosUsados.contains(vuelo.getCodigo())
+                                + " id=" + vuelo.getCodigo()
+                ));
     }
 
     public SolucionRuta calcularSolucionParaEnvios(String algoritmo, LocalDate fechaInicio, int dias, List<Envio> envios) {

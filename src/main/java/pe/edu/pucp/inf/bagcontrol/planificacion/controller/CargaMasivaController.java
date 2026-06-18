@@ -101,7 +101,11 @@ public class CargaMasivaController {
                             LocalTime.parse(p[3].trim()),
                             Integer.parseInt(p[4].trim())
                     );
+                    v.setCreadoPorCrud(true);
                     vueloRepository.save(v);
+                    System.out.println("[CRUD-VUELO] creado id=" + v.getCodigo()
+                            + " origen=" + v.getOrigenIata()
+                            + " destino=" + v.getDestinoIata());
                     insertados++;
                 } catch (Exception e) {
                     errores.add("Fila " + fila + ": " + e.getMessage());

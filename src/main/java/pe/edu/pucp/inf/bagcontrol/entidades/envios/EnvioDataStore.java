@@ -26,6 +26,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
+import java.util.Optional;
+import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
@@ -44,6 +46,8 @@ public class EnvioDataStore {
     private final TreeMap<LocalDateTime, List<Envio>> enviosPorTiempo = new TreeMap<>();
     private final NavigableMap<LocalDate, RangoDia> indicePorDia = new TreeMap<>();
     private final Map<String, AtomicInteger> contadorManualPorOrigen = new ConcurrentHashMap<>();
+    private final Map<String, Envio> enviosCrudPorId = new ConcurrentHashMap<>();
+    private final Set<String> enviosEliminados = ConcurrentHashMap.newKeySet();
 
     private Path spoolPath;
     private int totalEnviosIndexados;
@@ -57,8 +61,6 @@ public class EnvioDataStore {
 
     public synchronized Envio agregarEnvio(NuevoEnvioDTO dto, Aeropuerto aeropuertoOrigen) {
         String idPedido = generarIdPedidoManual(dto.getOrigenIata());
-        Instant fechaHoraInstant = Instant.parse(dto.getFechaHora());
-        LocalDateTime fechaHoraUtc = LocalDateTime.ofInstant(fechaHoraInstant, ZoneOffset.UTC);
 
         Envio envio = new Envio();
         envio.setIdPedido(idPedido);
@@ -66,52 +68,87 @@ public class EnvioDataStore {
         envio.setDestinoIata(dto.getDestinoIata());
         envio.setCantidadMaletas(dto.getCantidadMaletas());
         envio.setIdCliente(dto.getIdCliente());
-        envio.setFechaHora(fechaHoraUtc);
+        envio.setFechaHora(parsearFechaHoraUtc(dto.getFechaHora()));
+        envio.setActivo(true);
 
-        String linea = serializar(envio) + "\n";
-        byte[] bytes = linea.getBytes(StandardCharsets.UTF_8);
-
-        try {
-            if (spoolPath == null) {
-                spoolPath = Files.createTempFile("bagcontrol-envios-spool-", ".dat");
-                spoolPath.toFile().deleteOnExit();
-            }
-            try (RandomAccessFile raf = new RandomAccessFile(spoolPath.toFile(), "rw")) {
-                raf.seek(raf.length());
-                raf.write(bytes);
-            }
-            long finPos = Files.size(spoolPath);
-            long inicioPos = finPos - bytes.length;
-            LocalDate dia = fechaHoraUtc.toLocalDate();
-            RangoDia existente = indicePorDia.get(dia);
-            if (existente != null) {
-                indicePorDia.put(dia, new RangoDia(existente.inicio(), finPos, existente.totalEnvios() + 1));
-            } else {
-                indicePorDia.put(dia, new RangoDia(inicioPos, finPos, 1));
-            }
-            totalEnviosIndexados++;
-        } catch (IOException e) {
-            throw new UncheckedIOException("No se pudo escribir el envio manual al spool", e);
-        }
-
-        enviosPorTiempo
-                .computeIfAbsent(fechaHoraUtc, k -> new ArrayList<>())
-                .add(envio);
-
+        upsert(envio);
         return envio;
     }
 
+    public synchronized void upsert(Envio envio) {
+        envio.setActivo(true);
+        enviosEliminados.remove(envio.getIdPedido());
+        enviosCrudPorId.put(envio.getIdPedido(), envio);
+        actualizarContadorManual(envio.getIdPedido(), envio.getOrigenIata());
+        System.out.println("[ENVIO-DATASTORE] upsert id=" + envio.getIdPedido());
+    }
+
+    public synchronized boolean eliminar(String idPedido) {
+        boolean existia = buscarPorId(idPedido).isPresent();
+        enviosCrudPorId.remove(idPedido);
+        enviosEliminados.add(idPedido);
+        System.out.println("[ENVIO-DATASTORE] delete id=" + idPedido);
+        return existia;
+    }
+
+    public synchronized Optional<Envio> buscarPorId(String idPedido) {
+        if (enviosEliminados.contains(idPedido)) {
+            return Optional.empty();
+        }
+        Envio override = enviosCrudPorId.get(idPedido);
+        if (override != null) {
+            return Optional.of(override);
+        }
+        return enviosPorTiempo.values().stream()
+                .flatMap(List::stream)
+                .filter(envio -> idPedido.equals(envio.getIdPedido()))
+                .findFirst();
+    }
+
+    public synchronized Set<String> obtenerIdsCrudActivos() {
+        return Set.copyOf(enviosCrudPorId.keySet());
+    }
+
+    public static LocalDateTime parsearFechaHoraUtc(String fechaHora) {
+        try {
+            return LocalDateTime.ofInstant(Instant.parse(fechaHora), ZoneOffset.UTC);
+        } catch (java.time.format.DateTimeParseException ignored) {
+            return LocalDateTime.parse(fechaHora);
+        }
+    }
+
     private String generarIdPedidoManual(String origenIata) {
-        int num = contadorManualPorOrigen
-                .computeIfAbsent(origenIata, k -> new AtomicInteger(0))
-                .incrementAndGet();
-        return origenIata + "-M" + String.format("%06d", num);
+        AtomicInteger contador = contadorManualPorOrigen
+                .computeIfAbsent(origenIata, k -> new AtomicInteger(0));
+        String candidato;
+        do {
+            candidato = origenIata + "-M" + String.format("%06d", contador.incrementAndGet());
+        } while (buscarPorId(candidato).isPresent());
+        return candidato;
+    }
+
+    private void actualizarContadorManual(String idPedido, String origenIata) {
+        String prefijo = origenIata + "-M";
+        if (!idPedido.startsWith(prefijo)) {
+            return;
+        }
+        try {
+            int numero = Integer.parseInt(idPedido.substring(prefijo.length()));
+            contadorManualPorOrigen
+                    .computeIfAbsent(origenIata, k -> new AtomicInteger())
+                    .accumulateAndGet(numero, Math::max);
+        } catch (NumberFormatException ignored) {
+            // Un identificador externo no afecta la secuencia de altas manuales.
+        }
     }
 
     public synchronized void inicializarDesdeZip(Resource enviosZipResource, Map<String, Aeropuerto> mapaAeropuertos)
             throws IOException {
         enviosPorTiempo.clear();
         indicePorDia.clear();
+        enviosCrudPorId.clear();
+        enviosEliminados.clear();
+        contadorManualPorOrigen.clear();
         totalEnviosIndexados = 0;
 
         Path workDir = Files.createTempDirectory("bagcontrol-envios-idx-");
@@ -191,30 +228,58 @@ public class EnvioDataStore {
     }
 
     public synchronized List<Envio> obtenerEnviosEnVentana(LocalDateTime inicio, LocalDateTime fin) {
+        Map<String, Envio> resultadoPorId = new java.util.LinkedHashMap<>();
         if (!enviosPorTiempo.isEmpty()) {
             SortedMap<LocalDateTime, List<Envio>> subMapa = new TreeMap<>(enviosPorTiempo.subMap(inicio, fin));
-            List<Envio> resultado = new ArrayList<>();
             for (List<Envio> lista : subMapa.values()) {
-                resultado.addAll(new ArrayList<>(lista));
+                for (Envio envio : lista) {
+                    if (!enviosEliminados.contains(envio.getIdPedido())
+                            && !enviosCrudPorId.containsKey(envio.getIdPedido())) {
+                        resultadoPorId.put(envio.getIdPedido(), envio);
+                    }
+                }
             }
-            return resultado;
+        } else if (spoolPath != null) {
+            for (Envio envio : obtenerEnviosEnVentanaDesdeSpool(inicio, fin)) {
+                if (!enviosEliminados.contains(envio.getIdPedido())
+                        && !enviosCrudPorId.containsKey(envio.getIdPedido())) {
+                    resultadoPorId.put(envio.getIdPedido(), envio);
+                }
+            }
         }
 
-        if (spoolPath != null) {
-            return obtenerEnviosEnVentanaDesdeSpool(inicio, fin);
-        }
+        enviosCrudPorId.values().stream()
+                .filter(Envio::isActivo)
+                .filter(envio -> !envio.getFechaHora().isBefore(inicio) && envio.getFechaHora().isBefore(fin))
+                .sorted(Comparator.comparing(Envio::getFechaHora))
+                .forEach(envio -> resultadoPorId.put(envio.getIdPedido(), envio));
 
-        return List.of();
+        return resultadoPorId.values().stream()
+                .sorted(Comparator.comparing(Envio::getFechaHora))
+                .toList();
     }
 
     public synchronized int getTotalEnviosCargados() {
-        if (!enviosPorTiempo.isEmpty()) {
-            return enviosPorTiempo.values().stream().mapToInt(List::size).sum();
+        if (enviosCrudPorId.isEmpty() && enviosEliminados.isEmpty()) {
+            return !enviosPorTiempo.isEmpty()
+                    ? enviosPorTiempo.values().stream().mapToInt(List::size).sum()
+                    : totalEnviosIndexados;
         }
-        if (spoolPath != null) {
-            return totalEnviosIndexados;
-        }
-        return 0;
+        long base = !enviosPorTiempo.isEmpty()
+                ? enviosPorTiempo.values().stream().flatMap(List::stream)
+                    .map(Envio::getIdPedido).distinct().count()
+                : totalEnviosIndexados;
+        long eliminadosBase = enviosEliminados.stream()
+                .filter(id -> enviosPorTiempo.values().stream()
+                        .flatMap(List::stream)
+                        .anyMatch(envio -> id.equals(envio.getIdPedido())))
+                .count();
+        long overridesNuevos = enviosCrudPorId.keySet().stream()
+                .filter(id -> enviosPorTiempo.values().stream()
+                        .flatMap(List::stream)
+                        .noneMatch(envio -> id.equals(envio.getIdPedido())))
+                .count();
+        return Math.toIntExact(base - eliminadosBase + overridesNuevos);
     }
 
     private List<Envio> obtenerEnviosEnVentanaDesdeSpool(LocalDateTime inicio, LocalDateTime fin) {
@@ -247,17 +312,43 @@ public class EnvioDataStore {
             Integer maletasMin, Integer maletasMax,
             Pageable pageable
     ) {
-        if (spoolPath == null) {
-            List<Envio> todos = obtenerEnviosEnVentana(inicio, fin);
-            List<Envio> filtrados = aplicarFiltros(todos, origenIata, destinoIata, idCliente, q, maletasMin, maletasMax);
-            filtrados.sort(Comparator.comparing(Envio::getFechaHora));
-            int total = filtrados.size();
-            int desde = (int) pageable.getOffset();
-            int hasta = Math.min(desde + pageable.getPageSize(), total);
-            List<Envio> contenido = desde >= total ? List.of() : filtrados.subList(desde, hasta);
-            return new PageImpl<>(contenido, pageable, total);
+        if (enviosCrudPorId.isEmpty() && enviosEliminados.isEmpty() && spoolPath != null) {
+            return obtenerEnviosBasePaginados(
+                    inicio, fin, origenIata, destinoIata, idCliente, q,
+                    maletasMin, maletasMax, pageable
+            );
         }
+        if (q != null) {
+            Optional<Envio> coincidenciaExacta = buscarPorId(q);
+            if (coincidenciaExacta.isPresent()) {
+                Envio envio = coincidenciaExacta.get();
+                List<Envio> coincidencias = aplicarFiltros(
+                        List.of(envio), origenIata, destinoIata, idCliente, q, maletasMin, maletasMax
+                ).stream()
+                        .filter(e -> !e.getFechaHora().isBefore(inicio) && e.getFechaHora().isBefore(fin))
+                        .toList();
+                return new PageImpl<>(coincidencias, pageable, coincidencias.size());
+            }
+        }
+        List<Envio> todosFiltrados = aplicarFiltros(
+                obtenerEnviosEnVentana(inicio, fin),
+                origenIata, destinoIata, idCliente, q, maletasMin, maletasMax
+        );
+        todosFiltrados = new ArrayList<>(todosFiltrados);
+        todosFiltrados.sort(Comparator.comparing(Envio::getFechaHora));
+        int total = todosFiltrados.size();
+        int desde = (int) pageable.getOffset();
+        int hasta = Math.min(desde + pageable.getPageSize(), total);
+        List<Envio> contenido = desde >= total ? List.of() : todosFiltrados.subList(desde, hasta);
+        return new PageImpl<>(contenido, pageable, total);
+    }
 
+    private Page<Envio> obtenerEnviosBasePaginados(
+            LocalDateTime inicio, LocalDateTime fin,
+            String origenIata, String destinoIata, String idCliente, String q,
+            Integer maletasMin, Integer maletasMax,
+            Pageable pageable
+    ) {
         LocalDate diaInicio = inicio.toLocalDate();
         LocalDate diaFin = fin.toLocalDate();
         NavigableMap<LocalDate, RangoDia> diasEnRango = indicePorDia.subMap(diaInicio, true, diaFin, true);
@@ -265,17 +356,15 @@ public class EnvioDataStore {
                 || q != null || maletasMin != null || maletasMax != null;
 
         if (!tieneFiltros) {
-            long totalEstimado = 0;
-            for (RangoDia r : diasEnRango.values()) {
-                totalEstimado += r.totalEnvios();
-            }
+            long totalEstimado = diasEnRango.values().stream()
+                    .mapToLong(RangoDia::totalEnvios)
+                    .sum();
             long skip = pageable.getOffset();
-            int pageSize = pageable.getPageSize();
             List<Envio> contenido = new ArrayList<>();
 
             try (RandomAccessFile raf = new RandomAccessFile(spoolPath.toFile(), "r")) {
                 for (RangoDia rango : diasEnRango.values()) {
-                    if (contenido.size() >= pageSize) break;
+                    if (contenido.size() >= pageable.getPageSize()) break;
                     if (skip >= rango.totalEnvios()) {
                         skip -= rango.totalEnvios();
                         continue;
@@ -290,7 +379,7 @@ public class EnvioDataStore {
                         Envio envio = deserializar(linea);
                         if (!envio.getFechaHora().isBefore(inicio) && envio.getFechaHora().isBefore(fin)) {
                             contenido.add(envio);
-                            if (contenido.size() >= pageSize) break;
+                            if (contenido.size() >= pageable.getPageSize()) break;
                         }
                     }
                     skip = 0;
@@ -298,34 +387,39 @@ public class EnvioDataStore {
             } catch (IOException e) {
                 throw new UncheckedIOException("No se pudo leer el indice lazy de envios", e);
             }
-
             return new PageImpl<>(contenido, pageable, totalEstimado);
         }
 
-        List<Envio> todosFiltrados = new ArrayList<>();
+        List<Envio> filtrados = new ArrayList<>();
         try (RandomAccessFile raf = new RandomAccessFile(spoolPath.toFile(), "r")) {
             for (RangoDia rango : diasEnRango.values()) {
                 raf.seek(rango.inicio());
                 while (raf.getFilePointer() < rango.fin()) {
                     String linea = raf.readLine();
                     if (linea == null) break;
-                    if (!cumpleFiltrosLinea(linea, origenIata, destinoIata, idCliente, q, maletasMin, maletasMax)) continue;
+                    if (!cumpleFiltrosLinea(
+                            linea, origenIata, destinoIata, idCliente, q, maletasMin, maletasMax
+                    )) {
+                        continue;
+                    }
                     Envio envio = deserializar(linea);
                     if (!envio.getFechaHora().isBefore(inicio) && envio.getFechaHora().isBefore(fin)) {
-                        todosFiltrados.add(envio);
+                        filtrados.add(envio);
                     }
                 }
             }
         } catch (IOException e) {
             throw new UncheckedIOException("No se pudo leer el indice lazy de envios", e);
         }
-
-        todosFiltrados.sort(Comparator.comparing(Envio::getFechaHora));
-        int total = todosFiltrados.size();
+        filtrados.sort(Comparator.comparing(Envio::getFechaHora));
+        int total = filtrados.size();
         int desde = (int) pageable.getOffset();
         int hasta = Math.min(desde + pageable.getPageSize(), total);
-        List<Envio> contenido = desde >= total ? List.of() : todosFiltrados.subList(desde, hasta);
-        return new PageImpl<>(contenido, pageable, total);
+        return new PageImpl<>(
+                desde >= total ? List.of() : filtrados.subList(desde, hasta),
+                pageable,
+                total
+        );
     }
 
     private boolean cumpleFiltrosLinea(String linea, String origenIata, String destinoIata,

@@ -19,6 +19,7 @@ public class EnvioLoader implements CommandLineRunner {
 
     private final EnvioDataStore envioDataStore;
     private final AeropuertoRepository aeropuertoRepository;
+    private final EnvioRepository envioRepository;
 
     @Value("${tasf.b2b.data.envios}")
     private Resource enviosZipResource;
@@ -33,6 +34,13 @@ public class EnvioLoader implements CommandLineRunner {
 
         long inicioTiempo = System.currentTimeMillis();
         envioDataStore.inicializarDesdeZip(enviosZipResource, mapaAeropuertos);
+        envioRepository.findAll().forEach(envio -> {
+            if (envio.isActivo()) {
+                envioDataStore.upsert(envio);
+            } else {
+                envioDataStore.eliminar(envio.getIdPedido());
+            }
+        });
         long finTiempo = System.currentTimeMillis();
 
         System.out.println("Indice de envios listo: " + envioDataStore.getTotalEnviosCargados()

@@ -59,6 +59,12 @@ public class VueloFactory {
                     llegadaUtc,
                     0
             ));
+            if (vuelo.isCreadoPorCrud()) {
+                System.out.println("[VUELO-FACTORY] vueloCrudInstanciado=true id=" + vuelo.getCodigo()
+                        + " fecha=" + fecha
+                        + " salidaUtc=" + salidaUtc
+                        + " llegadaUtc=" + llegadaUtc);
+            }
         }
 
         return instancias;

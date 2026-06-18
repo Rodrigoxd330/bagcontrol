@@ -14,6 +14,7 @@ import org.springframework.data.domain.Pageable;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
 @Service
@@ -33,7 +34,7 @@ public class ConsultaOperativaService {
                         envio.getIdPedido(),
                         envio.getOrigenIata(),
                         envio.getDestinoIata(),
-                        envio.getFechaHora().toString(),
+                        envio.getFechaHora().toInstant(ZoneOffset.UTC).toString(),
                         envio.getCantidadMaletas(),
                         envio.getIdCliente()
                 ))
@@ -89,7 +90,7 @@ public class ConsultaOperativaService {
                 envio.getIdPedido(),
                 envio.getOrigenIata(),
                 envio.getDestinoIata(),
-                envio.getFechaHora().toString(),
+                envio.getFechaHora().toInstant(ZoneOffset.UTC).toString(),
                 envio.getCantidadMaletas(),
                 envio.getIdCliente()
         );
