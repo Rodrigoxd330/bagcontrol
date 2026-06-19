@@ -1,5 +1,6 @@
 package pe.edu.pucp.inf.bagcontrol.planificacion.modelos;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -12,9 +13,10 @@ public class AeropuertoDTO {
     private String ciudad;
     private String pais;
     private String continente;
+    @JsonAlias("capacidad")
     private int capacidadAlmacen;
     private int gmt;
     private double latitud;
     private double longitud;
-    private int maletasActuales;
+    private Integer maletasActuales;
 }
