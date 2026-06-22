@@ -1,12 +1,14 @@
 package pe.edu.pucp.inf.bagcontrol.simulacion.motor;
 
-import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
-import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
-import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
-import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
+import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
+
+import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
+
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -15,7 +17,7 @@ public class SimulacionStateMutator {
 
     private final SimulacionState state;
     private final AeropuertoRepository aeropuertoRepository;
-    private final Long codigoVueloRegistroStep = 2000L; //se limpia EnviosPorVuelo para que no acapare toda la memoria
+    private final Long codigoVueloRegistroStep = 10_000L; //se limpia EnviosPorVuelo para que no acapare toda la memoria
 
     public SimulacionStateMutator(SimulacionState state, AeropuertoRepository aeropuertoRepository) {
         this.state = state;
@@ -48,10 +50,35 @@ public class SimulacionStateMutator {
 
     //A partir de la soluciónRuta generada por el planificador genera la estructura de todos los envíos del vuelo
     // Los guarda en el state
-    public void indexarEnviosPorVuelo(SolucionRuta solucion) {
-        Map<Long, List<EnvioDTO>> indice = new LinkedHashMap<>();
-
-        for (RutaAsignada asignacion : solucion.getAsignaciones()) {
+    private String claveInstanciaVuelo(Long codigoVuelo, String horaSalidaUtc) {
+        return codigoVuelo + "|" + horaSalidaUtc;
+    }
+    public void indexarEnviosPorVuelo(Map<String,Set<String>> enviosDespachadosPorVuelo) {
+        Map<String, List<EnvioDTO>> indice = new LinkedHashMap<>();
+        for (Map.Entry<String,Set<String>> entry : enviosDespachadosPorVuelo.entrySet()){
+            List<EnvioDTO> envios = new ArrayList<>();
+            for(String id_pedido : entry.getValue()){
+                RutaAsignada ruta = state.getEnviosEnSeguimiento().get(id_pedido);
+                if(ruta==null) {
+                    System.out.println("[ERROR] Indexando envios por vuelo: Envio "+id_pedido + " no esta en seguimiento");
+                    continue;
+                }
+                Envio envio = ruta.getEnvio();
+                EnvioDTO envioDTO = new EnvioDTO(
+                        envio.getIdPedido(), envio.getOrigenIata(), envio.getDestinoIata(),
+                        envio.getFechaHora() != null ? envio.getFechaHora().toString() : null,
+                        envio.getCantidadMaletas(), envio.getIdCliente()
+                );
+                envios.add(envioDTO);
+            }
+            List<EnvioDTO> l1 = new ArrayList<>(indice.computeIfAbsent(entry.getKey(),k -> List.of()));
+            l1.removeIf(_envio -> envios.stream().anyMatch(e -> e.getIdPedido() == _envio.getIdPedido()));
+            l1.addAll(envios);
+            indice.put(entry.getKey(),envios);
+        }
+        TreeMap<String,List<EnvioDTO>> newTree = new TreeMap<>(indice);
+        /*
+        for (String envioCode : solucion.getAsignaciones()) {
             if (asignacion.getItinerario() == null) continue;
 
             Envio envio = asignacion.getEnvio();
@@ -64,15 +91,8 @@ public class SimulacionStateMutator {
             for (VueloInstanciado vuelo : asignacion.getItinerario().getVuelos()) {
                 indice.computeIfAbsent(vuelo.getCodigoBase(), key -> new ArrayList<>()).add(envioDTO);
             }
-        }
-        TreeMap<Long, List<EnvioDTO>> newEnvios = new TreeMap<>();
-        newEnvios.putAll(state.getEnviosPorVuelo());
-        newEnvios.putAll(indice);
-        //Limpiar envios cuando llegan al limite
-        for(int i=0;i<(newEnvios.size()-codigoVueloRegistroStep);i++){
-            newEnvios.remove(newEnvios.firstEntry().getKey());
-        }
-        state.setEnviosPorVuelo(newEnvios);
+        }*/
+        state.setEnviosPorVuelo(newTree);
     }
 
     public boolean sumarMaletas(String aeropuertoIata, int cantidad) {

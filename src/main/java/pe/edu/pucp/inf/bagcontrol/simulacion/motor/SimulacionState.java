@@ -28,7 +28,7 @@ public class SimulacionState {
     private SolucionRuta solucionActual;
 
     //Envíos de cada vuelo (generada a partir de la solución del planificador)
-    private Map<Long, List<EnvioDTO>> enviosPorVuelo = new ConcurrentHashMap<>();
+    private Map<String, List<EnvioDTO>> enviosPorVuelo = new ConcurrentHashMap<>();
     private LocalDateTime tiempoActual;
 
     //Envíos que se procesarán en el siguiente salto
@@ -57,7 +57,7 @@ public class SimulacionState {
     private DetalleColapsoDTO detalleColapso;
 
     // --- Historial por lote ---
-    private final Map<Long, Map<Long, List<EnvioDTO>>> histEnviosPorVuelo = new ConcurrentHashMap<>();
+    private final Map<Long, Map<String, List<EnvioDTO>>> histEnviosPorVuelo = new ConcurrentHashMap<>();
     private final Map<Long, Set<String>> histEnviosEntregados = new ConcurrentHashMap<>();
     private final Map<Long, Map<String, String>> histUltimoAeropuertoPorEnvio = new ConcurrentHashMap<>();
     private final Map<Long, Map<String, RutaAsignada>> histEnviosEnSeguimiento = new ConcurrentHashMap<>();

@@ -163,7 +163,7 @@ public class SimulacionJob implements Runnable {
                     algoritmo, solucion.getFitness(), System.currentTimeMillis() - inicioCronometroTa);
 
             // --- FASE 4: MUTACIÓN FÍSICA E INDEXACIÓN DEL ESTADO ---
-            simulacionStateMutator.indexarEnviosPorVuelo(solucion);
+            //simulacionStateMutator.indexarEnviosPorVuelo(solucion);
             registrarEnviosNuevos(solucion, eventosBatch, inventarioReservado);
 
             // --- FASE 5: GENERACIÓN Y ORDENAMIENTO DE EVENTOS EN LA VENTANA ---
@@ -184,6 +184,9 @@ public class SimulacionJob implements Runnable {
             );
             agregarAlertasAeropuertosSaturados(eventosBatch);
             eventosBatch.sort(comparadorEventos());
+
+            //Despues de aplicar fisica, guardar enviosDespachadosPorVuelo para su consulta
+            simulacionStateMutator.indexarEnviosPorVuelo(enviosDespachadosPorVuelo);
 
             if (incumplimiento != null) {
                 registrarColapsoSla(ciclo, ventanaInicio, ventanaFin, solucion, incumplimiento, eventosBatch);

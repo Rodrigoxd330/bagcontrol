@@ -2,16 +2,13 @@ package pe.edu.pucp.inf.bagcontrol.simulacion.motor;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioAlmacenDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioPorVueloRequestDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioRutaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoVueloDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.out.RespuestaInicioSimulacionDTO;
 
 import java.time.Instant;
@@ -119,13 +116,12 @@ public class SimulacionController {
     /*
      * Puede servir para después
     */
-    @GetMapping("/{simulacionId}/vuelos/{codigoVuelo}/envios")
+    @PostMapping("/{simulacionId}/vuelos/envios")
     public List<EnvioDTO> obtenerEnviosPorVuelo(
             @PathVariable String simulacionId,
-            @PathVariable Long codigoVuelo,
-            @RequestParam("timestamp") String timestamp
-    ) {
-        List<EnvioDTO> envios = simulacionManager.extraerEnviosPorVuelo(simulacionId, codigoVuelo, timestamp);
+            @RequestBody EnvioPorVueloRequestDTO request
+            ) {
+        List<EnvioDTO> envios = simulacionManager.extraerEnviosPorVuelo(simulacionId, request.getFlight(), request.getTimestamp());
         return envios;
     }
 
