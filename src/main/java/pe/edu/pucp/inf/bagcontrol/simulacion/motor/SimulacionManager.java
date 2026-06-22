@@ -16,6 +16,7 @@ import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioAlmacenDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioRutaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EscalaRutaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoVueloDTO;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -23,6 +24,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -150,12 +152,23 @@ public class SimulacionManager {
         return obtenerJob(simulacionId).getState();
     }
 
-    public List<EnvioDTO> extraerEnviosPorVuelo(String simulacionId, Long codigoVuelo, String timestamp) {
+    public List<EnvioDTO> extraerEnviosPorVuelo(String simulacionId, EventoVueloDTO vuelo, String timestamp) {
         SimulacionState state = obtenerState(simulacionId);
         long lote = calcularLoteSnapshot(state, timestamp);
-        Map<Long, List<EnvioDTO>> enviosEnLote = state.getHistEnviosPorVuelo().get(lote);
+        //Map<Long, List<EnvioDTO>> enviosEnLote = state.getHistEnviosPorVuelo().get(lote);
+        Map<String, List<EnvioDTO>> enviosEnLote = new LinkedHashMap<>(state.getEnviosPorVuelo());
+        //NOTA: Si solo se consiguen los vuelos del ultimo lote, los vuelos planificados el lote anterior
+        // que aun no salen, no se veran bien representados
+        //state.getHistEnviosPorVuelo().entrySet().forEach(entry -> {
+        //   entry.getValue().entrySet().forEach(_entry -> {
+        //       List<EnvioDTO> envios = new ArrayList<>(enviosEnLote.computeIfAbsent(_entry.getKey(),k ->List.of()));
+        //       envios.addAll(_entry.getValue());
+        //       enviosEnLote.put(_entry.getKey(),envios);
+        //   });
+        //});
         if (enviosEnLote == null) return List.of();
-        return enviosEnLote.getOrDefault(codigoVuelo, List.of());
+        if(enviosEnLote.containsKey(vuelo.claveInstanciaVuelo()))System.out.println("Doesnt contain key");
+        return enviosEnLote.getOrDefault(vuelo.claveInstanciaVuelo(), List.of());
     }
 
     public SolucionRuta obtenerPlanCompleto(String simulacionId) {

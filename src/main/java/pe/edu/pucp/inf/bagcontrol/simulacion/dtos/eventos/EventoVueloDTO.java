@@ -1,5 +1,6 @@
 package pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -43,6 +44,10 @@ public class EventoVueloDTO extends EventoBaseDTO {
         this.horaSalidaUtc = horaSalidaUtc;
         this.horaLlegadaUtc = horaLlegadaUtc;
         this.codigoEnvios = codigoEnvios;
+    }
+    @JsonIgnore
+    public String claveInstanciaVuelo() {
+        return this.codigoVuelo + "|" + this.horaSalidaUtc;
     }
 
 }
