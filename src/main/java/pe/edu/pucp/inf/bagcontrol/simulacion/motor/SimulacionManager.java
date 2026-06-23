@@ -36,7 +36,7 @@ public class SimulacionManager {
 
     private final ConcurrentHashMap<String, SimulacionJob> trabajosActivos = new ConcurrentHashMap<>();
 
-    public String crearJob(LocalDateTime fechaInicio, LocalDateTime fechaFin, int k, String algoritmo) {
+    public String crearJob(LocalDateTime fechaInicio, LocalDateTime fechaFin, int k, String algoritmo, String modo) {
         if (fechaInicio == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La fecha inicio es obligatoria.");
         }
@@ -79,7 +79,8 @@ public class SimulacionManager {
                 eventosFactory,
                 state,
                 configColapso,
-                mutator
+                mutator,
+                modo
         );
 
         trabajosActivos.put(simulacionId, job);
@@ -100,14 +101,10 @@ public class SimulacionManager {
         thread.start();
     }
 
-    public String crearYArrancarJob(LocalDateTime fechaInicio, LocalDateTime fechaFin, int k, String algoritmo) {
-        String simulacionId = crearJob(fechaInicio, fechaFin, k, algoritmo);
+    public String crearYArrancarJob(LocalDateTime fechaInicio, LocalDateTime fechaFin, int k, String algoritmo, String modo) {
+        String simulacionId = crearJob(fechaInicio, fechaFin, k, algoritmo, modo);
         arrancarJob(simulacionId);
         return simulacionId;
-    }
-
-    public String crearYArrancarJobColapso(LocalDateTime fechaInicio, int k, String algoritmo) {
-        return crearYArrancarJob(fechaInicio, null, k, algoritmo);
     }
 
     private ConfiguracionColapsoDTO crearConfiguracionColapsoPorDefecto() {

@@ -38,7 +38,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SimulacionJob implements Runnable {
 
     @Getter
-    private final int saMs = 90_000;
+    private final int saMs;
 
     private final String simulacionId;
     private final LocalDateTime horaInicio;
@@ -71,7 +71,7 @@ public class SimulacionJob implements Runnable {
             PlanificadorService planificadorService, AeropuertoRepository aeropuertoRepository,
             WebSocketPublisher webSocketPublisher, SimulacionEventosFactory simulacionEventosFactory,
             SimulacionState state, ConfiguracionColapsoDTO configuracionColapsoDTO,
-            SimulacionStateMutator simulacionStateMutator
+            SimulacionStateMutator simulacionStateMutator, String modo
     ) {
         this.simulacionId = simulacionId;
         this.horaInicio = horaInicio;
@@ -82,6 +82,10 @@ public class SimulacionJob implements Runnable {
         this.webSocketPublisher = webSocketPublisher;
         this.simulacionEventosFactory = simulacionEventosFactory;
         this.state = state;
+        // En operación día a día (modo="0"), el saMs es proporcional a K
+        // para que factorAceleracion = K*60/SaS = 1 → tiempo real
+        // (1s real = 1s sim, un vuelo de 2h tarda 2h reales)
+        this.saMs = (modo != null && "0".equals(modo)) ? k * 60 * 1000 : 90_000;
         this.configuracionColapsoDTO = configuracionColapsoDTO;
         this.simulacionStateMutator = simulacionStateMutator;
     }

@@ -38,7 +38,8 @@ public class SimulacionController {
             @RequestParam("fechaInicio") String fechaInicio,
             @RequestParam(value = "fechaFin", required = false) String fechaFin,
             @RequestParam(value = "k", defaultValue = "30") int k,
-            @RequestParam(value = "algoritmo", defaultValue = "TABU") String algoritmo
+            @RequestParam(value = "algoritmo", defaultValue = "TABU") String algoritmo,
+            @RequestParam(value = "modo", required = false) String modo
     ) {
         System.out.println("FRONTEND MANDÓ FECHA Inicio: " + fechaInicio);
 
@@ -46,11 +47,11 @@ public class SimulacionController {
         LocalDateTime inicio = parseFechaHoraFlexible(fechaInicio);
         LocalDateTime fin = parseFechaHoraFlexible(fechaFin);
 
-        String simulacionId = simulacionManager.crearJob(inicio, fin, k, algoritmo);
-        String modo = (fin == null) ? MODO_COLAPSO : MODO_NORMAL;
+        String simulacionId = simulacionManager.crearJob(inicio, fin, k, algoritmo, modo);
+        String modo_final = (fin == null) ? MODO_COLAPSO : MODO_NORMAL;
         String topic = "/topic/simulacion/" + simulacionId + "/eventos";
 
-        return new RespuestaInicioSimulacionDTO(simulacionId, topic, modo);
+        return new RespuestaInicioSimulacionDTO(simulacionId, topic, modo_final);
     }
 
     private LocalDateTime parseFechaHoraFlexible(String valor) {
