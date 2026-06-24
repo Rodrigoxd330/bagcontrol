@@ -16,10 +16,7 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
+import java.time.*;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -47,10 +44,13 @@ public class EnvioDataStore {
     private final NavigableMap<LocalDate, RangoDia> indicePorDia = new TreeMap<>();
     private final Map<String, AtomicInteger> contadorManualPorOrigen = new ConcurrentHashMap<>();
     private final Map<String, Envio> enviosCrudPorId = new ConcurrentHashMap<>();
+    private final Map<String,Boolean> fechasCacheadas = new ConcurrentHashMap<>();
     private final Set<String> enviosEliminados = ConcurrentHashMap.newKeySet();
 
     private Path spoolPath;
     private int totalEnviosIndexados;
+    private final int maxDiasCacheados = 30;
+    private final int margenDiasCacheados = 5;
 
     @Deprecated
     public synchronized void agregarEnvio(Envio envio, Aeropuerto aeropuerto) {
@@ -160,6 +160,7 @@ public class EnvioDataStore {
         try {
             try (ZipInputStream zis = new ZipInputStream(enviosZipResource.getInputStream(), StandardCharsets.UTF_8)) {
                 ZipEntry entry;
+                int diasCacheados = 0;
 
                 while ((entry = zis.getNextEntry()) != null) {
                     if (entry.isDirectory()) continue;
@@ -178,12 +179,16 @@ public class EnvioDataStore {
 
                         Envio envio = parsearLineaZip(linea, origenIata, gmtOffset);
                         if (envio == null) continue;
-
-                        enviosPorTiempo
-                                .computeIfAbsent(envio.getFechaHora(), k -> new ArrayList<>())
-                                .add(envio);
-
                         LocalDate diaUtc = envio.getFechaHora().toLocalDate();
+
+                        /*if(diasCacheados < maxDiasCacheados) {
+                            enviosPorTiempo
+                                    .computeIfAbsent(envio.getFechaHora(), k -> new ArrayList<>())
+                                    .add(envio);
+                            if(fechasCacheadas.containsKey(diaUtc.toString()))diasCacheados++;
+                            fechasCacheadas.put(diaUtc.toString(),true);
+                        }*/
+
                         BufferedWriter writer = writersPorDia.computeIfAbsent(diaUtc, dia -> {
                             try {
                                 Path fragmento = Files.createTempFile(workDir, "envios-" + dia + "-", ".dat");
@@ -229,23 +234,42 @@ public class EnvioDataStore {
 
     public synchronized List<Envio> obtenerEnviosEnVentana(LocalDateTime inicio, LocalDateTime fin) {
         Map<String, Envio> resultadoPorId = new java.util.LinkedHashMap<>();
-        if (!enviosPorTiempo.isEmpty()) {
-            SortedMap<LocalDateTime, List<Envio>> subMapa = new TreeMap<>(enviosPorTiempo.subMap(inicio, fin));
-            for (List<Envio> lista : subMapa.values()) {
-                for (Envio envio : lista) {
-                    if (!enviosEliminados.contains(envio.getIdPedido())
-                            && !enviosCrudPorId.containsKey(envio.getIdPedido())) {
-                        resultadoPorId.put(envio.getIdPedido(), envio);
+        LocalDate indexDate = inicio.toLocalDate();
+        while(indexDate.compareTo(fin.toLocalDate())<=0){
+            LocalDate nextDate = indexDate.plusDays(1);
+            LocalDateTime _inicio = inicio.isAfter(indexDate.atTime(0,0,0)) ? inicio : indexDate.atTime(0,0,0);
+            LocalDateTime _fin = fin.isBefore(nextDate.atTime(0,0,0)) ? fin : nextDate.atTime(0,0,0);
+            if (fechasCacheadas.containsKey(indexDate.toString())) {
+                System.out.println(_inicio);
+                System.out.println(_fin);
+                SortedMap<LocalDateTime, List<Envio>> subMapa = new TreeMap<>(enviosPorTiempo.subMap(_inicio, _fin));
+                for (List<Envio> lista : subMapa.values()) {
+                    for (Envio envio : lista) {
+                        if (!enviosEliminados.contains(envio.getIdPedido())
+                                && !enviosCrudPorId.containsKey(envio.getIdPedido())) {
+                            resultadoPorId.put(envio.getIdPedido(), envio);
+                        }
                     }
                 }
-            }
-        } else if (spoolPath != null) {
-            for (Envio envio : obtenerEnviosEnVentanaDesdeSpool(inicio, fin)) {
-                if (!enviosEliminados.contains(envio.getIdPedido())
-                        && !enviosCrudPorId.containsKey(envio.getIdPedido())) {
-                    resultadoPorId.put(envio.getIdPedido(), envio);
+            } else if (spoolPath != null) {
+                System.out.println("spool path");
+                //En vez de cargar directamente desde archivo, cargar a cache y acceder desde ahi
+                for (Envio envio : obtenerEnviosEnVentanaDesdeSpool(indexDate.atTime(0,0,0), nextDate.plusDays(margenDiasCacheados).atTime(0,0,0))) {
+                    //System.out.println(envio.getFechaHora());
+                    if (!enviosEliminados.contains(envio.getIdPedido())
+                            && !enviosCrudPorId.containsKey(envio.getIdPedido())) {
+                        enviosPorTiempo
+                                .computeIfAbsent(envio.getFechaHora(), k -> new ArrayList<>())
+                                .add(envio);
+                    }
                 }
+                for(int i=0;i<margenDiasCacheados;i++){fechasCacheadas.put(indexDate.plusDays(i).toString(),true);}
+                continue;
+                //TODO: Metodo para garbage collection de envios que no se acceden desde ningun cliente
+                //(revisar que los datos no esten por consultarse o en algun historico
             }
+            indexDate = nextDate;
+            System.out.println(indexDate.compareTo(fin.toLocalDate()));
         }
 
         enviosCrudPorId.values().stream()
