@@ -121,6 +121,7 @@ public class SimulacionJob implements Runnable {
     private void ejecutarSimulacion() {
         simulacionStateMutator.inicializarAeropuertos();
         state.setTiempoActual(horaInicio);
+        planificadorService.precargarEnvios(horaInicio);
         publicarControl(TipoEvento.SIMULACION_INICIADA);
 
         LocalDateTime tiempoFin = horaFin == null ? LocalDateTime.MAX : horaFin;

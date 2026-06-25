@@ -29,11 +29,11 @@ public class EnvioLoader implements CommandLineRunner {
         System.out.println("==================================================");
         System.out.println("3. Construyendo indice liviano de envios desde ZIP...");
 
-        Map<String, Aeropuerto> mapaAeropuertos = aeropuertoRepository.findAll().stream()
+        Map<String, Aeropuerto> mapaAeropuerto = aeropuertoRepository.findAll().stream()
                 .collect(Collectors.toMap(Aeropuerto::getCodigoIata, a -> a));
 
         long inicioTiempo = System.currentTimeMillis();
-        envioDataStore.inicializarDesdeZip(enviosZipResource, mapaAeropuertos);
+        envioDataStore.inicializarDesdeZip(enviosZipResource, mapaAeropuerto,envioRepository);
         envioRepository.findAll().forEach(envio -> {
             if (envio.isActivo()) {
                 envioDataStore.upsert(envio);

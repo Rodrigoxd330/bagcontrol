@@ -164,7 +164,6 @@ public class SimulacionManager {
         //   });
         //});
         if (enviosEnLote == null) return List.of();
-        if(enviosEnLote.containsKey(vuelo.claveInstanciaVuelo()))System.out.println("Doesnt contain key");
         return enviosEnLote.getOrDefault(vuelo.claveInstanciaVuelo(), List.of());
     }
 
