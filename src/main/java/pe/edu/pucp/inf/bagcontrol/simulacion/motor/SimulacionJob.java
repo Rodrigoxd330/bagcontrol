@@ -15,6 +15,7 @@ import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MetricasColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoAeropuertoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoBaseDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoColapsoDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoEstadoSimulacionDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoVueloDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.LoteEventosDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EstadoCapacidad;
@@ -63,6 +64,7 @@ public class SimulacionJob implements Runnable {
     private final Map<String, Integer> maletasDespachadasPorVuelo = new LinkedHashMap<>();
     private final Map<String, Set<String>> enviosDespachadosPorVuelo = new LinkedHashMap<>();
     private long tiempoUltimoLoteMs = 0L;
+    private long inicioJobMs = 0L;
 
     private volatile Thread hilo;
 
@@ -98,6 +100,9 @@ public class SimulacionJob implements Runnable {
     public void run() {
         state.setEstado("EN_PROCESO");
         long inicioProceso = System.currentTimeMillis();
+        inicioJobMs = inicioProceso;
+        System.out.println("[BACK-SIM-TIME] job iniciado id=" + simulacionId
+                + " ts=" + Instant.now());
         try {
             ejecutarSimulacion();
         } catch (SimulacionDetenidaException e) {
@@ -122,6 +127,8 @@ public class SimulacionJob implements Runnable {
         simulacionStateMutator.inicializarAeropuertos();
         state.setTiempoActual(horaInicio);
         publicarControl(TipoEvento.SIMULACION_INICIADA);
+        System.out.println("[BACK-SIM-TIME] tiempo total hasta primer evento id=" + simulacionId
+                + " elapsedMs=" + (System.currentTimeMillis() - inicioJobMs));
 
         LocalDateTime tiempoFin = horaFin == null ? LocalDateTime.MAX : horaFin;
         Map<String, EventoVueloDTO> eventosVueloPostergados = new java.util.LinkedHashMap<>();
@@ -130,6 +137,11 @@ public class SimulacionJob implements Runnable {
         while (state.getTiempoActual().isBefore(tiempoFin)) {
             // --- FASE 1: INICIO DE MEDICIÓN DE TA ---
             long inicioCronometroTa = System.currentTimeMillis();
+            boolean esPrimerBloque = state.getBloquesProcesados() == 0;
+            if (esPrimerBloque) {
+                System.out.println("[BACK-SIM-TIME] primer bloque inicio id=" + simulacionId
+                        + " ts=" + Instant.now());
+            }
 
             verificarDetencion();
             esperarSiPausadaODetenida();
@@ -176,6 +188,13 @@ public class SimulacionJob implements Runnable {
             eventosBatch.addAll(eventosVuelos.actuales());
             agregarEventosVueloPostergados(eventosVuelos.futuros(), eventosVueloPostergados);
             eventosBatch.sort(comparadorEventos());
+            if (esPrimerBloque) {
+                System.out.println("[BACK-SIM-TIME] eventos generados id=" + simulacionId
+                        + " actuales=" + eventosVuelos.actuales().size()
+                        + " futuros=" + eventosVuelos.futuros().size()
+                        + " totalBatch=" + eventosBatch.size()
+                        + " elapsedMs=" + (System.currentTimeMillis() - inicioCronometroTa));
+            }
 
             // --- FASE 6: CÁLCULO DE SLA Y COLAPSOS ---
             IncumplimientoSla incumplimiento = encontrarPrimerIncumplimientoSla(ventanaFinUtc).orElse(null);
@@ -229,6 +248,11 @@ public class SimulacionJob implements Runnable {
 
             // --- FASE 9: ENVÍO DE DATOS A FRONTEND ---
             publicarLote(eventosBatch,enviosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
+            if (esPrimerLote) {
+                System.out.println("[BACK-SIM-TIME] primer lote listo/enviado id=" + simulacionId
+                        + " eventos=" + eventosBatch.size()
+                        + " elapsedMs=" + (System.currentTimeMillis() - inicioJobMs));
+            }
 
             System.out.printf("[LOTE-ENVIADO] numero=%d | eventos=%d | ventana=%s -> %s | taTotal=%dms | sa=%dms%n",
                     state.getUltimoLoteEmitidoNumero().get(), eventosBatch.size(),
@@ -697,7 +721,17 @@ public class SimulacionJob implements Runnable {
         Instant ventana = state.getTiempoActual() != null
                 ? state.getTiempoActual().toInstant(ZoneOffset.UTC)
                 : Instant.now();
-        publicarLote(List.of(new EventoBaseDTO(tipoEvento, ventana.toString())), List.of(),ventana, ventana);
+        EventoBaseDTO evento = tipoEvento == TipoEvento.SIMULACION_INICIADA
+                ? new EventoEstadoSimulacionDTO(
+                        tipoEvento,
+                        ventana.toString(),
+                        simulacionId,
+                        horaInicio.toString(),
+                        "EN_EJECUCION",
+                        "Simulacion iniciada, preparando primer bloque"
+                )
+                : new EventoBaseDTO(tipoEvento, ventana.toString());
+        publicarLote(List.of(evento), List.of(),ventana, ventana);
     }
 
     private void publicarConfiguracionRendimiento() {

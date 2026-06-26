@@ -8,6 +8,7 @@ import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioAlmacenDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioPorVueloRequestDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioRutaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.LoteEventosDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoVueloDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.out.RespuestaInicioSimulacionDTO;
 
@@ -41,6 +42,10 @@ public class SimulacionController {
             @RequestParam(value = "algoritmo", defaultValue = "TABU") String algoritmo,
             @RequestParam(value = "modo", required = false) String modo
     ) {
+        long t0 = System.currentTimeMillis();
+        System.out.println("[BACK-SIM-TIME] preparar recibido ts=" + java.time.Instant.now()
+                + " fechaInicio=" + fechaInicio + " fechaFin=" + fechaFin + " k=" + k
+                + " algoritmo=" + algoritmo + " modo=" + modo);
         System.out.println("FRONTEND MANDÓ FECHA Inicio: " + fechaInicio);
 
         // El helper ahora devuelve el LocalDateTime correcto interpretando el estándar internacional
@@ -48,6 +53,8 @@ public class SimulacionController {
         LocalDateTime fin = parseFechaHoraFlexible(fechaFin);
 
         String simulacionId = simulacionManager.crearJob(inicio, fin, k, algoritmo, modo);
+        System.out.println("[BACK-SIM-TIME] simulacion creada id=" + simulacionId
+                + " elapsedMs=" + (System.currentTimeMillis() - t0));
         String modo_final = (fin == null) ? MODO_COLAPSO : MODO_NORMAL;
         String topic = "/topic/simulacion/" + simulacionId + "/eventos";
 
@@ -86,7 +93,12 @@ public class SimulacionController {
      */
     @PostMapping("/iniciar/{simulacionId}/arrancar")
     public Map<String, String> arrancarSimulacion(@PathVariable String simulacionId) {
+        long t0 = System.currentTimeMillis();
+        System.out.println("[BACK-SIM-TIME] arrancar recibido id=" + simulacionId
+                + " ts=" + java.time.Instant.now());
         simulacionManager.arrancarJob(simulacionId);
+        System.out.println("[BACK-SIM-TIME] job iniciado id=" + simulacionId
+                + " elapsedMs=" + (System.currentTimeMillis() - t0));
         return Map.of("mensaje", "Simulacion en marcha");
     }
 
@@ -112,6 +124,11 @@ public class SimulacionController {
     @GetMapping("/{simulacionId}/estado")
     public SimulacionEstadoDTO obtenerEstado(@PathVariable String simulacionId) {
         return simulacionManager.obtenerEstado(simulacionId);
+    }
+
+    @GetMapping("/{simulacionId}/snapshot")
+    public LoteEventosDTO obtenerSnapshot(@PathVariable String simulacionId) {
+        return simulacionManager.obtenerSnapshotActual(simulacionId);
     }
 
     /*

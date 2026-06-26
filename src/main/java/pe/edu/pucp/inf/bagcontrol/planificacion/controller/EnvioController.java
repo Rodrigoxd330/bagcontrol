@@ -12,15 +12,18 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.EnvioDataStore;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.NuevoEnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.service.EnvioCrudService;
+import pe.edu.pucp.inf.bagcontrol.planificacion.utils.ZonaHorariaUtils;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 
 @RestController
@@ -100,11 +103,38 @@ public class EnvioController {
             dto.setFechaHora(Instant.now().toString());
         }
         try {
-            EnvioDataStore.parsearFechaHoraUtc(dto.getFechaHora());
+            normalizarFechaHoraRegistro(dto);
         } catch (RuntimeException ex) {
             return ResponseEntity.badRequest().build();
         }
         return null;
+    }
+
+    private void normalizarFechaHoraRegistro(NuevoEnvioDTO dto) {
+        String recibida = dto.getFechaHora();
+        Aeropuerto origen = aeropuertoRepository.findById(dto.getOrigenIata())
+                .orElseThrow(() -> new IllegalArgumentException("Aeropuerto origen no existe."));
+        boolean tieneOffset = recibida.contains("Z")
+                || recibida.contains("z")
+                || recibida.matches(".*[+-]\\d{2}:?\\d{2}$");
+        LocalDateTime normalizadaUtc;
+        if (tieneOffset) {
+            normalizadaUtc = EnvioDataStore.parsearFechaHoraUtc(recibida);
+        } else {
+            try {
+                LocalDateTime localOrigen = LocalDateTime.parse(recibida);
+                Instant instantUtc = ZonaHorariaUtils.convertirLocalAInstant(localOrigen, origen);
+                normalizadaUtc = LocalDateTime.ofInstant(instantUtc, ZoneOffset.UTC);
+            } catch (DateTimeParseException ex) {
+                normalizadaUtc = EnvioDataStore.parsearFechaHoraUtc(recibida);
+            }
+        }
+        dto.setFechaHora(normalizadaUtc.toInstant(ZoneOffset.UTC).toString());
+        System.out.println("[CRUD-ENVIO-FECHA] recibida=" + recibida
+                + " normalizadaUtc=" + normalizadaUtc
+                + " origen=" + dto.getOrigenIata()
+                + " gmt=" + origen.getGmt()
+                + " fechaUtcPlanificador=" + dto.getFechaHora());
     }
 
     private EnvioDTO toDto(Envio envio) {

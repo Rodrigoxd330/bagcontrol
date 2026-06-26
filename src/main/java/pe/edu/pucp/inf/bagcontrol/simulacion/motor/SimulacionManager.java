@@ -17,6 +17,7 @@ import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioRutaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EscalaRutaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoVueloDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.LoteEventosDTO;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -99,6 +100,9 @@ public class SimulacionManager {
         Thread thread = new Thread(job, "simulacion-" + simulacionId);
         job.asignarHilo(thread);
         thread.start();
+        System.out.println("[BACK-SIM-TIME] job iniciado id=" + simulacionId
+                + " thread=" + thread.getName()
+                + " ts=" + java.time.Instant.now());
     }
 
     public String crearYArrancarJob(LocalDateTime fechaInicio, LocalDateTime fechaFin, int k, String algoritmo, String modo) {
@@ -143,6 +147,14 @@ public class SimulacionManager {
                 job.getFechaCreacion().toString(),
                 state.getTiempoActual() != null ? state.getTiempoActual().toString() : null
         );
+    }
+
+    public LoteEventosDTO obtenerSnapshotActual(String simulacionId) {
+        LoteEventosDTO lote = obtenerJob(simulacionId).getState().getUltimoLoteEmitido();
+        if (lote == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "La simulacion aun no emitio lotes.");
+        }
+        return lote;
     }
 
     public SimulacionState obtenerState(String simulacionId) {
