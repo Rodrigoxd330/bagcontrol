@@ -20,7 +20,7 @@ import java.util.Map;
 
 @RestController
 @RequiredArgsConstructor
-public class AeropuertoController {
+public class    AeropuertoController {
 
     private final AeropuertoRepository aeropuertoRepository;
     private final VueloRepository vueloRepository;

@@ -4,6 +4,7 @@ import lombok.Getter;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
+import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
@@ -15,6 +16,8 @@ import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MetricasColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoAeropuertoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoBaseDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoColapsoDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoEstadoSimulacionDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoReplanificacionEnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoVueloDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.LoteEventosDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EstadoCapacidad;
@@ -31,6 +34,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -63,6 +67,8 @@ public class SimulacionJob implements Runnable {
     private final Map<String, Integer> maletasDespachadasPorVuelo = new LinkedHashMap<>();
     private final Map<String, Set<String>> enviosDespachadosPorVuelo = new LinkedHashMap<>();
     private long tiempoUltimoLoteMs = 0L;
+    private long inicioJobMs = 0L;
+    private static final int MAX_EVENTOS_REPLANIFICACION_POR_BLOQUE = 50;
 
     private volatile Thread hilo;
 
@@ -98,6 +104,9 @@ public class SimulacionJob implements Runnable {
     public void run() {
         state.setEstado("EN_PROCESO");
         long inicioProceso = System.currentTimeMillis();
+        inicioJobMs = inicioProceso;
+        System.out.println("[BACK-SIM-TIME] job iniciado id=" + simulacionId
+                + " ts=" + Instant.now());
         try {
             ejecutarSimulacion();
         } catch (SimulacionDetenidaException e) {
@@ -123,6 +132,8 @@ public class SimulacionJob implements Runnable {
         state.setTiempoActual(horaInicio);
         planificadorService.precargarEnvios(horaInicio);
         publicarControl(TipoEvento.SIMULACION_INICIADA);
+        System.out.println("[BACK-SIM-TIME] tiempo total hasta primer evento id=" + simulacionId
+                + " elapsedMs=" + (System.currentTimeMillis() - inicioJobMs));
 
         LocalDateTime tiempoFin = horaFin == null ? LocalDateTime.MAX : horaFin;
         Map<String, EventoVueloDTO> eventosVueloPostergados = new java.util.LinkedHashMap<>();
@@ -131,6 +142,11 @@ public class SimulacionJob implements Runnable {
         while (state.getTiempoActual().isBefore(tiempoFin)) {
             // --- FASE 1: INICIO DE MEDICIÓN DE TA ---
             long inicioCronometroTa = System.currentTimeMillis();
+            boolean esPrimerBloque = state.getBloquesProcesados() == 0;
+            if (esPrimerBloque) {
+                System.out.println("[BACK-SIM-TIME] primer bloque inicio id=" + simulacionId
+                        + " ts=" + Instant.now());
+            }
 
             verificarDetencion();
             esperarSiPausadaODetenida();
@@ -162,6 +178,7 @@ public class SimulacionJob implements Runnable {
                     algoritmo, ventanaInicio, ventanaFin, state.getEnviosPendientes(), inventarioReservado
             );
             state.setSolucionActual(solucion);
+            registrarEventosReplanificacion(solucion, eventosBatch, ventanaInicio, ciclo);
 
             System.out.printf("[PLANIFICACION-OK] ventana=%s -> %s | envios=%d | algoritmo=%s | fitness=%.2f | planMs=%d%n",
                     ventanaInicio, ventanaFin, solucion.getAsignaciones().size(),
@@ -177,6 +194,13 @@ public class SimulacionJob implements Runnable {
             eventosBatch.addAll(eventosVuelos.actuales());
             agregarEventosVueloPostergados(eventosVuelos.futuros(), eventosVueloPostergados);
             eventosBatch.sort(comparadorEventos());
+            if (esPrimerBloque) {
+                System.out.println("[BACK-SIM-TIME] eventos generados id=" + simulacionId
+                        + " actuales=" + eventosVuelos.actuales().size()
+                        + " futuros=" + eventosVuelos.futuros().size()
+                        + " totalBatch=" + eventosBatch.size()
+                        + " elapsedMs=" + (System.currentTimeMillis() - inicioCronometroTa));
+            }
 
             // --- FASE 6: CÁLCULO DE SLA Y COLAPSOS ---
             IncumplimientoSla incumplimiento = encontrarPrimerIncumplimientoSla(ventanaFinUtc).orElse(null);
@@ -230,6 +254,11 @@ public class SimulacionJob implements Runnable {
 
             // --- FASE 9: ENVÍO DE DATOS A FRONTEND ---
             publicarLote(eventosBatch,enviosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
+            if (esPrimerLote) {
+                System.out.println("[BACK-SIM-TIME] primer lote listo/enviado id=" + simulacionId
+                        + " eventos=" + eventosBatch.size()
+                        + " elapsedMs=" + (System.currentTimeMillis() - inicioJobMs));
+            }
 
             System.out.printf("[LOTE-ENVIADO] numero=%d | eventos=%d | ventana=%s -> %s | taTotal=%dms | sa=%dms%n",
                     state.getUltimoLoteEmitidoNumero().get(), eventosBatch.size(),
@@ -280,6 +309,145 @@ public class SimulacionJob implements Runnable {
                     aeropuerto, inventario, PlanificadorUtils.obtenerFechaIngresoUtc(envio), this.state
             ));
         }
+    }
+
+    private void registrarEventosReplanificacion(
+            SolucionRuta solucion,
+            List<EventoBaseDTO> eventosBatch,
+            LocalDateTime ventanaInicio,
+            int ciclo
+    ) {
+        int cambiosDetectados = 0;
+        int eventosEmitidos = 0;
+        Instant horaEvento = ventanaInicio.toInstant(ZoneOffset.UTC);
+
+        for (RutaAsignada asignacion : solucion.getAsignaciones()) {
+            AsignacionResumen actual = crearResumenAsignacion(asignacion, horaEvento, ciclo);
+            AsignacionResumen anterior = state.getUltimaAsignacionPorEnvio().get(actual.getIdPedido());
+
+            if (anterior == null) {
+                state.getUltimaAsignacionPorEnvio().put(actual.getIdPedido(), actual);
+                continue;
+            }
+
+            if (!cambioAsignacion(anterior, actual)) {
+                state.getUltimaAsignacionPorEnvio().put(actual.getIdPedido(), actual);
+                continue;
+            }
+
+            cambiosDetectados++;
+            if (eventosEmitidos < MAX_EVENTOS_REPLANIFICACION_POR_BLOQUE) {
+                String motivo = determinarMotivoReplanificacion(anterior, actual);
+                eventosBatch.add(crearEventoReplanificacion(anterior, actual, motivo, horaEvento));
+                eventosEmitidos++;
+                System.out.println("[REPLANIFICACION] idPedido=" + actual.getIdPedido()
+                        + " motivo=" + motivo
+                        + " anterior=" + valorLog(anterior.getIdItinerario())
+                        + " nuevo=" + valorLog(actual.getIdItinerario()));
+            }
+
+            state.getUltimaAsignacionPorEnvio().put(actual.getIdPedido(), actual);
+        }
+
+        if (cambiosDetectados > 0) {
+            System.out.println("[REPLANIFICACION] eventosEmitidos=" + eventosEmitidos
+                    + " cambiosDetectados=" + cambiosDetectados
+                    + " bloque=" + ciclo
+                    + " limite=" + MAX_EVENTOS_REPLANIFICACION_POR_BLOQUE);
+        }
+    }
+
+    private AsignacionResumen crearResumenAsignacion(RutaAsignada asignacion, Instant horaEvento, int ciclo) {
+        Envio envio = asignacion.getEnvio();
+        if (asignacion.getItinerario() == null || asignacion.getItinerario().getVuelos().isEmpty()) {
+            return new AsignacionResumen(
+                    envio.getIdPedido(),
+                    "SIN_RUTA",
+                    null,
+                    List.of(),
+                    null,
+                    null,
+                    envio.getOrigenIata(),
+                    envio.getDestinoIata(),
+                    horaEvento.toString(),
+                    ciclo,
+                    false
+            );
+        }
+
+        List<VueloInstanciado> vuelos = asignacion.getItinerario().getVuelos();
+        List<String> vuelosUsados = vuelos.stream().map(this::firmaVuelo).toList();
+        return new AsignacionResumen(
+                envio.getIdPedido(),
+                "ASIGNADO",
+                asignacion.getItinerario().getIdItinerario(),
+                vuelosUsados,
+                vuelosUsados.get(0),
+                vuelosUsados.get(vuelosUsados.size() - 1),
+                envio.getOrigenIata(),
+                envio.getDestinoIata(),
+                horaEvento.toString(),
+                ciclo,
+                vuelos.stream().anyMatch(VueloInstanciado::isEstaCancelado)
+        );
+    }
+
+    private boolean cambioAsignacion(AsignacionResumen anterior, AsignacionResumen actual) {
+        return !Objects.equals(anterior.getEstadoAsignacion(), actual.getEstadoAsignacion())
+                || !Objects.equals(anterior.getIdItinerario(), actual.getIdItinerario())
+                || !Objects.equals(anterior.getVuelosUsados(), actual.getVuelosUsados());
+    }
+
+    private String determinarMotivoReplanificacion(AsignacionResumen anterior, AsignacionResumen actual) {
+        if (!"ASIGNADO".equals(anterior.getEstadoAsignacion()) && "ASIGNADO".equals(actual.getEstadoAsignacion())) {
+            return "ASIGNADO_DESDE_PENDIENTE";
+        }
+        if ("ASIGNADO".equals(anterior.getEstadoAsignacion()) && !"ASIGNADO".equals(actual.getEstadoAsignacion())) {
+            return "QUEDO_SIN_RUTA";
+        }
+        if (anterior.isContieneVueloCancelado() || actual.isContieneVueloCancelado()) {
+            return "CAMBIO_POR_CANCELACION";
+        }
+        if ("ASIGNADO".equals(anterior.getEstadoAsignacion()) && "ASIGNADO".equals(actual.getEstadoAsignacion())
+                && !Objects.equals(anterior.getIdItinerario(), actual.getIdItinerario())) {
+            return "RUTA_CAMBIADA";
+        }
+        return "RUTA_ACTUALIZADA";
+    }
+
+    private EventoReplanificacionEnvioDTO crearEventoReplanificacion(
+            AsignacionResumen anterior,
+            AsignacionResumen actual,
+            String motivo,
+            Instant horaEvento
+    ) {
+        return new EventoReplanificacionEnvioDTO(
+                horaEvento.toString(),
+                actual.getIdPedido(),
+                motivo,
+                actual.getOrigenIata(),
+                actual.getDestinoIata(),
+                anterior.getIdItinerario(),
+                actual.getIdItinerario(),
+                anterior.getPrimerVuelo(),
+                actual.getPrimerVuelo(),
+                anterior.getEstadoAsignacion(),
+                actual.getEstadoAsignacion(),
+                horaEvento.toString(),
+                "El envio cambio de ruta durante la planificacion del bloque"
+        );
+    }
+
+    private String firmaVuelo(VueloInstanciado vuelo) {
+        return vuelo.getCodigoBase() + "@" + (
+                vuelo.getFechaHoraSalidaUtc() != null
+                        ? vuelo.getFechaHoraSalidaUtc()
+                        : vuelo.getFechaHoraSalida()
+        );
+    }
+
+    private String valorLog(String valor) {
+        return valor == null || valor.isBlank() ? "SIN_RUTA" : valor;
     }
 
     private Optional<IncumplimientoSla> encontrarPrimerIncumplimientoSla(Instant ventanaFinUtc) {
@@ -698,7 +866,17 @@ public class SimulacionJob implements Runnable {
         Instant ventana = state.getTiempoActual() != null
                 ? state.getTiempoActual().toInstant(ZoneOffset.UTC)
                 : Instant.now();
-        publicarLote(List.of(new EventoBaseDTO(tipoEvento, ventana.toString())), List.of(),ventana, ventana);
+        EventoBaseDTO evento = tipoEvento == TipoEvento.SIMULACION_INICIADA
+                ? new EventoEstadoSimulacionDTO(
+                        tipoEvento,
+                        ventana.toString(),
+                        simulacionId,
+                        horaInicio.toString(),
+                        "EN_EJECUCION",
+                        "Simulacion iniciada, preparando primer bloque"
+                )
+                : new EventoBaseDTO(tipoEvento, ventana.toString());
+        publicarLote(List.of(evento), List.of(),ventana, ventana);
     }
 
     private void publicarConfiguracionRendimiento() {

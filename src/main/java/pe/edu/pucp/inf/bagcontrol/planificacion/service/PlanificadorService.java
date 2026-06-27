@@ -311,9 +311,13 @@ public class PlanificadorService {
 
         long inicioTotal = System.currentTimeMillis();
         long inicioCargaEnvios = System.currentTimeMillis();
+        System.out.println("[BACK-SIM-TIME] carga envios inicio ventanaInicio=" + inicio
+                + " ventanaFin=" + fin + " ts=" + java.time.Instant.now());
         List<Envio> enviosVentana = envioDataStore.obtenerEnviosEnVentana(inicio, fin);
         registrarEnviosEnVentana(inicio, fin, enviosVentana);
         long tiempoCargaEnvios = System.currentTimeMillis() - inicioCargaEnvios;
+        System.out.println("[BACK-SIM-TIME] carga envios fin envios=" + enviosVentana.size()
+                + " elapsedMs=" + tiempoCargaEnvios);
 
         // Unimos los nuevos de la ventana con los pendientes que vienen del State
         List<Envio> todosLosEnvios = new ArrayList<>(enviosVentana);
@@ -326,6 +330,8 @@ public class PlanificadorService {
         List<Aeropuerto> aeropuertos = aeropuertoRepository.findAll();
 
         long inicioGeneracionVuelos = System.currentTimeMillis();
+        System.out.println("[BACK-SIM-TIME] generacion vuelos inicio vuelosBase=" + vuelosBase.size()
+                + " ts=" + java.time.Instant.now());
 
         int diasGeneracion = calcularDiasGeneracion(inicio, fin);
         List<VueloInstanciado> vuelosInstanciados =
@@ -333,12 +339,22 @@ public class PlanificadorService {
         aplicarIncidencias(vuelosInstanciados);
 
         long tiempoGeneracionVuelos = System.currentTimeMillis() - inicioGeneracionVuelos;
+        System.out.println("[BACK-SIM-TIME] generacion vuelos fin vuelosInstanciados=" + vuelosInstanciados.size()
+                + " diasGeneracion=" + diasGeneracion
+                + " elapsedMs=" + tiempoGeneracionVuelos);
         long inicioGeneracionItinerarios = System.currentTimeMillis();
+        System.out.println("[BACK-SIM-TIME] generacion itinerarios inicio vuelosInstanciados=" + vuelosInstanciados.size()
+                + " ts=" + java.time.Instant.now());
 
         Map<String, List<Itinerario>> itinerariosPorRuta = itinerarioService.generarItinerariosPorRuta(vuelosInstanciados);
 
         long tiempoGeneracionItinerarios = System.currentTimeMillis() - inicioGeneracionItinerarios;
+        System.out.println("[BACK-SIM-TIME] generacion itinerarios fin rutas=" + itinerariosPorRuta.size()
+                + " itinerarios=" + contarItinerarios(itinerariosPorRuta)
+                + " elapsedMs=" + tiempoGeneracionItinerarios);
         long inicioAlgoritmo = System.currentTimeMillis();
+        System.out.println("[BACK-SIM-TIME] " + algoritmo.toUpperCase() + " inicio envios=" + todosLosEnvios.size()
+                + " ts=" + java.time.Instant.now());
 
         // IMPORTANTE: Pasamos 'todosLosEnvios' al algoritmo en lugar de solo los de la ventana
         Map<String, Integer> inventarioInicial = new java.util.HashMap<>(inventarioActual);
@@ -351,6 +367,9 @@ public class PlanificadorService {
 
         registrarUsoVuelosCrud(vuelosBase, solucion);
         long tiempoAlgoritmo = System.currentTimeMillis() - inicioAlgoritmo;
+        System.out.println("[BACK-SIM-TIME] " + algoritmo.toUpperCase() + " fin asignaciones="
+                + solucion.getAsignaciones().size()
+                + " elapsedMs=" + tiempoAlgoritmo);
         imprimirMetricasPlanificacion(algoritmo, inicio.toLocalDate(), diasGeneracion, todosLosEnvios, vuelosBase, vuelosInstanciados,
                 aeropuertos, itinerariosPorRuta, tiempoGeneracionVuelos, tiempoGeneracionItinerarios,
                 tiempoAlgoritmo, solucion);

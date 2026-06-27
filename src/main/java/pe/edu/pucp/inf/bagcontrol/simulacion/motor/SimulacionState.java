@@ -39,6 +39,7 @@ public class SimulacionState {
     private Set<String> enviosRegistrados = ConcurrentHashMap.newKeySet();
     private Set<String> enviosEntregados = ConcurrentHashMap.newKeySet();
     private Map<String, String> ultimoAeropuertoPorEnvio = new ConcurrentHashMap<>();
+    private Map<String, AsignacionResumen> ultimaAsignacionPorEnvio = new ConcurrentHashMap<>();
     private long bloquesProcesados;
 
     //Simulacion-metadatos
