@@ -176,8 +176,17 @@ public class SimulacionManager {
         //   });
         //});
         if (enviosEnLote == null) return List.of();
-        if(enviosEnLote.containsKey(vuelo.claveInstanciaVuelo()))System.out.println("Doesnt contain key");
-        return enviosEnLote.getOrDefault(vuelo.claveInstanciaVuelo(), List.of());
+        String key = vuelo.claveInstanciaVuelo();
+        if (!enviosEnLote.containsKey(key) && vuelo.getCantidadMaletas() > 0) {
+            System.out.println("[MAP-KEY-MISSING] mapa=enviosPorVuelo key=" + key
+                    + " idSimulacion=" + simulacionId
+                    + " lote=" + lote
+                    + " vuelo=" + vuelo.getCodigoVuelo()
+                    + " origen=" + vuelo.getOrigenIata()
+                    + " destino=" + vuelo.getDestinoIata()
+                    + " cantidadMaletas=" + vuelo.getCantidadMaletas());
+        }
+        return enviosEnLote.getOrDefault(key, List.of());
     }
 
     public SolucionRuta obtenerPlanCompleto(String simulacionId) {
