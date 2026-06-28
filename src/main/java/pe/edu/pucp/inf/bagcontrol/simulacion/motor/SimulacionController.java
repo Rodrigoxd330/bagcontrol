@@ -7,6 +7,7 @@ import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioAlmacenDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioPorVueloRequestDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioRutaDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MaletaSimulacionDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.LoteEventosDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoVueloDTO;
@@ -150,6 +151,15 @@ public class SimulacionController {
             @RequestParam("timestamp") String timestamp
     ) {
         return simulacionManager.obtenerRutaEnvio(simulacionId, idPedido, timestamp);
+    }
+
+    @GetMapping("/{simulacionId}/aeropuertos/{codigoIata}/maletas")
+    public List<MaletaSimulacionDTO> obtenerMaletasPorAeropuerto(
+            @PathVariable String simulacionId,
+            @PathVariable String codigoIata,
+            @RequestParam("timestamp") String timestamp
+    ) {
+        return simulacionManager.obtenerMaletasPorAeropuerto(simulacionId, codigoIata, timestamp);
     }
 
     @GetMapping("/{simulacionId}/aeropuertos/{codigoIata}/envios")

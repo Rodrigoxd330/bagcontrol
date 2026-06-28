@@ -15,6 +15,7 @@ import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioAlmacenDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioRutaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EscalaRutaDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MaletaSimulacionDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoVueloDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.LoteEventosDTO;
@@ -234,6 +235,27 @@ public class SimulacionManager {
                 asignacion.getItinerario() != null ? asignacion.getItinerario().getIdItinerario() : null,
                 escalas
         );
+    }
+
+    public List<MaletaSimulacionDTO> obtenerMaletasPorAeropuerto(String simulacionId, String codigoAeropuerto, String timestamp) {
+        List<EnvioAlmacenDTO> envios = obtenerEnviosPorAlmacen(simulacionId, codigoAeropuerto, timestamp);
+        List<MaletaSimulacionDTO> maletas = new java.util.ArrayList<>();
+        for (EnvioAlmacenDTO envioAlmacen : envios) {
+            pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO envio = envioAlmacen.getEnvio();
+            int total = envio.getCantidadMaletas();
+            for (int i = 1; i <= total; i++) {
+                maletas.add(new MaletaSimulacionDTO(
+                        envio.getIdPedido() + "-M" + i,
+                        envio.getIdPedido(),
+                        envio.getOrigenIata(),
+                        envio.getDestinoIata(),
+                        envioAlmacen.getTipoAlmacen(),
+                        envioAlmacen.getEstadoEnvio(),
+                        total
+                ));
+            }
+        }
+        return maletas;
     }
 
     public List<EnvioAlmacenDTO> obtenerEnviosPorAlmacen(String simulacionId, String codigoAeropuerto, String timestamp) {
