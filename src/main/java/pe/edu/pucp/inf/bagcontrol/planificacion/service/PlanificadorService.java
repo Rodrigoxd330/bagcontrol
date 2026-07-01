@@ -42,6 +42,10 @@ public class PlanificadorService {
     private final TabuSearch tabuSearch;
     private final ItinerarioService itinerarioService;
 
+    public void precargarEnvios(LocalDateTime ventanaInicio){
+        envioDataStore.firstPopulateEnvios(ventanaInicio);
+    }
+
     public PlanResultadoDTO obtenerPlan(String algoritmo, LocalDate fechaInicio, int dias) {
         if (dias <= 0) throw new IllegalArgumentException("La cantidad de días debe ser mayor que 0.");
 

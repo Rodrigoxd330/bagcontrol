@@ -130,6 +130,7 @@ public class SimulacionJob implements Runnable {
     private void ejecutarSimulacion() {
         simulacionStateMutator.inicializarAeropuertos();
         state.setTiempoActual(horaInicio);
+        planificadorService.precargarEnvios(horaInicio);
         publicarControl(TipoEvento.SIMULACION_INICIADA);
         System.out.println("[BACK-SIM-TIME] tiempo total hasta primer evento id=" + simulacionId
                 + " elapsedMs=" + (System.currentTimeMillis() - inicioJobMs));

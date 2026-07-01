@@ -16,10 +16,7 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
+import java.time.*;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -31,6 +28,9 @@ import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
 import java.util.zip.ZipEntry;
@@ -47,10 +47,15 @@ public class EnvioDataStore {
     private final NavigableMap<LocalDate, RangoDia> indicePorDia = new TreeMap<>();
     private final Map<String, AtomicInteger> contadorManualPorOrigen = new ConcurrentHashMap<>();
     private final Map<String, Envio> enviosCrudPorId = new ConcurrentHashMap<>();
+    private final Map<String,Boolean> fechasCacheadas = new ConcurrentHashMap<>();
     private final Set<String> enviosEliminados = ConcurrentHashMap.newKeySet();
+    private EnvioRepository envioRepository;
+    private final ThreadPoolExecutor populateEnvioThreads = new ThreadPoolExecutor(8,8,2,TimeUnit.MINUTES,new LinkedBlockingDeque<>());
 
     private Path spoolPath;
     private int totalEnviosIndexados;
+    private final int maxDiasCacheados = 30;
+    private final int margenDiasCacheados = 5;
 
     @Deprecated
     public synchronized void agregarEnvio(Envio envio, Aeropuerto aeropuerto) {
@@ -142,8 +147,10 @@ public class EnvioDataStore {
         }
     }
 
-    public synchronized void inicializarDesdeZip(Resource enviosZipResource, Map<String, Aeropuerto> mapaAeropuertos)
+    public synchronized void inicializarDesdeZip(Resource enviosZipResource, Map<String, Aeropuerto> mapaAeropuertos,EnvioRepository repo)
             throws IOException {
+        envioRepository = repo;
+
         enviosPorTiempo.clear();
         indicePorDia.clear();
         enviosCrudPorId.clear();
@@ -160,6 +167,7 @@ public class EnvioDataStore {
         try {
             try (ZipInputStream zis = new ZipInputStream(enviosZipResource.getInputStream(), StandardCharsets.UTF_8)) {
                 ZipEntry entry;
+                int diasCacheados = 0;
 
                 while ((entry = zis.getNextEntry()) != null) {
                     if (entry.isDirectory()) continue;
@@ -178,12 +186,16 @@ public class EnvioDataStore {
 
                         Envio envio = parsearLineaZip(linea, origenIata, gmtOffset);
                         if (envio == null) continue;
-
-                        enviosPorTiempo
-                                .computeIfAbsent(envio.getFechaHora(), k -> new ArrayList<>())
-                                .add(envio);
-
                         LocalDate diaUtc = envio.getFechaHora().toLocalDate();
+
+                        /*if(diasCacheados < maxDiasCacheados) {
+                            enviosPorTiempo
+                                    .computeIfAbsent(envio.getFechaHora(), k -> new ArrayList<>())
+                                    .add(envio);
+                            if(fechasCacheadas.containsKey(diaUtc.toString()))diasCacheados++;
+                            fechasCacheadas.put(diaUtc.toString(),true);
+                        }*/
+
                         BufferedWriter writer = writersPorDia.computeIfAbsent(diaUtc, dia -> {
                             try {
                                 Path fragmento = Files.createTempFile(workDir, "envios-" + dia + "-", ".dat");
@@ -229,23 +241,52 @@ public class EnvioDataStore {
 
     public synchronized List<Envio> obtenerEnviosEnVentana(LocalDateTime inicio, LocalDateTime fin) {
         Map<String, Envio> resultadoPorId = new java.util.LinkedHashMap<>();
-        if (!enviosPorTiempo.isEmpty()) {
-            SortedMap<LocalDateTime, List<Envio>> subMapa = new TreeMap<>(enviosPorTiempo.subMap(inicio, fin));
-            for (List<Envio> lista : subMapa.values()) {
-                for (Envio envio : lista) {
-                    if (!enviosEliminados.contains(envio.getIdPedido())
-                            && !enviosCrudPorId.containsKey(envio.getIdPedido())) {
-                        resultadoPorId.put(envio.getIdPedido(), envio);
+        LocalDate indexDate = inicio.toLocalDate();
+        while(indexDate.compareTo(fin.toLocalDate())<=0){
+            LocalDate nextDate = indexDate.plusDays(1);
+            LocalDateTime _inicio = inicio.isAfter(indexDate.atTime(0,0,0)) ? inicio : indexDate.atTime(0,0,0);
+            LocalDateTime _fin = fin.isBefore(nextDate.atTime(0,0,0)) ? fin : nextDate.atTime(0,0,0);
+            if (fechasCacheadas.containsKey(indexDate.toString())) {
+                SortedMap<LocalDateTime, List<Envio>> subMapa = new TreeMap<>(enviosPorTiempo.subMap(_inicio, _fin));
+                for (List<Envio> lista : subMapa.values()) {
+                    for (Envio envio : lista) {
+                        if (!enviosEliminados.contains(envio.getIdPedido())
+                                && !enviosCrudPorId.containsKey(envio.getIdPedido())) {
+                            resultadoPorId.put(envio.getIdPedido(), envio);
+                        }
                     }
                 }
-            }
-        } else if (spoolPath != null) {
-            for (Envio envio : obtenerEnviosEnVentanaDesdeSpool(inicio, fin)) {
-                if (!enviosEliminados.contains(envio.getIdPedido())
-                        && !enviosCrudPorId.containsKey(envio.getIdPedido())) {
-                    resultadoPorId.put(envio.getIdPedido(), envio);
+            } else if (spoolPath != null) {
+                //System.out.println("spool path");
+                //En vez de cargar directamente desde archivo, cargar a cache y acceder desde ahi
+                /*
+                for (Envio envio : obtenerEnviosEnVentanaDesdeSpool(indexDate.atTime(0,0,0), nextDate.plusDays(margenDiasCacheados).atTime(0,0,0))) {
+                    //System.out.println(envio.getFechaHora());
+                    if (!enviosEliminados.contains(envio.getIdPedido())
+                            && !enviosCrudPorId.containsKey(envio.getIdPedido())) {
+                        enviosPorTiempo
+                                .computeIfAbsent(envio.getFechaHora(), k -> new ArrayList<>())
+                                .add(envio);
+                    }
                 }
+                for(int i=0;i<margenDiasCacheados;i++){fechasCacheadas.put(indexDate.plusDays(i).toString(),true);}
+                */
+                populateEnvioMap(indexDate.atTime(0,0,0), nextDate.plusDays(margenDiasCacheados).atTime(0,0,0));
+                continue;
+
+                //TODO: Metodo para garbage collection de envios que no se acceden desde ningun cliente
+                //(revisar que los datos no esten por consultarse o en algun historico
             }
+            //Empezar tarea de popular dias adelante
+            if(!fechasCacheadas.containsKey(indexDate.plusDays(margenDiasCacheados).toString())){
+                populateEnvioThreads.execute(new EnvioAccessJob(this,
+                        indexDate.atTime(0,0,0),
+                        nextDate.plusDays(margenDiasCacheados).atTime(0,0,0)));
+            }
+            //Seguir con la iteracion
+            indexDate = nextDate;
+            System.out.println("[ENVIO-DATASTORE] Cantidad de envios acumulados en ventana: "+resultadoPorId.size());
+            //System.out.println(indexDate.compareTo(fin.toLocalDate()));
         }
 
         enviosCrudPorId.values().stream()
@@ -279,6 +320,7 @@ public class EnvioDataStore {
                         .flatMap(List::stream)
                         .noneMatch(envio -> id.equals(envio.getIdPedido())))
                 .count();
+        //System.out.println("[TOTAL-ENVIOS-CARGADOS] total = "+base+ " - "+eliminadosBase+" + "+overridesNuevos);
         return Math.toIntExact(base - eliminadosBase + overridesNuevos);
     }
 
@@ -478,6 +520,60 @@ public class EnvioDataStore {
         return envio;
     }
 
+    private void populateEnvioMap(LocalDateTime inicio,LocalDateTime fin){
+        long inicioTiempo = System.currentTimeMillis();
+        List<Envio> envios = obtenerEnviosEnVentanaDesdeSpool(inicio,fin);
+        envios.sort(Comparator.comparing(Envio::getFechaHora));
+
+        /*for (Envio envio : envios) {
+            //System.out.println(envio.getFechaHora());
+            if (!enviosEliminados.contains(envio.getIdPedido())
+                    && !enviosCrudPorId.containsKey(envio.getIdPedido())) {
+                    enviosPorTiempo
+                            .computeIfAbsent(envio.getFechaHora(), k -> new ArrayList<>())
+                            .add(envio);
+            }boolean skip = fechasCacheadas.containsKey(inicio.toLocalDate().plusDays(i).toString());
+            for(;envios.get(j).getFechaHora().toLocalDate().isEqual(indexDate);j++){
+                if(skip)continue;//Lo pongo aqui para que j incremente
+                Envio envio = envios.get(j);
+                if (!enviosEliminados.contains(envio.getIdPedido())
+                        && !enviosCrudPorId.containsKey(envio.getIdPedido())) {
+                    enviosPorTiempo
+                            .computeIfAbsent(envio.getFechaHora(), k -> new ArrayList<>())
+                            .add(envio);
+                }
+            }
+            fechasCacheadas.put(indexDate.toString(),true);
+        }*/
+        int j=0;
+        for(int i=0;inicio.toLocalDate().plusDays(i).compareTo(fin.toLocalDate())<=0;i++){
+            LocalDate indexDate = inicio.toLocalDate().plusDays(i);
+            synchronized (fechasCacheadas){
+                boolean skip = fechasCacheadas.containsKey(inicio.toLocalDate().plusDays(i).toString());
+                for(;j<envios.size() && envios.get(j).getFechaHora().toLocalDate().isEqual(indexDate);j++){
+                    if(skip)continue;//Lo pongo aqui para que j incremente
+                    Envio envio = envios.get(j);
+                    if (!enviosEliminados.contains(envio.getIdPedido())
+                            && !enviosCrudPorId.containsKey(envio.getIdPedido())) {
+                        enviosPorTiempo
+                                .computeIfAbsent(envio.getFechaHora(), k -> new ArrayList<>())
+                                .add(envio);
+                    }
+                }
+                if(skip)continue;
+                fechasCacheadas.put(indexDate.toString(),true);
+            }
+        }
+        long finTiempo = System.currentTimeMillis();
+        System.out.println("[POPULATE-ENVIOS] Envios cargados: "+envios.size());
+        System.out.println("[POPULATE-ENVIOS] Tiempo de llenado de mapa de envios: "+(finTiempo-inicioTiempo)+"ms");
+    }
+
+    public void firstPopulateEnvios(LocalDateTime inicio){
+        populateEnvioMap(inicio.toLocalDate().atTime(0,0,0),
+                inicio.toLocalDate().atTime(0,0,0).plusDays(margenDiasCacheados));
+    }
+
     private String serializar(Envio envio) {
         return envio.getFechaHora() + "\t"
                 + envio.getIdPedido() + "\t"
@@ -504,6 +600,21 @@ public class EnvioDataStore {
                 .compile("_ENVIOS_([A-Z]{4})_")
                 .matcher(nombreArchivo.toUpperCase());
         return m.find() ? m.group(1) : "DESC";
+    }
+
+    private class EnvioAccessJob implements Runnable{
+        private final EnvioDataStore dataStore;
+        private final LocalDateTime inicio;
+        private final LocalDateTime fin;
+        public EnvioAccessJob(EnvioDataStore dataStore,LocalDateTime inicio,LocalDateTime fin){
+            this.dataStore = dataStore;
+            this.inicio = inicio;
+            this.fin = fin;
+        }
+
+        public void run(){
+            dataStore.populateEnvioMap(inicio,fin);
+        }
     }
 
     private record RangoDia(long inicio, long fin, int totalEnvios) {
