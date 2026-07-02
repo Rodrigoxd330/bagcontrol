@@ -159,6 +159,12 @@ public class SimulacionJob implements Runnable {
             // --- FASE 1: INICIO DE MEDICIÓN DE TA ---
             long inicioCronometroTa = System.currentTimeMillis();
             boolean esPrimerBloque = state.getBloquesProcesados() == 0;
+
+            System.out.println("╔══════════════════════════════════════════════════════════════╗");
+            System.out.printf("║ BATCH #%d | Ciclo=%d | Ventana=%s -> %s%n",
+                    state.getBloquesProcesados() + 1, state.getCicloActual() + 1,
+                    state.getTiempoActual(), state.getTiempoActual().plusMinutes(k));
+
             if (esPrimerBloque) {
                 System.out.println("[BACK-SIM-TIME] primer bloque inicio id=" + simulacionId
                         + " ts=" + Instant.now());
@@ -176,7 +182,7 @@ public class SimulacionJob implements Runnable {
             state.setCicloActual(ciclo);
 
             // --- FASE 2: EXTRACCIÓN DE CONTEXTO ---
-            //Eventos batch es la lisa de todos los eventos que se van a enviar al front
+            long inicioContexto = System.currentTimeMillis();
             List<EventoBaseDTO> eventosBatch = new ArrayList<>();
             Set<String> clavesEventosPostergadosEnBatch = new HashSet<>();
             extraerEventosVueloPostergados(
@@ -190,6 +196,7 @@ public class SimulacionJob implements Runnable {
                 continue;
             }
             agregarEventosVuelosCancelados(ventanaInicio, ventanaFin, eventosBatch);
+            long finContexto = System.currentTimeMillis();
 
             Map<String, Integer> inventarioReservado = PlanificadorUtils.construirInventarioReservado(
                     state.getEnviosEnSeguimiento(),
@@ -197,6 +204,9 @@ public class SimulacionJob implements Runnable {
                     state.getInventarioSnapshot(),
                     state.getTiempoActual().toInstant(ZoneOffset.UTC)
             );
+
+            // --- FASE 3: PLANIFICACIÓN (el paso más lento) ---
+            long inicioPlanificacion = System.currentTimeMillis();
             SolucionRuta solucion = esOperacionDia()
                     ? planificadorService.calcularSolucionOperacionDia(
                             algoritmo, ventanaInicio, ventanaFin, state.getEnviosPendientes(), inventarioReservado,
@@ -205,15 +215,18 @@ public class SimulacionJob implements Runnable {
                     : planificadorService.calcularSolucion(
                             algoritmo, ventanaInicio, ventanaFin, state.getEnviosPendientes(), inventarioReservado
                     );
+            long finPlanificacion = System.currentTimeMillis();
             state.setSolucionActual(solucion);
             registrarEventosReplanificacion(solucion, eventosBatch, ventanaInicio, ciclo);
 
-            System.out.printf("[PLANIFICACION-OK] ventana=%s -> %s | envios=%d | algoritmo=%s | fitness=%.2f | planMs=%d%n",
-                    ventanaInicio, ventanaFin, solucion.getAsignaciones().size(),
-                    algoritmo, solucion.getFitness(), System.currentTimeMillis() - inicioCronometroTa);
+            long planMs = finPlanificacion - inicioPlanificacion;
+            long contextoMs = finContexto - inicioContexto;
+
+            System.out.printf("║ [PLANIFICACION] envios=%d | fitness=%.2f | planMs=%d%n",
+                    solucion.getAsignaciones().size(), solucion.getFitness(), planMs);
 
             // --- FASE 4: MUTACIÓN FÍSICA E INDEXACIÓN DEL ESTADO ---
-            //simulacionStateMutator.indexarEnviosPorVuelo(solucion);
+            long inicioPostProc = System.currentTimeMillis();
             registrarEnviosNuevos(solucion, eventosBatch, inventarioReservado);
 
             // --- FASE 5: GENERACIÓN Y ORDENAMIENTO DE EVENTOS EN LA VENTANA ---
@@ -222,13 +235,6 @@ public class SimulacionJob implements Runnable {
             eventosBatch.addAll(eventosVuelos.actuales());
             agregarEventosVueloPostergados(eventosVuelos.futuros(), eventosVueloPostergados);
             eventosBatch.sort(comparadorEventos());
-            if (esPrimerBloque) {
-                System.out.println("[BACK-SIM-TIME] eventos generados id=" + simulacionId
-                        + " actuales=" + eventosVuelos.actuales().size()
-                        + " futuros=" + eventosVuelos.futuros().size()
-                        + " totalBatch=" + eventosBatch.size()
-                        + " elapsedMs=" + (System.currentTimeMillis() - inicioCronometroTa));
-            }
 
             // --- FASE 6: CÁLCULO DE SLA Y COLAPSOS ---
             IncumplimientoSla incumplimiento = encontrarPrimerIncumplimientoSla(ventanaFinUtc).orElse(null);
@@ -242,7 +248,6 @@ public class SimulacionJob implements Runnable {
             agregarAlertasAeropuertosSaturados(eventosBatch);
             eventosBatch.sort(comparadorEventos());
 
-            //Despues de aplicar fisica, guardar enviosDespachadosPorVuelo para su consulta
             simulacionStateMutator.indexarEnviosPorVuelo(enviosDespachadosPorVuelo);
 
             if (incumplimiento != null) {
@@ -268,6 +273,9 @@ public class SimulacionJob implements Runnable {
 
             actualizarPendientesParaSiguienteCiclo(solucion);
 
+            long finPostProc = System.currentTimeMillis();
+            long postProcMs = finPostProc - inicioPostProc;
+
             // --- FASE 8: FIN DE TA Y COMPENSACIÓN DE TIEMPO (SA - TA) ---
             long taCalculadoMs = System.currentTimeMillis() - inicioCronometroTa;
             this.tiempoUltimoLoteMs = taCalculadoMs;
@@ -288,9 +296,13 @@ public class SimulacionJob implements Runnable {
                         + " elapsedMs=" + (System.currentTimeMillis() - inicioJobMs));
             }
 
-            System.out.printf("[LOTE-ENVIADO] numero=%d | eventos=%d | ventana=%s -> %s | taTotal=%dms | sa=%dms%n",
+            // --- RESUMEN DEL BATCH ---
+            System.out.printf("║ [TIMING] contexto=%dms | planificacion=%dms | postProc=%dms | TOTAL=%dms | sa=%dms%n",
+                    contextoMs, planMs, postProcMs, taCalculadoMs, saMs);
+            System.out.printf("║ [LOTE-ENVIADO] numero=%d | eventos=%d | envios=%d | ventana=%s -> %s%n",
                     state.getUltimoLoteEmitidoNumero().get(), eventosBatch.size(),
-                    ventanaInicio, ventanaFin, taCalculadoMs, saMs);
+                    solucion.getAsignaciones().size(), ventanaInicio, ventanaFin);
+            System.out.println("╚══════════════════════════════════════════════════════════════╝");
 
             state.guardarSnapshot();
             state.setBloquesProcesados(state.getBloquesProcesados() + 1);
