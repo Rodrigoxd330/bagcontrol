@@ -114,6 +114,26 @@ public class EnvioDataStore {
         return Set.copyOf(enviosCrudPorId.keySet());
     }
 
+    public synchronized int contarEnviosCrudActivos() {
+        return (int) enviosCrudPorId.values().stream()
+                .filter(Envio::isActivo)
+                .count();
+    }
+
+    public synchronized List<Envio> obtenerEnviosCrudEnVentana(
+            LocalDateTime inicio,
+            LocalDateTime fin,
+            Set<String> idsExcluidos
+    ) {
+        Set<String> excluidos = idsExcluidos == null ? Set.of() : idsExcluidos;
+        return enviosCrudPorId.values().stream()
+                .filter(Envio::isActivo)
+                .filter(envio -> !excluidos.contains(envio.getIdPedido()))
+                .filter(envio -> !envio.getFechaHora().isBefore(inicio) && envio.getFechaHora().isBefore(fin))
+                .sorted(Comparator.comparing(Envio::getFechaHora))
+                .toList();
+    }
+
     public static LocalDateTime parsearFechaHoraUtc(String fechaHora) {
         try {
             return LocalDateTime.ofInstant(Instant.parse(fechaHora), ZoneOffset.UTC);
@@ -246,7 +266,7 @@ public class EnvioDataStore {
             LocalDate nextDate = indexDate.plusDays(1);
             LocalDateTime _inicio = inicio.isAfter(indexDate.atTime(0,0,0)) ? inicio : indexDate.atTime(0,0,0);
             LocalDateTime _fin = fin.isBefore(nextDate.atTime(0,0,0)) ? fin : nextDate.atTime(0,0,0);
-            if (fechasCacheadas.containsKey(indexDate.toString())) {
+            if (fechasCacheadas.containsKey(indexDate.toString()) || spoolPath == null) {
                 SortedMap<LocalDateTime, List<Envio>> subMapa = new TreeMap<>(enviosPorTiempo.subMap(_inicio, _fin));
                 for (List<Envio> lista : subMapa.values()) {
                     for (Envio envio : lista) {
@@ -278,7 +298,7 @@ public class EnvioDataStore {
                 //(revisar que los datos no esten por consultarse o en algun historico
             }
             //Empezar tarea de popular dias adelante
-            if(!fechasCacheadas.containsKey(indexDate.plusDays(margenDiasCacheados).toString())){
+            if(spoolPath != null && !fechasCacheadas.containsKey(indexDate.plusDays(margenDiasCacheados).toString())){
                 populateEnvioThreads.execute(new EnvioAccessJob(this,
                         indexDate.atTime(0,0,0),
                         nextDate.plusDays(margenDiasCacheados).atTime(0,0,0)));
@@ -302,14 +322,14 @@ public class EnvioDataStore {
 
     public synchronized int getTotalEnviosCargados() {
         if (enviosCrudPorId.isEmpty() && enviosEliminados.isEmpty()) {
-            return !enviosPorTiempo.isEmpty()
-                    ? enviosPorTiempo.values().stream().mapToInt(List::size).sum()
-                    : totalEnviosIndexados;
+            return totalEnviosIndexados > 0
+                    ? totalEnviosIndexados
+                    : enviosPorTiempo.values().stream().mapToInt(List::size).sum();
         }
-        long base = !enviosPorTiempo.isEmpty()
-                ? enviosPorTiempo.values().stream().flatMap(List::stream)
-                    .map(Envio::getIdPedido).distinct().count()
-                : totalEnviosIndexados;
+        long base = totalEnviosIndexados > 0
+                ? totalEnviosIndexados
+                : enviosPorTiempo.values().stream().flatMap(List::stream)
+                    .map(Envio::getIdPedido).distinct().count();
         long eliminadosBase = enviosEliminados.stream()
                 .filter(id -> enviosPorTiempo.values().stream()
                         .flatMap(List::stream)

@@ -28,6 +28,7 @@ public class SimulacionController {
 
     private static final String MODO_COLAPSO = "COLAPSO";
     private static final String MODO_NORMAL = "NORMAL";
+    private static final String MODO_OPERACION_DIA = "OPERACION_DIA";
 
     private final SimulacionManager simulacionManager;
 
@@ -56,7 +57,7 @@ public class SimulacionController {
         String simulacionId = simulacionManager.crearJob(inicio, fin, k, algoritmo, modo);
         System.out.println("[BACK-SIM-TIME] simulacion creada id=" + simulacionId
                 + " elapsedMs=" + (System.currentTimeMillis() - t0));
-        String modo_final = (fin == null) ? MODO_COLAPSO : MODO_NORMAL;
+        String modo_final = "0".equals(modo) ? MODO_OPERACION_DIA : (fin == null) ? MODO_COLAPSO : MODO_NORMAL;
         String topic = "/topic/simulacion/" + simulacionId + "/eventos";
 
         return new RespuestaInicioSimulacionDTO(simulacionId, topic, modo_final);

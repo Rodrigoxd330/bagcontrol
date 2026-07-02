@@ -46,6 +46,18 @@ public class PlanificadorService {
         envioDataStore.firstPopulateEnvios(ventanaInicio);
     }
 
+    public Set<String> obtenerIdsEnviosCrudActivos() {
+        return envioDataStore.obtenerIdsCrudActivos();
+    }
+
+    public int contarEnviosCrudActivos() {
+        return envioDataStore.contarEnviosCrudActivos();
+    }
+
+    public long contarVuelosBase() {
+        return vueloRepository.count();
+    }
+
     public PlanResultadoDTO obtenerPlan(String algoritmo, LocalDate fechaInicio, int dias) {
         if (dias <= 0) throw new IllegalArgumentException("La cantidad de días debe ser mayor que 0.");
 
@@ -307,16 +319,83 @@ public class PlanificadorService {
             List<Envio> pendientes,
             Map<String, Integer> inventarioActual
     ) {
+        return calcularSolucionDesdeFuente(
+                algoritmo,
+                inicio,
+                fin,
+                pendientes,
+                inventarioActual,
+                envioDataStore.obtenerEnviosEnVentana(inicio, fin),
+                "ZIP"
+        );
+    }
+
+    public SolucionRuta calcularSolucionOperacionDia(
+            String algoritmo,
+            LocalDateTime inicio,
+            LocalDateTime fin,
+            List<Envio> pendientes,
+            Map<String, Integer> inventarioActual,
+            Set<String> idsCrudExcluidos
+    ) {
+        return calcularSolucionOperacionDia(
+                algoritmo,
+                inicio,
+                fin,
+                pendientes,
+                inventarioActual,
+                obtenerEnviosOperacionDiaEnVentana(inicio, fin, idsCrudExcluidos)
+        );
+    }
+
+    public List<Envio> obtenerEnviosOperacionDiaEnVentana(
+            LocalDateTime inicio,
+            LocalDateTime fin,
+            Set<String> idsCrudExcluidos
+    ) {
+        return envioDataStore.obtenerEnviosCrudEnVentana(inicio, fin, idsCrudExcluidos);
+    }
+
+    public SolucionRuta calcularSolucionOperacionDia(
+            String algoritmo,
+            LocalDateTime inicio,
+            LocalDateTime fin,
+            List<Envio> pendientes,
+            Map<String, Integer> inventarioActual,
+            List<Envio> enviosVentana
+    ) {
+        return calcularSolucionDesdeFuente(
+                algoritmo,
+                inicio,
+                fin,
+                pendientes,
+                inventarioActual,
+                enviosVentana,
+                "CRUD_OPERATIVO"
+        );
+    }
+
+    private SolucionRuta calcularSolucionDesdeFuente(
+            String algoritmo,
+            LocalDateTime inicio,
+            LocalDateTime fin,
+            List<Envio> pendientes,
+            Map<String, Integer> inventarioActual,
+            List<Envio> enviosVentana,
+            String fuenteEnvios
+    ) {
         if (!fin.isAfter(inicio)) throw new IllegalArgumentException("La fecha fin debe ser mayor a la inicio.");
 
         long inicioTotal = System.currentTimeMillis();
         long inicioCargaEnvios = System.currentTimeMillis();
         System.out.println("[BACK-SIM-TIME] carga envios inicio ventanaInicio=" + inicio
-                + " ventanaFin=" + fin + " ts=" + java.time.Instant.now());
-        List<Envio> enviosVentana = envioDataStore.obtenerEnviosEnVentana(inicio, fin);
+                + " ventanaFin=" + fin
+                + " fuente=" + fuenteEnvios
+                + " ts=" + java.time.Instant.now());
         registrarEnviosEnVentana(inicio, fin, enviosVentana);
         long tiempoCargaEnvios = System.currentTimeMillis() - inicioCargaEnvios;
         System.out.println("[BACK-SIM-TIME] carga envios fin envios=" + enviosVentana.size()
+                + " fuente=" + fuenteEnvios
                 + " elapsedMs=" + tiempoCargaEnvios);
 
         // Unimos los nuevos de la ventana con los pendientes que vienen del State
@@ -376,6 +455,7 @@ public class PlanificadorService {
         System.out.println("[SIM5D-BLOQUE-PERFORMANCE] ventanaInicio=" + inicio
                 + " ventanaFin=" + fin
                 + " algoritmo=" + algoritmo.toUpperCase()
+                + " fuenteEnvios=" + fuenteEnvios
                 + " enviosNuevos=" + enviosVentana.size()
                 + " enviosPendientesEntrada=" + (pendientes == null ? 0 : pendientes.size())
                 + " aeropuertosSinCapacidad=" + contarAeropuertosSinCapacidad(inventarioInicial, aeropuertos)

@@ -66,7 +66,8 @@ class SimulacionJobTest {
                 state,
                 configuracion,
                 new SimulacionStateMutator(state, aeropuertoRepository),
-                "ESTANDAR"
+                "ESTANDAR",
+                java.util.Set.of()
         );
 
         job.run();
@@ -134,7 +135,8 @@ class SimulacionJobTest {
                 state,
                 new ConfiguracionColapsoDTO(),
                 new SimulacionStateMutator(state, aeropuertoRepository),
-                "ESTANDAR"
+                "ESTANDAR",
+                java.util.Set.of()
         );
 
         EventoVueloDTO despega = crearEventoVuelo(TipoEvento.VUELO_DESPEGA);

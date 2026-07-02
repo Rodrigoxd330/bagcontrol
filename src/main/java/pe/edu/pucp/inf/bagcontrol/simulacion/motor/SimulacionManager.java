@@ -32,6 +32,11 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class SimulacionManager {
 
+    private static final String MODO_OPERACION_DIA = "0";
+    private static final String MODO_SIM5D = "1";
+    private static final String MODO_COLAPSO_OPERATIVO = "2";
+    private static final long MAX_HORIZONTE_OPERACION_HORAS = 48;
+
     private final PlanificadorService planificadorService;
     private final AeropuertoRepository aeropuertoRepository;
     private final WebSocketPublisher webSocketPublisher;
@@ -45,6 +50,12 @@ public class SimulacionManager {
         if (k <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El salto k debe ser mayor que cero.");
         }
+        String modoNormalizado = normalizarModo(modo, fechaFin);
+        LocalDateTime fechaFinNormalizada = normalizarFechaFin(fechaInicio, fechaFin, modoNormalizado);
+        if (!MODO_COLAPSO_OPERATIVO.equals(modoNormalizado) && fechaFinNormalizada == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La fecha fin es obligatoria para este modo.");
+        }
+        validarHorizonte(fechaInicio, fechaFinNormalizada, modoNormalizado);
         String simulacionId = UUID.randomUUID().toString();
 
         // 1. Instanciamos la memoria y su mutador para este job específico
@@ -55,15 +66,20 @@ public class SimulacionManager {
 
         // 2. Determinamos la configuración de colapso según el escenario
         ConfiguracionColapsoDTO configColapso = null;
-        if (fechaFin == null) {
+        if (MODO_COLAPSO_OPERATIVO.equals(modoNormalizado)) {
             configColapso = crearConfiguracionColapsoPorDefecto();
             state.setModoSimulacion("COLAPSO");
         } else {
-            if (fechaInicio.isAfter(fechaFin) || fechaInicio.isEqual(fechaFin)) {
+            if (fechaInicio.isAfter(fechaFinNormalizada) || fechaInicio.isEqual(fechaFinNormalizada)) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La fecha fin debe ser mayor a la fecha inicio.");
             }
-            state.setModoSimulacion("ESTANDAR");
+            state.setModoSimulacion(MODO_OPERACION_DIA.equals(modoNormalizado) ? "OPERACION_DIA" : "ESTANDAR");
         }
+
+        Set<String> enviosCrudExistentes = MODO_OPERACION_DIA.equals(modoNormalizado)
+                ? planificadorService.obtenerIdsEnviosCrudActivos()
+                : Set.of();
+        registrarConfiguracionModo(fechaInicio, fechaFinNormalizada, modoNormalizado, enviosCrudExistentes.size());
 
         // 3. Instanciamos la fábrica de eventos pasándole la configuración
         SimulacionEventosFactory eventosFactory = new SimulacionEventosFactory(configColapso);
@@ -72,7 +88,7 @@ public class SimulacionManager {
         SimulacionJob job = new SimulacionJob(
                 simulacionId,
                 fechaInicio,
-                fechaFin,
+                fechaFinNormalizada,
                 k,
                 algoritmo,
                 planificadorService,
@@ -82,7 +98,8 @@ public class SimulacionManager {
                 state,
                 configColapso,
                 mutator,
-                modo
+                modoNormalizado,
+                enviosCrudExistentes
         );
 
         trabajosActivos.put(simulacionId, job);
@@ -117,6 +134,57 @@ public class SimulacionManager {
         double umbralSLA = 0.00;
         double umbralAeropuerto = 1.00;
         return new ConfiguracionColapsoDTO(umbralSinItinerario, umbralSLA, umbralAeropuerto);
+    }
+
+    private String normalizarModo(String modo, LocalDateTime fechaFin) {
+        if (MODO_OPERACION_DIA.equals(modo) || MODO_SIM5D.equals(modo) || MODO_COLAPSO_OPERATIVO.equals(modo)) {
+            return modo;
+        }
+        return fechaFin == null ? MODO_COLAPSO_OPERATIVO : MODO_SIM5D;
+    }
+
+    private LocalDateTime normalizarFechaFin(LocalDateTime fechaInicio, LocalDateTime fechaFin, String modo) {
+        if (MODO_OPERACION_DIA.equals(modo) && fechaFin == null) {
+            return fechaInicio.plusDays(1);
+        }
+        if (MODO_COLAPSO_OPERATIVO.equals(modo)) {
+            return null;
+        }
+        return fechaFin;
+    }
+
+    private void validarHorizonte(LocalDateTime fechaInicio, LocalDateTime fechaFin, String modo) {
+        if (!MODO_OPERACION_DIA.equals(modo) || fechaFin == null) {
+            return;
+        }
+        Duration horizonte = Duration.between(fechaInicio, fechaFin);
+        if (horizonte.toMinutes() > MAX_HORIZONTE_OPERACION_HORAS * 60) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "La operacion dia a dia no puede planificar mas de 2 dias."
+            );
+        }
+    }
+
+    private void registrarConfiguracionModo(
+            LocalDateTime fechaInicio,
+            LocalDateTime fechaFin,
+            String modo,
+            int enviosCrudExistentes
+    ) {
+        if (MODO_OPERACION_DIA.equals(modo)) {
+            System.out.println("[OPERACION-DIA] modo=OPERACION_DIA");
+            System.out.println("[OPERACION-DIA] enviosIniciales=0");
+            System.out.println("[OPERACION-DIA] enviosCrudExcluidos=" + enviosCrudExistentes);
+            System.out.println("[OPERACION-DIA] usaZip=false");
+            System.out.println("[OPERACION-DIA] horizonteHoras=" + Duration.between(fechaInicio, fechaFin).toHours());
+            return;
+        }
+        if (MODO_COLAPSO_OPERATIVO.equals(modo)) {
+            System.out.println("[SIMULACION-CONFIG] modo=COLAPSO usaZip=true");
+            return;
+        }
+        System.out.println("[SIM5D-CONFIG] modo=SIM5D usaZip=true");
     }
 
     public void detenerJob(String simulacionId) {
