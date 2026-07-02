@@ -4,8 +4,12 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
+import pe.edu.pucp.inf.bagcontrol.auth.UsuarioSesion;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
+import pe.edu.pucp.inf.bagcontrol.entidades.incidencias.Incidencia;
+import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.Vuelo;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
@@ -16,6 +20,7 @@ import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioAlmacenDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioRutaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EscalaRutaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MaletaSimulacionDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionActivaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoVueloDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.LoteEventosDTO;
@@ -44,6 +49,17 @@ public class SimulacionManager {
     private final ConcurrentHashMap<String, SimulacionJob> trabajosActivos = new ConcurrentHashMap<>();
 
     public String crearJob(LocalDateTime fechaInicio, LocalDateTime fechaFin, int k, String algoritmo, String modo) {
+        return crearJob(fechaInicio, fechaFin, k, algoritmo, modo, null);
+    }
+
+    public String crearJob(
+            LocalDateTime fechaInicio,
+            LocalDateTime fechaFin,
+            int k,
+            String algoritmo,
+            String modo,
+            UsuarioSesion propietario
+    ) {
         if (fechaInicio == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La fecha inicio es obligatoria.");
         }
@@ -51,6 +67,12 @@ public class SimulacionManager {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El salto k debe ser mayor que cero.");
         }
         String modoNormalizado = normalizarModo(modo, fechaFin);
+        if (MODO_OPERACION_DIA.equals(modoNormalizado)) {
+            Optional<SimulacionJob> operacionExistente = obtenerOperacionDiaActiva();
+            if (operacionExistente.isPresent()) {
+                return operacionExistente.get().getState().getSimulacionId();
+            }
+        }
         LocalDateTime fechaFinNormalizada = normalizarFechaFin(fechaInicio, fechaFin, modoNormalizado);
         if (!MODO_COLAPSO_OPERATIVO.equals(modoNormalizado) && fechaFinNormalizada == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La fecha fin es obligatoria para este modo.");
@@ -80,6 +102,7 @@ public class SimulacionManager {
                 ? planificadorService.obtenerIdsEnviosCrudActivos()
                 : Set.of();
         registrarConfiguracionModo(fechaInicio, fechaFinNormalizada, modoNormalizado, enviosCrudExistentes.size());
+        SimulacionContextoDatos contextoDatos = crearContextoDatosSnapshot();
 
         // 3. Instanciamos la fábrica de eventos pasándole la configuración
         SimulacionEventosFactory eventosFactory = new SimulacionEventosFactory(configColapso);
@@ -99,7 +122,9 @@ public class SimulacionManager {
                 configColapso,
                 mutator,
                 modoNormalizado,
-                enviosCrudExistentes
+                enviosCrudExistentes,
+                contextoDatos,
+                propietario
         );
 
         trabajosActivos.put(simulacionId, job);
@@ -129,11 +154,96 @@ public class SimulacionManager {
         return simulacionId;
     }
 
+    public List<SimulacionActivaDTO> listarActivas(String modo) {
+        String modoNormalizado = modo == null || modo.isBlank() ? null : normalizarModo(modo, null);
+        return trabajosActivos.values().stream()
+                .filter(job -> !esEstadoTerminal(job.getState().getEstado()))
+                .filter(job -> modoNormalizado == null || modoNormalizado.equals(job.getModo()))
+                .sorted(Comparator.comparing(SimulacionJob::getFechaCreacion).reversed())
+                .map(this::crearSimulacionActivaDTO)
+                .toList();
+    }
+
+    private Optional<SimulacionJob> obtenerOperacionDiaActiva() {
+        return trabajosActivos.values().stream()
+                .filter(job -> MODO_OPERACION_DIA.equals(job.getModo()))
+                .filter(job -> !esEstadoTerminal(job.getState().getEstado()))
+                .findFirst();
+    }
+
+    private boolean esEstadoTerminal(String estado) {
+        return "FINALIZADA".equals(estado)
+                || "DETENIDA".equals(estado)
+                || "COLAPSADA".equals(estado)
+                || "ERROR".equals(estado);
+    }
+
+    private SimulacionActivaDTO crearSimulacionActivaDTO(SimulacionJob job) {
+        UsuarioSesion propietario = job.getPropietario();
+        return new SimulacionActivaDTO(
+                job.getState().getSimulacionId(),
+                "/topic/simulacion/" + job.getState().getSimulacionId() + "/eventos",
+                job.getModo(),
+                job.getState().getEstado(),
+                job.getK(),
+                job.getFechaInicio().toString(),
+                job.getFechaCreacion().toString(),
+                propietario != null ? propietario.email() : null,
+                propietario != null ? propietario.nombre() : null
+        );
+    }
+
     private ConfiguracionColapsoDTO crearConfiguracionColapsoPorDefecto() {
         double umbralSinItinerario = 0.10;
         double umbralSLA = 0.00;
         double umbralAeropuerto = 1.00;
         return new ConfiguracionColapsoDTO(umbralSinItinerario, umbralSLA, umbralAeropuerto);
+    }
+
+    private SimulacionContextoDatos crearContextoDatosSnapshot() {
+        return new SimulacionContextoDatos(
+                planificadorService.obtenerVuelosBaseSnapshot().stream().map(this::copiarVuelo).toList(),
+                planificadorService.obtenerAeropuertosSnapshot().stream().map(this::copiarAeropuerto).toList(),
+                planificadorService.obtenerIncidenciasSnapshot().stream().map(this::copiarIncidencia).toList()
+        );
+    }
+
+    private Vuelo copiarVuelo(Vuelo origen) {
+        Vuelo copia = new Vuelo();
+        copia.setCodigo(origen.getCodigo());
+        copia.setOrigenIata(origen.getOrigenIata());
+        copia.setDestinoIata(origen.getDestinoIata());
+        copia.setHoraSalida(origen.getHoraSalida());
+        copia.setHoraLlegada(origen.getHoraLlegada());
+        copia.setCapacidadMax(origen.getCapacidadMax());
+        copia.setEstaCancelado(origen.isEstaCancelado());
+        copia.setCreadoPorCrud(origen.isCreadoPorCrud());
+        return copia;
+    }
+
+    private Aeropuerto copiarAeropuerto(Aeropuerto origen) {
+        Aeropuerto copia = new Aeropuerto();
+        copia.setCodigoIata(origen.getCodigoIata());
+        copia.setCiudad(origen.getCiudad());
+        copia.setPais(origen.getPais());
+        copia.setContinente(origen.getContinente());
+        copia.setGmt(origen.getGmt());
+        copia.setCapacidadAlmacen(origen.getCapacidadAlmacen());
+        copia.setLatitud(origen.getLatitud());
+        copia.setLongitud(origen.getLongitud());
+        return copia;
+    }
+
+    private Incidencia copiarIncidencia(Incidencia origen) {
+        Incidencia copia = new Incidencia();
+        copia.setId(origen.getId());
+        copia.setFechaHora(origen.getFechaHora());
+        copia.setDescripcion(origen.getDescripcion());
+        copia.setOrigenIata(origen.getOrigenIata());
+        copia.setNoPuedeRecibir(origen.isNoPuedeRecibir());
+        copia.setNoPuedeEnviar(origen.isNoPuedeEnviar());
+        copia.setTiempoRecuperacionMinutos(origen.getTiempoRecuperacionMinutos());
+        return copia;
     }
 
     private String normalizarModo(String modo, LocalDateTime fechaFin) {

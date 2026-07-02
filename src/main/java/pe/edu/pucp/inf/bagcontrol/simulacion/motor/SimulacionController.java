@@ -3,11 +3,14 @@ package pe.edu.pucp.inf.bagcontrol.simulacion.motor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
+import pe.edu.pucp.inf.bagcontrol.auth.AuthService;
+import pe.edu.pucp.inf.bagcontrol.auth.UsuarioSesion;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioAlmacenDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioPorVueloRequestDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioRutaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MaletaSimulacionDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionActivaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.LoteEventosDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoVueloDTO;
@@ -31,6 +34,7 @@ public class SimulacionController {
     private static final String MODO_OPERACION_DIA = "OPERACION_DIA";
 
     private final SimulacionManager simulacionManager;
+    private final AuthService authService;
 
     /*
     * Crear el hilo (sin ejecutarlo) para que esté 'listo para arrncar'
@@ -42,7 +46,8 @@ public class SimulacionController {
             @RequestParam(value = "fechaFin", required = false) String fechaFin,
             @RequestParam(value = "k", defaultValue = "30") int k,
             @RequestParam(value = "algoritmo", defaultValue = "TABU") String algoritmo,
-            @RequestParam(value = "modo", required = false) String modo
+            @RequestParam(value = "modo", required = false) String modo,
+            @RequestHeader(value = "Authorization", required = false) String authorization
     ) {
         long t0 = System.currentTimeMillis();
         System.out.println("[BACK-SIM-TIME] preparar recibido ts=" + java.time.Instant.now()
@@ -53,14 +58,22 @@ public class SimulacionController {
         // El helper ahora devuelve el LocalDateTime correcto interpretando el estándar internacional
         LocalDateTime inicio = parseFechaHoraFlexible(fechaInicio);
         LocalDateTime fin = parseFechaHoraFlexible(fechaFin);
+        UsuarioSesion propietario = authService.resolverBearer(authorization);
 
-        String simulacionId = simulacionManager.crearJob(inicio, fin, k, algoritmo, modo);
+        String simulacionId = simulacionManager.crearJob(inicio, fin, k, algoritmo, modo, propietario);
         System.out.println("[BACK-SIM-TIME] simulacion creada id=" + simulacionId
                 + " elapsedMs=" + (System.currentTimeMillis() - t0));
         String modo_final = "0".equals(modo) ? MODO_OPERACION_DIA : (fin == null) ? MODO_COLAPSO : MODO_NORMAL;
         String topic = "/topic/simulacion/" + simulacionId + "/eventos";
 
         return new RespuestaInicioSimulacionDTO(simulacionId, topic, modo_final);
+    }
+
+    @GetMapping("/activas")
+    public List<SimulacionActivaDTO> listarActivas(
+            @RequestParam(value = "modo", required = false) String modo
+    ) {
+        return simulacionManager.listarActivas(modo);
     }
 
     private LocalDateTime parseFechaHoraFlexible(String valor) {

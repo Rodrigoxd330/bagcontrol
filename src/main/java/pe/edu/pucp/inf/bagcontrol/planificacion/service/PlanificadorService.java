@@ -58,6 +58,18 @@ public class PlanificadorService {
         return vueloRepository.count();
     }
 
+    public List<Vuelo> obtenerVuelosBaseSnapshot() {
+        return vueloRepository.findAll();
+    }
+
+    public List<Aeropuerto> obtenerAeropuertosSnapshot() {
+        return aeropuertoRepository.findAll();
+    }
+
+    public List<Incidencia> obtenerIncidenciasSnapshot() {
+        return incidenciaRepository.findAll();
+    }
+
     public PlanResultadoDTO obtenerPlan(String algoritmo, LocalDate fechaInicio, int dias) {
         if (dias <= 0) throw new IllegalArgumentException("La cantidad de días debe ser mayor que 0.");
 
@@ -375,6 +387,56 @@ public class PlanificadorService {
         );
     }
 
+    public SolucionRuta calcularSolucionOperacionDia(
+            String algoritmo,
+            LocalDateTime inicio,
+            LocalDateTime fin,
+            List<Envio> pendientes,
+            Map<String, Integer> inventarioActual,
+            List<Envio> enviosVentana,
+            List<Vuelo> vuelosBaseSnapshot,
+            List<Aeropuerto> aeropuertosSnapshot,
+            List<Incidencia> incidenciasSnapshot
+    ) {
+        return calcularSolucionDesdeFuente(
+                algoritmo,
+                inicio,
+                fin,
+                pendientes,
+                inventarioActual,
+                enviosVentana,
+                "CRUD_OPERATIVO",
+                vuelosBaseSnapshot,
+                aeropuertosSnapshot,
+                incidenciasSnapshot
+        );
+    }
+
+    public SolucionRuta calcularSolucion(
+            String algoritmo,
+            LocalDateTime inicio,
+            LocalDateTime fin,
+            List<Envio> pendientes,
+            Map<String, Integer> inventarioActual,
+            List<Vuelo> vuelosBaseSnapshot,
+            List<Aeropuerto> aeropuertosSnapshot,
+            List<Incidencia> incidenciasSnapshot
+    ) {
+        List<Envio> enviosVentana = envioDataStore.obtenerEnviosEnVentana(inicio, fin);
+        return calcularSolucionDesdeFuente(
+                algoritmo,
+                inicio,
+                fin,
+                pendientes,
+                inventarioActual,
+                enviosVentana,
+                "ZIP",
+                vuelosBaseSnapshot,
+                aeropuertosSnapshot,
+                incidenciasSnapshot
+        );
+    }
+
     private SolucionRuta calcularSolucionDesdeFuente(
             String algoritmo,
             LocalDateTime inicio,
@@ -383,6 +445,32 @@ public class PlanificadorService {
             Map<String, Integer> inventarioActual,
             List<Envio> enviosVentana,
             String fuenteEnvios
+    ) {
+        return calcularSolucionDesdeFuente(
+                algoritmo,
+                inicio,
+                fin,
+                pendientes,
+                inventarioActual,
+                enviosVentana,
+                fuenteEnvios,
+                vueloRepository.findAll(),
+                aeropuertoRepository.findAll(),
+                incidenciaRepository.findAll()
+        );
+    }
+
+    private SolucionRuta calcularSolucionDesdeFuente(
+            String algoritmo,
+            LocalDateTime inicio,
+            LocalDateTime fin,
+            List<Envio> pendientes,
+            Map<String, Integer> inventarioActual,
+            List<Envio> enviosVentana,
+            String fuenteEnvios,
+            List<Vuelo> vuelosBaseSnapshot,
+            List<Aeropuerto> aeropuertosSnapshot,
+            List<Incidencia> incidenciasSnapshot
     ) {
         if (!fin.isAfter(inicio)) throw new IllegalArgumentException("La fecha fin debe ser mayor a la inicio.");
 
@@ -404,9 +492,9 @@ public class PlanificadorService {
             todosLosEnvios.addAll(pendientes);
         }
 
-        List<Vuelo> vuelosBase = vueloRepository.findAll();
+        List<Vuelo> vuelosBase = new ArrayList<>(vuelosBaseSnapshot);
         registrarVuelosBase(vuelosBase);
-        List<Aeropuerto> aeropuertos = aeropuertoRepository.findAll();
+        List<Aeropuerto> aeropuertos = new ArrayList<>(aeropuertosSnapshot);
 
         long inicioGeneracionVuelos = System.currentTimeMillis();
         System.out.println("[BACK-SIM-TIME] generacion vuelos inicio vuelosBase=" + vuelosBase.size()
@@ -415,7 +503,7 @@ public class PlanificadorService {
         int diasGeneracion = calcularDiasGeneracion(inicio, fin);
         List<VueloInstanciado> vuelosInstanciados =
                 generarVuelosInstanciados(vuelosBase, inicio.toLocalDate(), diasGeneracion, aeropuertos);
-        aplicarIncidencias(vuelosInstanciados);
+        aplicarIncidencias(vuelosInstanciados, incidenciasSnapshot);
 
         long tiempoGeneracionVuelos = System.currentTimeMillis() - inicioGeneracionVuelos;
         System.out.println("[BACK-SIM-TIME] generacion vuelos fin vuelosInstanciados=" + vuelosInstanciados.size()
@@ -474,10 +562,27 @@ public class PlanificadorService {
         List<Vuelo> vuelosBase = vueloRepository.findAll();
         registrarVuelosBase(vuelosBase);
         List<Aeropuerto> aeropuertos = aeropuertoRepository.findAll();
+        return obtenerVuelosCanceladosEnVentana(
+                inicio,
+                fin,
+                vuelosBase,
+                aeropuertos,
+                incidenciaRepository.findAll()
+        );
+    }
+
+    public List<VueloInstanciado> obtenerVuelosCanceladosEnVentana(
+            LocalDateTime inicio,
+            LocalDateTime fin,
+            List<Vuelo> vuelosBase,
+            List<Aeropuerto> aeropuertos,
+            List<Incidencia> incidencias
+    ) {
+        registrarVuelosBase(vuelosBase);
         int dias = calcularDiasGeneracion(inicio, fin);
         List<VueloInstanciado> vuelosInstanciados =
                 generarVuelosInstanciados(vuelosBase, inicio.toLocalDate(), dias, aeropuertos);
-        aplicarIncidencias(vuelosInstanciados);
+        aplicarIncidencias(vuelosInstanciados, incidencias);
 
         Set<String> vistos = new HashSet<>();
         var inicioUtc = inicio.toInstant(java.time.ZoneOffset.UTC);
@@ -665,7 +770,10 @@ public class PlanificadorService {
     }
 
     private void aplicarIncidencias(List<VueloInstanciado> vuelosInstanciados) {
-        List<Incidencia> incidencias = incidenciaRepository.findAll();
+        aplicarIncidencias(vuelosInstanciados, incidenciaRepository.findAll());
+    }
+
+    private void aplicarIncidencias(List<VueloInstanciado> vuelosInstanciados, List<Incidencia> incidencias) {
         for (VueloInstanciado vuelo : vuelosInstanciados) {
             if (vuelo.isEstaCancelado()) {
                 if (vuelo.getMotivoCancelacion() == null) {

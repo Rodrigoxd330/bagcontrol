@@ -4,6 +4,7 @@ import lombok.Getter;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
+import pe.edu.pucp.inf.bagcontrol.auth.UsuarioSesion;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
@@ -70,7 +71,11 @@ public class SimulacionJob implements Runnable {
     private long inicioJobMs = 0L;
     private static final int MAX_EVENTOS_REPLANIFICACION_POR_BLOQUE = 50;
     private static final String MODO_OPERACION_DIA = "0";
+    @Getter
     private final String modo;
+    @Getter
+    private final UsuarioSesion propietario;
+    private final SimulacionContextoDatos contextoDatos;
     private final Set<String> enviosCrudExcluidos;
 
     private volatile Thread hilo;
@@ -81,6 +86,34 @@ public class SimulacionJob implements Runnable {
             WebSocketPublisher webSocketPublisher, SimulacionEventosFactory simulacionEventosFactory,
             SimulacionState state, ConfiguracionColapsoDTO configuracionColapsoDTO,
             SimulacionStateMutator simulacionStateMutator, String modo, Set<String> enviosCrudExcluidos
+    ) {
+        this(
+                simulacionId,
+                horaInicio,
+                horaFin,
+                k,
+                algoritmo,
+                planificadorService,
+                aeropuertoRepository,
+                webSocketPublisher,
+                simulacionEventosFactory,
+                state,
+                configuracionColapsoDTO,
+                simulacionStateMutator,
+                modo,
+                enviosCrudExcluidos,
+                null,
+                null
+        );
+    }
+
+    public SimulacionJob(
+            String simulacionId, LocalDateTime horaInicio, LocalDateTime horaFin, int k, String algoritmo,
+            PlanificadorService planificadorService, AeropuertoRepository aeropuertoRepository,
+            WebSocketPublisher webSocketPublisher, SimulacionEventosFactory simulacionEventosFactory,
+            SimulacionState state, ConfiguracionColapsoDTO configuracionColapsoDTO,
+            SimulacionStateMutator simulacionStateMutator, String modo, Set<String> enviosCrudExcluidos,
+            SimulacionContextoDatos contextoDatos, UsuarioSesion propietario
     ) {
         this.simulacionId = simulacionId;
         this.horaInicio = horaInicio;
@@ -99,6 +132,8 @@ public class SimulacionJob implements Runnable {
         this.simulacionStateMutator = simulacionStateMutator;
         this.modo = modo;
         this.enviosCrudExcluidos = enviosCrudExcluidos == null ? Set.of() : Set.copyOf(enviosCrudExcluidos);
+        this.contextoDatos = contextoDatos;
+        this.propietario = propietario;
     }
 
     public void asignarHilo(Thread hilo) {
@@ -140,7 +175,9 @@ public class SimulacionJob implements Runnable {
             System.out.println("[OPERACION-DIA] modo=OPERACION_DIA");
             System.out.println("[OPERACION-DIA] enviosIniciales=0");
             System.out.println("[OPERACION-DIA] usaZip=false");
-            System.out.println("[OPERACION-DIA] vuelosBase=" + planificadorService.contarVuelosBase());
+            System.out.println("[OPERACION-DIA] vuelosBase=" + (contextoDatos != null
+                    ? contextoDatos.vuelos().size()
+                    : planificadorService.contarVuelosBase()));
             System.out.println("[OPERACION-DIA] aeropuertos=" + aeropuertosIniciales.size());
             System.out.println("[OPERACION-DIA] horizonteHoras=" + java.time.Duration.between(horaInicio, horaFin).toHours());
         } else {
@@ -207,14 +244,7 @@ public class SimulacionJob implements Runnable {
 
             // --- FASE 3: PLANIFICACIÓN (el paso más lento) ---
             long inicioPlanificacion = System.currentTimeMillis();
-            SolucionRuta solucion = esOperacionDia()
-                    ? planificadorService.calcularSolucionOperacionDia(
-                            algoritmo, ventanaInicio, ventanaFin, state.getEnviosPendientes(), inventarioReservado,
-                            enviosOperacionDia
-                    )
-                    : planificadorService.calcularSolucion(
-                            algoritmo, ventanaInicio, ventanaFin, state.getEnviosPendientes(), inventarioReservado
-                    );
+            SolucionRuta solucion = calcularSolucion(ventanaInicio, ventanaFin, inventarioReservado, enviosOperacionDia);
             long finPlanificacion = System.currentTimeMillis();
             preservarAsignacionesVigentes(solucion);
             state.setSolucionActual(solucion);
@@ -886,9 +916,46 @@ public class SimulacionJob implements Runnable {
             LocalDateTime ventanaFin,
             List<EventoBaseDTO> eventos
     ) {
-        for (var vuelo : planificadorService.obtenerVuelosCanceladosEnVentana(ventanaInicio, ventanaFin)) {
+        List<VueloInstanciado> vuelosCancelados = contextoDatos == null
+                ? planificadorService.obtenerVuelosCanceladosEnVentana(ventanaInicio, ventanaFin)
+                : planificadorService.obtenerVuelosCanceladosEnVentana(
+                        ventanaInicio,
+                        ventanaFin,
+                        contextoDatos.vuelos(),
+                        contextoDatos.aeropuertos(),
+                        contextoDatos.incidencias()
+                );
+        for (var vuelo : vuelosCancelados) {
             eventos.add(simulacionEventosFactory.crearEventoVueloCancelado(vuelo));
         }
+    }
+
+    private SolucionRuta calcularSolucion(
+            LocalDateTime ventanaInicio,
+            LocalDateTime ventanaFin,
+            Map<String, Integer> inventarioReservado,
+            List<Envio> enviosOperacionDia
+    ) {
+        if (contextoDatos == null) {
+            return esOperacionDia()
+                    ? planificadorService.calcularSolucionOperacionDia(
+                            algoritmo, ventanaInicio, ventanaFin, state.getEnviosPendientes(), inventarioReservado,
+                            enviosOperacionDia
+                    )
+                    : planificadorService.calcularSolucion(
+                            algoritmo, ventanaInicio, ventanaFin, state.getEnviosPendientes(), inventarioReservado
+                    );
+        }
+        return esOperacionDia()
+                ? planificadorService.calcularSolucionOperacionDia(
+                        algoritmo, ventanaInicio, ventanaFin, state.getEnviosPendientes(), inventarioReservado,
+                        enviosOperacionDia, contextoDatos.vuelos(), contextoDatos.aeropuertos(),
+                        contextoDatos.incidencias()
+                )
+                : planificadorService.calcularSolucion(
+                        algoritmo, ventanaInicio, ventanaFin, state.getEnviosPendientes(), inventarioReservado,
+                        contextoDatos.vuelos(), contextoDatos.aeropuertos(), contextoDatos.incidencias()
+                );
     }
 
     private void actualizarPendientesParaSiguienteCiclo(SolucionRuta solucion) {
