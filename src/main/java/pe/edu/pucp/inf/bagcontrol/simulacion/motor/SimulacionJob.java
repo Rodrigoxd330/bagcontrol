@@ -216,6 +216,7 @@ public class SimulacionJob implements Runnable {
                             algoritmo, ventanaInicio, ventanaFin, state.getEnviosPendientes(), inventarioReservado
                     );
             long finPlanificacion = System.currentTimeMillis();
+            preservarAsignacionesVigentes(solucion);
             state.setSolucionActual(solucion);
             registrarEventosReplanificacion(solucion, eventosBatch, ventanaInicio, ciclo);
 
@@ -375,9 +376,14 @@ public class SimulacionJob implements Runnable {
                 continue;
             }
 
+            if (!esReplanificacionPorCancelacion(anterior, actual)) {
+                state.getUltimaAsignacionPorEnvio().put(actual.getIdPedido(), actual);
+                continue;
+            }
+
             cambiosDetectados++;
             if (eventosEmitidos < MAX_EVENTOS_REPLANIFICACION_POR_BLOQUE) {
-                String motivo = determinarMotivoReplanificacion(anterior, actual);
+                String motivo = "CAMBIO_POR_CANCELACION";
                 eventosBatch.add(crearEventoReplanificacion(anterior, actual, motivo, horaEvento));
                 eventosEmitidos++;
                 System.out.println("[REPLANIFICACION] idPedido=" + actual.getIdPedido()
@@ -395,6 +401,28 @@ public class SimulacionJob implements Runnable {
                     + " bloque=" + ciclo
                     + " limite=" + MAX_EVENTOS_REPLANIFICACION_POR_BLOQUE);
         }
+    }
+
+    private void preservarAsignacionesVigentes(SolucionRuta solucion) {
+        for (int i = 0; i < solucion.getAsignaciones().size(); i++) {
+            RutaAsignada nueva = solucion.getAsignaciones().get(i);
+            RutaAsignada anterior = state.getEnviosEnSeguimiento().get(nueva.getEnvio().getIdPedido());
+            if (anterior == null || anterior.getItinerario() == null) {
+                continue;
+            }
+            if (anterior.getItinerario().contieneVueloCancelado()) {
+                continue;
+            }
+            if (!Objects.equals(anterior.getItinerario(), nueva.getItinerario())) {
+                solucion.getAsignaciones().set(i, anterior);
+            }
+        }
+    }
+
+    private boolean esReplanificacionPorCancelacion(AsignacionResumen anterior, AsignacionResumen actual) {
+        return "ASIGNADO".equals(anterior.getEstadoAsignacion())
+                && cambioAsignacion(anterior, actual)
+                && anterior.isContieneVueloCancelado();
     }
 
     private AsignacionResumen crearResumenAsignacion(RutaAsignada asignacion, Instant horaEvento, int ciclo) {
@@ -436,23 +464,6 @@ public class SimulacionJob implements Runnable {
         return !Objects.equals(anterior.getEstadoAsignacion(), actual.getEstadoAsignacion())
                 || !Objects.equals(anterior.getIdItinerario(), actual.getIdItinerario())
                 || !Objects.equals(anterior.getVuelosUsados(), actual.getVuelosUsados());
-    }
-
-    private String determinarMotivoReplanificacion(AsignacionResumen anterior, AsignacionResumen actual) {
-        if (!"ASIGNADO".equals(anterior.getEstadoAsignacion()) && "ASIGNADO".equals(actual.getEstadoAsignacion())) {
-            return "ASIGNADO_DESDE_PENDIENTE";
-        }
-        if ("ASIGNADO".equals(anterior.getEstadoAsignacion()) && !"ASIGNADO".equals(actual.getEstadoAsignacion())) {
-            return "QUEDO_SIN_RUTA";
-        }
-        if (anterior.isContieneVueloCancelado() || actual.isContieneVueloCancelado()) {
-            return "CAMBIO_POR_CANCELACION";
-        }
-        if ("ASIGNADO".equals(anterior.getEstadoAsignacion()) && "ASIGNADO".equals(actual.getEstadoAsignacion())
-                && !Objects.equals(anterior.getIdItinerario(), actual.getIdItinerario())) {
-            return "RUTA_CAMBIADA";
-        }
-        return "RUTA_ACTUALIZADA";
     }
 
     private EventoReplanificacionEnvioDTO crearEventoReplanificacion(

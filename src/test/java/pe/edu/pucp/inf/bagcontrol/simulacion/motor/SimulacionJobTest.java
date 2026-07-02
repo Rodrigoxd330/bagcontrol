@@ -15,6 +15,7 @@ import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EstadoCapacidad;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoBaseDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoColapsoDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoReplanificacionEnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoVueloDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.LoteEventosDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.TipoEvento;
@@ -102,6 +103,76 @@ class SimulacionJobTest {
         verificarEventoSinInventarioFisicoNoDespachaNiEntregaMaletas(Set.of());
     }
 
+    @Test
+    void soloEmiteReplanificacionSiRutaAnteriorTieneVueloCancelado() throws Exception {
+        AeropuertoRepository aeropuertoRepository = mock(AeropuertoRepository.class);
+        when(aeropuertoRepository.findAll()).thenReturn(List.of(crearAeropuerto("LIM", "AMERICA"), crearAeropuerto("BOG", "AMERICA")));
+
+        SimulacionState state = new SimulacionState("sim-test");
+        SimulacionJob job = new SimulacionJob(
+                "sim-test",
+                LocalDateTime.of(2026, 7, 20, 8, 15),
+                LocalDateTime.of(2026, 7, 20, 12, 15),
+                240,
+                "TABU",
+                mock(PlanificadorService.class),
+                aeropuertoRepository,
+                mock(WebSocketPublisher.class),
+                new SimulacionEventosFactory(new ConfiguracionColapsoDTO()),
+                state,
+                new ConfiguracionColapsoDTO(),
+                new SimulacionStateMutator(state, aeropuertoRepository),
+                "ESTANDAR",
+                java.util.Set.of()
+        );
+
+        Method registrarEventosReplanificacion = SimulacionJob.class.getDeclaredMethod(
+                "registrarEventosReplanificacion", SolucionRuta.class, List.class, LocalDateTime.class, int.class
+        );
+        registrarEventosReplanificacion.setAccessible(true);
+
+        List<EventoBaseDTO> eventos = new ArrayList<>();
+        registrarEventosReplanificacion.invoke(
+                job,
+                solucionConItinerario(crearVuelo(1L, false)),
+                eventos,
+                LocalDateTime.of(2026, 7, 20, 8, 15),
+                1
+        );
+        registrarEventosReplanificacion.invoke(
+                job,
+                solucionConItinerario(crearVuelo(2L, false)),
+                eventos,
+                LocalDateTime.of(2026, 7, 20, 9, 15),
+                2
+        );
+
+        assertThat(eventos).noneMatch(EventoReplanificacionEnvioDTO.class::isInstance);
+
+        state.getUltimaAsignacionPorEnvio().clear();
+        eventos.clear();
+        registrarEventosReplanificacion.invoke(
+                job,
+                solucionConItinerario(crearVuelo(1L, true)),
+                eventos,
+                LocalDateTime.of(2026, 7, 20, 8, 15),
+                1
+        );
+        registrarEventosReplanificacion.invoke(
+                job,
+                solucionConItinerario(crearVuelo(2L, false)),
+                eventos,
+                LocalDateTime.of(2026, 7, 20, 9, 15),
+                2
+        );
+
+        assertThat(eventos)
+                .filteredOn(EventoReplanificacionEnvioDTO.class::isInstance)
+                .singleElement()
+                .extracting(evento -> ((EventoReplanificacionEnvioDTO) evento).getMotivo())
+                .isEqualTo("CAMBIO_POR_CANCELACION");
+    }
+
     private void verificarEventoSinInventarioFisicoNoDespachaNiEntregaMaletas(
             Set<String> clavesEventosPostergadosEnBatch
     ) throws Exception {
@@ -180,8 +251,13 @@ class SimulacionJobTest {
     }
 
     private VueloInstanciado crearVuelo() {
+        return crearVuelo(1L, false);
+    }
+
+    private VueloInstanciado crearVuelo(Long codigo, boolean cancelado) {
         Vuelo vuelo = new Vuelo("LIM", "BOG", LocalTime.of(9, 0), LocalTime.of(10, 0), 10);
-        vuelo.setCodigo(1L);
+        vuelo.setCodigo(codigo);
+        vuelo.setEstaCancelado(cancelado);
         return new VueloInstanciado(
                 vuelo,
                 LocalDateTime.of(2026, 7, 20, 9, 0),
@@ -190,6 +266,12 @@ class SimulacionJobTest {
                 Instant.parse("2026-07-20T10:00:00Z"),
                 0
         );
+    }
+
+    private SolucionRuta solucionConItinerario(VueloInstanciado vuelo) {
+        SolucionRuta solucion = new SolucionRuta();
+        solucion.agregarAsignacion(crearEnvio(), new Itinerario(List.of(vuelo)));
+        return solucion;
     }
 
     private EventoVueloDTO crearEventoVuelo(TipoEvento tipo) {
