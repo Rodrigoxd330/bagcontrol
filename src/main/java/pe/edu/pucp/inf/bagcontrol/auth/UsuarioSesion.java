@@ -1,4 +1,4 @@
 package pe.edu.pucp.inf.bagcontrol.auth;
 
-public record UsuarioSesion(String email, String nombre) {
+public record UsuarioSesion(String email, String nombre, String rol, String aeropuerto) {
 }

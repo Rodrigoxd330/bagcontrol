@@ -2,6 +2,7 @@ package pe.edu.pucp.inf.bagcontrol.simulacion.motor;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import pe.edu.pucp.inf.bagcontrol.auth.AuthService;
 import pe.edu.pucp.inf.bagcontrol.auth.UsuarioSesion;
@@ -74,6 +75,28 @@ public class SimulacionController {
             @RequestParam(value = "modo", required = false) String modo
     ) {
         return simulacionManager.listarActivas(modo);
+    }
+
+    @GetMapping("/operacion-dia/activa")
+    public ResponseEntity<SimulacionActivaDTO> obtenerOperacionDiaActiva() {
+        return simulacionManager.obtenerOperacionDiaActivaDTO()
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @PostMapping("/operacion-dia/iniciar")
+    public RespuestaInicioSimulacionDTO iniciarOperacionDia(
+            @RequestHeader(value = "Authorization", required = false) String authorization
+    ) {
+        // El reloj global de la simulacion trabaja en UTC; el frontend se encarga
+        // de convertir a la zona horaria del usuario para mostrar la hora local.
+        LocalDateTime ahora = LocalDateTime.now(java.time.ZoneOffset.UTC);
+        UsuarioSesion propietario = authService.resolverBearer(authorization);
+        String simulacionId = simulacionManager.crearYArrancarJob(
+                ahora, null, 1, "TABU", "0", propietario
+        );
+        String topic = "/topic/simulacion/" + simulacionId + "/eventos";
+        return new RespuestaInicioSimulacionDTO(simulacionId, topic, MODO_OPERACION_DIA);
     }
 
     private LocalDateTime parseFechaHoraFlexible(String valor) {

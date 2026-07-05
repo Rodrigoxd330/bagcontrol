@@ -154,6 +154,24 @@ public class SimulacionManager {
         return simulacionId;
     }
 
+    public String crearYArrancarJob(
+            LocalDateTime fechaInicio,
+            LocalDateTime fechaFin,
+            int k,
+            String algoritmo,
+            String modo,
+            UsuarioSesion propietario
+    ) {
+        String simulacionId = crearJob(fechaInicio, fechaFin, k, algoritmo, modo, propietario);
+        arrancarJob(simulacionId);
+        return simulacionId;
+    }
+
+    public Optional<SimulacionActivaDTO> obtenerOperacionDiaActivaDTO() {
+        return obtenerOperacionDiaActiva()
+                .map(this::crearSimulacionActivaDTO);
+    }
+
     public List<SimulacionActivaDTO> listarActivas(String modo) {
         String modoNormalizado = modo == null || modo.isBlank() ? null : normalizarModo(modo, null);
         return trabajosActivos.values().stream()

@@ -20,9 +20,10 @@ public class AuthService {
     private final Map<String, UsuarioInterno> usuariosPorEmail = new ConcurrentHashMap<>();
     private final Map<String, UsuarioSesion> sesionesPorToken = new ConcurrentHashMap<>();
 
-    public AuthService() {
-        registrarInicial("admin@bagcontrol.com", "admin123", "admin");
-        registrarInicial("demo@bagcontrol.com", "demo123", "demo");
+    public AuthService(UsuariosConfig config) {
+        for (UsuariosConfig.UsuarioArchivo u : config.getUsuarios()) {
+            registrarInicial(u.email(), u.password(), u.nombre(), u.rol(), u.aeropuerto());
+        }
     }
 
     public AuthResponse login(String email, String password) {
@@ -31,22 +32,32 @@ public class AuthService {
         if (usuario == null || !usuario.passwordHash().equals(hash(password))) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Credenciales invalidas.");
         }
-        return crearSesion(usuario.email(), usuario.nombre());
+        return crearSesion(usuario.email(), usuario.nombre(), usuario.rol(), usuario.aeropuerto());
     }
 
-    public AuthResponse register(String email, String password, String nombre) {
+    public AuthResponse register(String email, String password, String nombre, String rol, String aeropuerto) {
         String emailNormalizado = normalizarEmail(email);
         validarPassword(password);
         String nombreNormalizado = nombre == null ? "" : nombre.trim();
         if (nombreNormalizado.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El nombre es obligatorio.");
         }
-        UsuarioInterno nuevo = new UsuarioInterno(emailNormalizado, hash(password), nombreNormalizado);
+        String rolNormalizado = rol == null || rol.isBlank() ? "REGISTRADOR" : rol.trim().toUpperCase();
+        String aeropuertoNormalizado = aeropuerto == null ? "" : aeropuerto.trim().toUpperCase();
+        UsuarioInterno nuevo = new UsuarioInterno(emailNormalizado, hash(password), nombreNormalizado, rolNormalizado, aeropuertoNormalizado);
         UsuarioInterno anterior = usuariosPorEmail.putIfAbsent(emailNormalizado, nuevo);
         if (anterior != null) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Ya existe una cuenta con ese correo.");
         }
-        return crearSesion(nuevo.email(), nuevo.nombre());
+        return crearSesion(nuevo.email(), nuevo.nombre(), nuevo.rol(), nuevo.aeropuerto());
+    }
+
+    public AuthResponse obtenerInfoSesion(String authorizationHeader) {
+        UsuarioSesion sesion = resolverBearer(authorizationHeader);
+        if (sesion == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Sesion no encontrada.");
+        }
+        return new AuthResponse(null, sesion.email(), sesion.nombre(), sesion.rol(), sesion.aeropuerto());
     }
 
     public UsuarioSesion resolverBearer(String authorizationHeader) {
@@ -60,15 +71,16 @@ public class AuthService {
         return sesionesPorToken.get(authorizationHeader.substring(prefijo.length()).trim());
     }
 
-    private void registrarInicial(String email, String password, String nombre) {
-        usuariosPorEmail.put(normalizarEmail(email), new UsuarioInterno(normalizarEmail(email), hash(password), nombre));
+    private void registrarInicial(String email, String password, String nombre, String rol, String aeropuerto) {
+        String emailNormalizado = normalizarEmail(email);
+        usuariosPorEmail.put(emailNormalizado, new UsuarioInterno(emailNormalizado, hash(password), nombre, rol, aeropuerto));
     }
 
-    private AuthResponse crearSesion(String email, String nombre) {
+    private AuthResponse crearSesion(String email, String nombre, String rol, String aeropuerto) {
         String token = Base64.getUrlEncoder().withoutPadding()
                 .encodeToString((UUID.randomUUID() + ":" + email + ":" + Instant.now()).getBytes(StandardCharsets.UTF_8));
-        sesionesPorToken.put(token, new UsuarioSesion(email, nombre));
-        return new AuthResponse(token, email, nombre);
+        sesionesPorToken.put(token, new UsuarioSesion(email, nombre, rol, aeropuerto));
+        return new AuthResponse(token, email, nombre, rol, aeropuerto);
     }
 
     private String normalizarEmail(String email) {
@@ -96,6 +108,6 @@ public class AuthService {
         }
     }
 
-    private record UsuarioInterno(String email, String passwordHash, String nombre) {
+    private record UsuarioInterno(String email, String passwordHash, String nombre, String rol, String aeropuerto) {
     }
 }
