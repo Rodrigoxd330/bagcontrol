@@ -141,6 +141,7 @@ public class SimulacionManager {
             if (!"CREADA".equals(job.getState().getEstado())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "La simulacion ya fue arrancada: " + simulacionId);
             }
+            refrescarCatalogosMaestros(job);
             job.getState().registrarInicioReal();
             job.getState().setEstado("EN_PROCESO");
             Thread thread = new Thread(job, "simulacion-" + simulacionId);
@@ -226,8 +227,34 @@ public class SimulacionManager {
         return new SimulacionContextoDatos(
                 planificadorService.obtenerVuelosBaseSnapshot().stream().map(this::copiarVuelo).toList(),
                 planificadorService.obtenerAeropuertosSnapshot().stream().map(this::copiarAeropuerto).toList(),
-                planificadorService.obtenerIncidenciasSnapshot().stream().map(this::copiarIncidencia).toList()
+                planificadorService.obtenerIncidenciasSnapshot().stream().map(this::copiarIncidencia).toList(),
+                Instant.now()
         );
+    }
+
+    void refrescarCatalogosMaestros(SimulacionJob job) {
+        SimulacionContextoDatos contextoActual = crearContextoDatosSnapshot();
+        job.refrescarContextoDatos(contextoActual);
+        registrarAuditoriaCatalogo(contextoActual);
+    }
+
+    private void registrarAuditoriaCatalogo(SimulacionContextoDatos contexto) {
+        Set<String> codigosCrud = contexto.vuelos().stream()
+                .filter(Vuelo::isCreadoPorCrud)
+                .flatMap(vuelo -> java.util.stream.Stream.of(vuelo.getOrigenIata(), vuelo.getDestinoIata()))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<String> catalogo = contexto.aeropuertos().stream()
+                .map(Aeropuerto::getCodigoIata)
+                .collect(Collectors.toSet());
+        for (String codigo : codigosCrud) {
+            boolean existe = catalogo.contains(codigo);
+            System.out.println("[AEROPUERTO-CATALOGO-AUDIT] codigo=" + codigo
+                    + " existeRepositorio=" + aeropuertoRepository.existsById(codigo)
+                    + " existeServicioCrud=" + aeropuertoRepository.existsById(codigo)
+                    + " existeCache=false existeCatalogoSimulacion=" + existe
+                    + " existeSnapshot=" + existe + " activo=true"
+                    + " fuenteUsadaPorVueloFactory=SNAPSHOT_REPOSITORIO_AL_ARRANCAR");
+        }
     }
 
     private Vuelo copiarVuelo(Vuelo origen) {

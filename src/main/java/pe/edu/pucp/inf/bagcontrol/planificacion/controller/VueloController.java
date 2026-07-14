@@ -10,12 +10,14 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.Vuelo;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloRepository;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.VueloDTO;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequiredArgsConstructor
@@ -33,9 +35,10 @@ public class VueloController {
     }
 
     @PostMapping("/api/vuelos")
-    public ResponseEntity<VueloDTO> crearVuelo(@RequestBody VueloDTO dto) {
-        if (!esVueloValido(dto)) {
-            return ResponseEntity.badRequest().build();
+    public ResponseEntity<?> crearVuelo(@RequestBody VueloDTO dto) {
+        String error = validarVuelo(dto);
+        if (error != null) {
+            return ResponseEntity.badRequest().body(Map.of("error", error));
         }
         Vuelo vuelo = new Vuelo();
         aplicarCampos(vuelo, dto);
@@ -48,9 +51,10 @@ public class VueloController {
     }
 
     @PutMapping("/api/vuelos/{id}")
-    public ResponseEntity<VueloDTO> actualizarVuelo(@PathVariable Long id, @RequestBody VueloDTO dto) {
-        if (!esVueloValido(dto)) {
-            return ResponseEntity.badRequest().build();
+    public ResponseEntity<?> actualizarVuelo(@PathVariable Long id, @RequestBody VueloDTO dto) {
+        String error = validarVuelo(dto);
+        if (error != null) {
+            return ResponseEntity.badRequest().body(Map.of("error", error));
         }
         return vueloRepository.findById(id)
                 .map(vuelo -> {
@@ -94,23 +98,56 @@ public class VueloController {
         vuelo.setEstaCancelado(dto.isEstaCancelado());
     }
 
-    private boolean esVueloValido(VueloDTO dto) {
-        if (dto.getOrigenIata() == null || dto.getDestinoIata() == null
+    private String validarVuelo(VueloDTO dto) {
+        if (dto == null || dto.getOrigenIata() == null || dto.getDestinoIata() == null
                 || dto.getHoraSalida() == null || dto.getHoraLlegada() == null) {
-            return false;
+            return "Origen, destino, hora de salida y hora de llegada son obligatorios.";
         }
         String origenIata = dto.getOrigenIata().trim().toUpperCase();
         String destinoIata = dto.getDestinoIata().trim().toUpperCase();
-        if (origenIata.equals(destinoIata)) {
-            return false;
+        if (!origenIata.matches("[A-Z]{4}") || !destinoIata.matches("[A-Z]{4}")) {
+            return "Origen y destino deben ser códigos IATA de 4 letras.";
         }
-        if (!aeropuertoRepository.existsById(origenIata) || !aeropuertoRepository.existsById(destinoIata)) {
-            return false;
+        if (origenIata.equals(destinoIata)) {
+            return "El aeropuerto de origen y destino no pueden ser iguales.";
+        }
+        Aeropuerto origen = aeropuertoRepository.findById(origenIata).orElse(null);
+        if (origen == null) {
+            return "No existe el aeropuerto origen " + origenIata + ".";
+        }
+        Aeropuerto destino = aeropuertoRepository.findById(destinoIata).orElse(null);
+        if (destino == null) {
+            return "No existe el aeropuerto destino " + destinoIata + ".";
+        }
+        String errorOrigen = validarAeropuertoParaVuelo(origen, "origen");
+        if (errorOrigen != null) {
+            return errorOrigen;
+        }
+        String errorDestino = validarAeropuertoParaVuelo(destino, "destino");
+        if (errorDestino != null) {
+            return errorDestino;
         }
         if (dto.getHoraSalida().equals(dto.getHoraLlegada())) {
-            return false;
+            return "La hora de salida y llegada no pueden ser iguales.";
         }
-        return dto.getCapacidadMax() > 0;
+        if (dto.getCapacidadMax() <= 0) {
+            return "La capacidad máxima debe ser mayor que cero.";
+        }
+        return null;
+    }
+
+    private String validarAeropuertoParaVuelo(Aeropuerto aeropuerto, String tipo) {
+        if (aeropuerto.getCiudad() == null || aeropuerto.getCiudad().isBlank()
+                || aeropuerto.getPais() == null || aeropuerto.getPais().isBlank()
+                || aeropuerto.getContinente() == null || aeropuerto.getContinente().isBlank()
+                || aeropuerto.getCapacidadAlmacen() <= 0
+                || aeropuerto.getGmt() < -12 || aeropuerto.getGmt() > 14
+                || aeropuerto.getLatitud() < -90 || aeropuerto.getLatitud() > 90
+                || aeropuerto.getLongitud() < -180 || aeropuerto.getLongitud() > 180) {
+            return "El aeropuerto " + tipo + " " + aeropuerto.getCodigoIata()
+                    + " no tiene datos válidos para la simulación.";
+        }
+        return null;
     }
 
     private VueloDTO toDto(Vuelo vuelo) {

@@ -36,9 +36,21 @@ public class VueloFactory {
             Aeropuerto origen = mapaAeropuertos.get(vuelo.getOrigenIata());
             Aeropuerto destino = mapaAeropuertos.get(vuelo.getDestinoIata());
 
+            if (vuelo.isCreadoPorCrud() || origen == null || destino == null) {
+                System.out.println("[VUELO-AEROPUERTO-AUDIT] vueloId=" + vuelo.getCodigo()
+                        + " origen=" + vuelo.getOrigenIata() + " destino=" + vuelo.getDestinoIata()
+                        + " origenEncontrado=" + (origen != null)
+                        + " destinoEncontrado=" + (destino != null)
+                        + " cantidadAeropuertosCatalogo=" + mapaAeropuertos.size()
+                        + " catalogoCreadoEn=ARRANQUE_SIMULACION");
+            }
+
             if (origen == null || destino == null) {
-                throw new IllegalStateException("No se encontro aeropuerto para el vuelo "
-                        + vuelo.getOrigenIata() + " -> " + vuelo.getDestinoIata());
+                throw new IllegalStateException("No se encontró aeropuerto para el vuelo id=" + vuelo.getCodigo()
+                        + " ruta=" + vuelo.getOrigenIata() + " -> " + vuelo.getDestinoIata()
+                        + " origenEncontrado=" + (origen != null)
+                        + " destinoEncontrado=" + (destino != null)
+                        + " catalogoSize=" + mapaAeropuertos.size());
             }
 
             LocalDateTime salida = LocalDateTime.of(fecha, vuelo.getHoraSalida());

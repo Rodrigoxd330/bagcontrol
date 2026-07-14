@@ -2,8 +2,12 @@ package pe.edu.pucp.inf.bagcontrol.planificacion.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import pe.edu.pucp.inf.bagcontrol.auth.AuthService;
+import pe.edu.pucp.inf.bagcontrol.auth.UsuarioSesion;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
@@ -28,6 +32,12 @@ public class CargaMasivaController {
     private final AeropuertoRepository aeropuertoRepository;
     private final VueloRepository vueloRepository;
     private final EnvioDataStore envioDataStore;
+    private final AuthService authService;
+
+    private enum FormatoEnvioImportacion {
+        ORIGEN_USUARIO,
+        LEGACY_CSV
+    }
 
     @PostMapping("/api/aeropuertos/cargar-csv")
     public ResponseEntity<Map<String, Object>> cargarAeropuertosCsv(
@@ -121,20 +131,27 @@ public class CargaMasivaController {
     @PostMapping("/api/envios/cargar-csv")
     public ResponseEntity<Map<String, Object>> cargarEnviosCsv(
             @RequestParam("archivo") MultipartFile archivo,
-            @RequestParam(value = "origenIata", required = false) String origenIataParam) {
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
 
         int insertados = 0;
         List<String> errores = new ArrayList<>();
         int fila = 0;
 
-        Aeropuerto aeropuertoOrigenForzado = null;
-        if (origenIataParam != null && !origenIataParam.isBlank()) {
-            String iata = origenIataParam.trim().toUpperCase();
-            aeropuertoOrigenForzado = aeropuertoRepository.findById(iata).orElse(null);
-            if (aeropuertoOrigenForzado == null) {
-                return ResponseEntity.badRequest()
-                        .body(Map.of("error", "Aeropuerto origen '" + iata + "' no existe"));
-            }
+        UsuarioSesion usuario = authService.resolverBearer(authorization);
+        if (usuario == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Se requiere una sesión autenticada.");
+        }
+        String aeropuertoUsuario = normalizarIata(usuario.aeropuerto());
+        if (aeropuertoUsuario == null) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "error", "La cuenta actual no tiene un aeropuerto de origen asignado."
+            ));
+        }
+        Aeropuerto aeropuertoOrigen = aeropuertoRepository.findById(aeropuertoUsuario).orElse(null);
+        if (aeropuertoOrigen == null) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "error", "El aeropuerto de origen asignado a la cuenta no existe: " + aeropuertoUsuario + "."
+            ));
         }
 
         try (BufferedReader br = new BufferedReader(
@@ -147,14 +164,24 @@ public class CargaMasivaController {
                     continue;
                 }
                 try {
-                    if (aeropuertoOrigenForzado != null) {
-                        procesarFormatoNuevo(linea, aeropuertoOrigenForzado);
+                    FormatoEnvioImportacion formato = detectarFormatoEnvio(linea);
+                    int cantidadCampos = contarCampos(linea, formato);
+                    System.out.println("[ENVIO-IMPORT-FORMAT] linea=" + linea
+                            + " cantidadCampos=" + cantidadCampos
+                            + " formatoDetectado=" + formato
+                            + " origenIncluidoEnLinea=" + (formato == FormatoEnvioImportacion.LEGACY_CSV)
+                            + " usuarioAutenticado=" + usuario.email()
+                            + " aeropuertoOrigenUsuario=" + aeropuertoUsuario);
+                    if (formato == FormatoEnvioImportacion.ORIGEN_USUARIO) {
+                        procesarFormatoOrigenUsuario(linea, aeropuertoOrigen);
                     } else {
-                        procesarFormatoLegado(linea);
+                        procesarFormatoLegado(linea, aeropuertoOrigen);
                     }
                     insertados++;
                 } catch (Exception e) {
-                    errores.add("Fila " + fila + ": " + e.getMessage());
+                    System.out.println("[ENVIO-IMPORT-PARSE] linea=" + fila
+                            + " valido=false motivo=" + e.getMessage());
+                    errores.add("Formato inválido en la línea " + fila + ": " + e.getMessage());
                 }
             }
         } catch (Exception e) {
@@ -165,9 +192,25 @@ public class CargaMasivaController {
         return ResponseEntity.ok(Map.of("insertados", insertados, "errores", errores, "totalFilas", fila));
     }
 
-    private void procesarFormatoNuevo(String linea, Aeropuerto aeropuertoOrigen) {
-        String[] p = linea.split("-");
-        if (p.length < 6) {
+    private FormatoEnvioImportacion detectarFormatoEnvio(String linea) {
+        if (linea.contains(",")) {
+            return FormatoEnvioImportacion.LEGACY_CSV;
+        }
+        if (linea.contains("-")) {
+            return FormatoEnvioImportacion.ORIGEN_USUARIO;
+        }
+        throw new IllegalArgumentException("no coincide con un formato soportado");
+    }
+
+    private int contarCampos(String linea, FormatoEnvioImportacion formato) {
+        return formato == FormatoEnvioImportacion.LEGACY_CSV
+                ? linea.split(",", -1).length
+                : linea.split("-", -1).length;
+    }
+
+    private void procesarFormatoOrigenUsuario(String linea, Aeropuerto aeropuertoOrigen) {
+        String[] p = linea.split("-", -1);
+        if (p.length != 7) {
             throw new IllegalArgumentException("Formato esperado: idPedido-aaaammdd-hh-mm-dest-###-idCliente");
         }
         String idPedido = p[0].trim();
@@ -176,18 +219,22 @@ public class CargaMasivaController {
         String minStr = p[3].trim();
         String destinoIata = p[4].trim().toUpperCase();
         String cantidadStr = p[5].trim();
-        String idCliente;
-        if (p.length >= 7) {
-            idCliente = p[6].trim();
-        } else {
-            idCliente = "0000000";
+        String idCliente = p[6].trim();
+
+        if (!idPedido.matches("^[A-Za-z0-9]+$")) {
+            throw new IllegalArgumentException("identificador de envío inválido");
+        }
+        if (!fechaStr.matches("^\\d{8}$") || !horaStr.matches("^\\d{2}$")
+                || !minStr.matches("^\\d{2}$") || !cantidadStr.matches("^\\d{3}$")
+                || idCliente.isBlank()) {
+            throw new IllegalArgumentException("campos obligatorios incompletos o mal formados");
         }
 
         if (!destinoIata.matches("^[A-Z]{3,4}$")) {
             throw new IllegalArgumentException("Destino '" + destinoIata + "' no es un codigo IATA valido");
         }
         if (!aeropuertoRepository.existsById(destinoIata)) {
-            throw new IllegalArgumentException("Aeropuerto destino '" + destinoIata + "' no existe");
+            throw new IllegalArgumentException("No existe el aeropuerto destino " + destinoIata + ".");
         }
 
         int cantidadMaletas = Integer.parseInt(cantidadStr);
@@ -207,27 +254,31 @@ public class CargaMasivaController {
                 ZoneOffset.UTC
         );
 
-        NuevoEnvioDTO dto = new NuevoEnvioDTO();
-        dto.setOrigenIata(aeropuertoOrigen.getCodigoIata());
-        dto.setDestinoIata(destinoIata);
-        dto.setCantidadMaletas(cantidadMaletas);
-        dto.setIdCliente(idCliente);
-        dto.setFechaHora(fechaHoraUtc.toInstant(ZoneOffset.UTC).toString());
-
-        Envio envio = envioDataStore.agregarEnvio(dto, aeropuertoOrigen);
+        Envio envio = new Envio();
         envio.setIdPedido(idPedido);
+        envio.setOrigenIata(aeropuertoOrigen.getCodigoIata());
+        envio.setDestinoIata(destinoIata);
+        envio.setCantidadMaletas(cantidadMaletas);
+        envio.setIdCliente(idCliente);
+        envio.setFechaHora(fechaHoraUtc);
+        envio.setActivo(true);
         envioDataStore.upsert(envio);
+        System.out.println("[ENVIO-IMPORT-PARSE] id=" + idPedido
+                + " fecha=" + fechaStr + " hora=" + horaStr + " minuto=" + minStr
+                + " origen=" + aeropuertoOrigen.getCodigoIata() + " destino=" + destinoIata
+                + " cantidadMaletas=" + cantidadMaletas + " codigoFinal=" + idCliente
+                + " valido=true motivo=");
     }
 
-    private void procesarFormatoLegado(String linea) {
+    private void procesarFormatoLegado(String linea, Aeropuerto aeropuertoOrigen) {
         String[] p = linea.split(",", -1);
-        if (p.length < 5) {
+        if (p.length != 5) {
             throw new IllegalArgumentException("Se esperan 5 columnas (formato legado CSV)");
         }
         String origenIata = p[0].trim().toUpperCase();
-        Aeropuerto aeropuerto = aeropuertoRepository.findById(origenIata)
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "Aeropuerto origen '" + origenIata + "' no existe"));
+        if (!aeropuertoOrigen.getCodigoIata().equals(origenIata)) {
+            throw new IllegalArgumentException("el origen del formato legado no coincide con el aeropuerto de la cuenta");
+        }
         NuevoEnvioDTO dto = new NuevoEnvioDTO(
                 origenIata,
                 p[1].trim().toUpperCase(),
@@ -235,6 +286,13 @@ public class CargaMasivaController {
                 p[3].trim(),
                 p[4].trim()
         );
-        envioDataStore.agregarEnvio(dto, aeropuerto);
+        envioDataStore.agregarEnvio(dto, aeropuertoOrigen);
+    }
+
+    private String normalizarIata(String codigoIata) {
+        if (codigoIata == null || codigoIata.isBlank()) {
+            return null;
+        }
+        return codigoIata.trim().toUpperCase();
     }
 }

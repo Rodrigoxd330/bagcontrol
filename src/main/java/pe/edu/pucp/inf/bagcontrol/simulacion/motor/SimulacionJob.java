@@ -77,7 +77,7 @@ public class SimulacionJob implements Runnable {
     private final String modo;
     @Getter
     private final UsuarioSesion propietario;
-    private final SimulacionContextoDatos contextoDatos;
+    private volatile SimulacionContextoDatos contextoDatos;
     private final Set<String> enviosCrudExcluidos;
 
     private volatile Thread hilo;
@@ -420,6 +420,10 @@ public class SimulacionJob implements Runnable {
             }
         }
         return checkIns;
+    }
+
+    public void refrescarContextoDatos(SimulacionContextoDatos contextoDatos) {
+        this.contextoDatos = Objects.requireNonNull(contextoDatos, "El contexto de simulación es obligatorio.");
     }
 
     private void registrarEventosReplanificacion(
