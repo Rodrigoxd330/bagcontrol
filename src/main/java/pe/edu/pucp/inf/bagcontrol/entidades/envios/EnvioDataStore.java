@@ -28,6 +28,7 @@ import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -54,6 +55,7 @@ public class EnvioDataStore {
     private final ThreadPoolExecutor populateEnvioThreads = new ThreadPoolExecutor(8,8,2,TimeUnit.MINUTES,new LinkedBlockingDeque<>());
 
     private Path spoolPath;
+    private final CountDownLatch spoolInicializado = new CountDownLatch(1);
     private int totalEnviosIndexados;
     private final int maxDiasCacheados = 30;
     private final int margenDiasCacheados = 5;
@@ -190,6 +192,7 @@ public class EnvioDataStore {
 
     public synchronized void inicializarDesdeZip(Resource enviosZipResource, Map<String, Aeropuerto> mapaAeropuertos,EnvioRepository repo)
             throws IOException {
+        try {
         envioRepository = repo;
 
         enviosPorTiempo.clear();
@@ -278,6 +281,9 @@ public class EnvioDataStore {
             }
         } finally {
             Files.deleteIfExists(workDir);
+        }
+        } finally {
+            spoolInicializado.countDown();
         }
     }
 
@@ -673,8 +679,21 @@ public class EnvioDataStore {
     }
 
     public void firstPopulateEnvios(LocalDateTime inicio){
+        esperarInicializacionSpool();
         populateEnvioMap(inicio.toLocalDate().atTime(0,0,0),
                 inicio.toLocalDate().atTime(0,0,0).plusDays(margenDiasCacheados));
+    }
+
+    private void esperarInicializacionSpool() {
+        try {
+            spoolInicializado.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Se interrumpio la espera de inicializacion del indice de envios", e);
+        }
+        if (spoolPath == null || !Files.isRegularFile(spoolPath)) {
+            throw new IllegalStateException("El indice spool de envios no pudo inicializarse");
+        }
     }
 
     private String serializar(Envio envio) {
