@@ -60,14 +60,13 @@ public class SimulacionStateMutator {
             for(String id_pedido : entry.getValue()){
                 RutaAsignada ruta = state.getEnviosEnSeguimiento().get(id_pedido);
                 if(ruta==null) {
-                    System.out.println("[ERROR] Indexando envios por vuelo: Envio "+id_pedido + " no esta en seguimiento");
                     continue;
                 }
                 Envio envio = ruta.getEnvio();
                 EnvioDTO envioDTO = new EnvioDTO(
                         envio.getIdPedido(), envio.getOrigenIata(), envio.getDestinoIata(),
                         envio.getFechaHora() != null ? envio.getFechaHora().toString() : null,
-                        envio.getCantidadMaletas(), envio.getIdCliente()
+                        envio.getCantidadMaletas(), envio.getIdCliente(), envio.isEsOperacionDia()
                 );
                 envios.add(envioDTO);
             }

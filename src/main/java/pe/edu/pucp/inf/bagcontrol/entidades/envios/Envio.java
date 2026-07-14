@@ -18,4 +18,5 @@ public class Envio {
     private int cantidadMaletas;
     private String idCliente;
     private boolean activo = true;
+    private boolean esOperacionDia;
 }

@@ -1,6 +1,6 @@
 [
-  { "email": "admin@bagcontrol.com",          "password": "admin123",      "nombre": "Admin",          "rol": "ADMINISTRADOR", "aeropuerto": "" },
-  { "email": "logistica@bagcontrol.com",      "password": "logistica123",  "nombre": "Logistica",      "rol": "LOGISTICA",     "aeropuerto": "" },
+  { "email": "admin@bagcontrol.com",          "password": "admin123",      "nombre": "Admin",          "rol": "ADMINISTRADOR", "aeropuerto": "SPIM" },
+  { "email": "logistica@bagcontrol.com",      "password": "logistica123",  "nombre": "Logistica",      "rol": "LOGISTICA",     "aeropuerto": "SPIM" },
   { "email": "registrador1@bagcontrol.com",   "password": "test123",       "nombre": "Registrador 1",  "rol": "REGISTRADOR",   "aeropuerto": "SPIM" },
   { "email": "registrador2@bagcontrol.com",   "password": "test123",       "nombre": "Registrador 2",  "rol": "REGISTRADOR",   "aeropuerto": "SPIM" },
   { "email": "registrador3@bagcontrol.com",   "password": "test123",       "nombre": "Registrador 3",  "rol": "REGISTRADOR",   "aeropuerto": "SPIM" },

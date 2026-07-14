@@ -78,7 +78,6 @@ public class SimulacionJob implements Runnable {
     @Getter
     private final UsuarioSesion propietario;
     private volatile SimulacionContextoDatos contextoDatos;
-    private final Set<String> enviosCrudExcluidos;
 
     private volatile Thread hilo;
 
@@ -87,7 +86,7 @@ public class SimulacionJob implements Runnable {
             PlanificadorService planificadorService, AeropuertoRepository aeropuertoRepository,
             WebSocketPublisher webSocketPublisher, SimulacionEventosFactory simulacionEventosFactory,
             SimulacionState state, ConfiguracionColapsoDTO configuracionColapsoDTO,
-            SimulacionStateMutator simulacionStateMutator, String modo, Set<String> enviosCrudExcluidos
+            SimulacionStateMutator simulacionStateMutator, String modo
     ) {
         this(
                 simulacionId,
@@ -103,7 +102,6 @@ public class SimulacionJob implements Runnable {
                 configuracionColapsoDTO,
                 simulacionStateMutator,
                 modo,
-                enviosCrudExcluidos,
                 null,
                 null
         );
@@ -114,7 +112,7 @@ public class SimulacionJob implements Runnable {
             PlanificadorService planificadorService, AeropuertoRepository aeropuertoRepository,
             WebSocketPublisher webSocketPublisher, SimulacionEventosFactory simulacionEventosFactory,
             SimulacionState state, ConfiguracionColapsoDTO configuracionColapsoDTO,
-            SimulacionStateMutator simulacionStateMutator, String modo, Set<String> enviosCrudExcluidos,
+            SimulacionStateMutator simulacionStateMutator, String modo,
             SimulacionContextoDatos contextoDatos, UsuarioSesion propietario
     ) {
         this.simulacionId = simulacionId;
@@ -133,7 +131,6 @@ public class SimulacionJob implements Runnable {
         this.configuracionColapsoDTO = configuracionColapsoDTO;
         this.simulacionStateMutator = simulacionStateMutator;
         this.modo = modo;
-        this.enviosCrudExcluidos = enviosCrudExcluidos == null ? Set.of() : Set.copyOf(enviosCrudExcluidos);
         this.contextoDatos = contextoDatos;
         this.propietario = propietario;
     }
@@ -148,8 +145,6 @@ public class SimulacionJob implements Runnable {
         state.setEstado("EN_PROCESO");
         long inicioProceso = System.currentTimeMillis();
         inicioJobMs = inicioProceso;
-        System.out.println("[BACK-SIM-TIME] job iniciado id=" + simulacionId
-                + " ts=" + Instant.now());
         try {
             ejecutarSimulacion();
         } catch (SimulacionDetenidaException e) {
@@ -177,21 +172,10 @@ public class SimulacionJob implements Runnable {
         List<Aeropuerto> aeropuertosIniciales = simulacionStateMutator.inicializarAeropuertos();
         state.setTiempoActual(horaInicio);
         if (esOperacionDia()) {
-            System.out.println("[OPERACION-DIA] modo=OPERACION_DIA");
-            System.out.println("[OPERACION-DIA] enviosIniciales=0");
-            System.out.println("[OPERACION-DIA] usaZip=false");
-            System.out.println("[OPERACION-DIA] vuelosBase=" + (contextoDatos != null
-                    ? contextoDatos.vuelos().size()
-                    : planificadorService.contarVuelosBase()));
-            System.out.println("[OPERACION-DIA] aeropuertos=" + aeropuertosIniciales.size());
-            System.out.println("[OPERACION-DIA] horizonteHoras=" + java.time.Duration.between(horaInicio, horaFin).toHours());
         } else {
             planificadorService.precargarEnvios(horaInicio);
-            System.out.println("[SIMULACION-CONFIG] usaZip=true modo=" + (horaFin == null ? "COLAPSO" : "SIM5D"));
         }
         publicarControl(TipoEvento.SIMULACION_INICIADA);
-        System.out.println("[BACK-SIM-TIME] tiempo total hasta primer evento id=" + simulacionId
-                + " elapsedMs=" + (System.currentTimeMillis() - inicioJobMs));
 
         LocalDateTime tiempoFin = horaFin == null ? LocalDateTime.MAX : horaFin;
         Map<String, EventoVueloDTO> eventosVueloPostergados = new java.util.LinkedHashMap<>();
@@ -204,16 +188,6 @@ public class SimulacionJob implements Runnable {
             long gcCountInicio = gcCount();
             long gcTimeInicio = gcTimeMs();
             boolean esPrimerBloque = state.getBloquesProcesados() == 0;
-
-            System.out.println("╔══════════════════════════════════════════════════════════════╗");
-            System.out.printf("║ BATCH #%d | Ciclo=%d | Ventana=%s -> %s%n",
-                    state.getBloquesProcesados() + 1, state.getCicloActual() + 1,
-                    state.getTiempoActual(), state.getTiempoActual().plusMinutes(k));
-
-            if (esPrimerBloque) {
-                System.out.println("[BACK-SIM-TIME] primer bloque inicio id=" + simulacionId
-                        + " ts=" + Instant.now());
-            }
 
             verificarDetencion();
             esperarSiPausadaODetenida();
@@ -234,7 +208,7 @@ public class SimulacionJob implements Runnable {
                     ventanaFinUtc, eventosBatch, eventosVueloPostergados, clavesEventosPostergadosEnBatch
             );
             List<Envio> enviosOperacionDia = esOperacionDia()
-                    ? planificadorService.obtenerEnviosOperacionDiaEnVentana(ventanaInicio, ventanaFin, enviosCrudExcluidos)
+                    ? planificadorService.obtenerEnviosOperacionDiaEnVentana(ventanaInicio, ventanaFin)
                     : List.of();
             if (debeSaltarPlanificacionOperacionDia(enviosOperacionDia, eventosBatch, eventosVueloPostergados)) {
                 procesarBloqueOperacionSinEnvios(ventanaInicio, ventanaFin, inicioCronometroTa);
@@ -260,9 +234,6 @@ public class SimulacionJob implements Runnable {
 
             long planMs = finPlanificacion - inicioPlanificacion;
             long contextoMs = finContexto - inicioContexto;
-
-            System.out.printf("║ [PLANIFICACION] envios=%d | fitness=%.2f | planMs=%d%n",
-                    solucion.getAsignaciones().size(), solucion.getFitness(), planMs);
 
             // --- FASE 4: MUTACIÓN FÍSICA E INDEXACIÓN DEL ESTADO ---
             long inicioPostProc = System.currentTimeMillis();
@@ -307,7 +278,7 @@ public class SimulacionJob implements Runnable {
 
             List<EnvioDTO> enviosBatch = solucion.getAsignaciones().stream().map(e -> new EnvioDTO(e.getEnvio().getIdPedido(),
                     e.getEnvio().getOrigenIata(),e.getEnvio().getDestinoIata(),e.getEnvio().getFechaHora().toString(),
-                    e.getEnvio().getCantidadMaletas(),e.getEnvio().getIdCliente())).toList();
+                    e.getEnvio().getCantidadMaletas(),e.getEnvio().getIdCliente(), e.getEnvio().isEsOperacionDia())).toList();
 
             // --- FASE 7: COLAPSO ---
             if (incumplimiento != null || colapsoCapacidad.isPresent()) {
@@ -327,24 +298,6 @@ public class SimulacionJob implements Runnable {
             // --- FASE 8: FIN DE TA Y COMPENSACIÓN DE TIEMPO (SA - TA) ---
             long taCalculadoMs = System.currentTimeMillis() - inicioCronometroTa;
             this.tiempoUltimoLoteMs = taCalculadoMs;
-            if (esSimulacionCincoDias()) {
-                long bloque = state.getBloquesProcesados() + 1L;
-                int maletas = solucion.getAsignaciones().stream()
-                        .mapToInt(asignacion -> asignacion.getEnvio().getCantidadMaletas()).sum();
-                System.out.println("[SIM5D-PERF] bloque=" + bloque
-                        + " envios=" + solucion.getAsignaciones().size()
-                        + " maletas=" + maletas
-                        + " rutas=" + solucion.getAsignaciones().stream()
-                                .filter(asignacion -> asignacion.getItinerario() != null).count()
-                        + " tiempoGeneracionEventosMs=" + tiempoGeneracionEventosMs
-                        + " eventosGenerados=" + eventosBatch.size()
-                        + " tiempoPostProcesamientoMs=" + postProcMs
-                        + " tiempoTotalPlanificacionMs=" + taCalculadoMs
-                        + " memoriaAntesBytes=" + memoriaInicioBloque
-                        + " memoriaDespuesBytes=" + memoriaUsada()
-                        + " gcCollections=" + Math.max(0L, gcCount() - gcCountInicio)
-                        + " gcTimeMs=" + Math.max(0L, gcTimeMs() - gcTimeInicio));
-            }
 
             state.setTiempoActual(ventanaFin);
 
@@ -359,32 +312,11 @@ public class SimulacionJob implements Runnable {
 
             // --- FASE 9: ENVÍO DE DATOS A FRONTEND ---
             publicarLote(eventosBatch,enviosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
-            long publicacionRealMs = System.currentTimeMillis();
-            long retrasoMs = Math.max(0L, publicacionRealMs - publicacionProgramadaMs);
-            if (esSimulacionCincoDias()) {
-                System.out.println("[SIM5D-SCHEDULE] bloque=" + (state.getBloquesProcesados() + 1)
-                        + " inicioPlanificacion=" + Instant.ofEpochMilli(inicioCronometroTa)
-                        + " finPlanificacion=" + Instant.ofEpochMilli(inicioCronometroTa + taCalculadoMs)
-                        + " publicacionProgramada=" + Instant.ofEpochMilli(publicacionProgramadaMs)
-                        + " publicacionReal=" + Instant.ofEpochMilli(publicacionRealMs)
-                        + " taMs=" + taCalculadoMs
-                        + " saMs=" + saMs
-                        + " retrasoMs=" + retrasoMs
-                        + " dentroDeMargen=" + (taCalculadoMs <= saMs));
-            }
-            if (esPrimerLote) {
-                System.out.println("[BACK-SIM-TIME] primer lote listo/enviado id=" + simulacionId
-                        + " eventos=" + eventosBatch.size()
-                        + " elapsedMs=" + (System.currentTimeMillis() - inicioJobMs));
-            }
 
             // --- RESUMEN DEL BATCH ---
-            System.out.printf("║ [TIMING] contexto=%dms | planificacion=%dms | postProc=%dms | TOTAL=%dms | sa=%dms%n",
-                    contextoMs, planMs, postProcMs, taCalculadoMs, saMs);
-            System.out.printf("║ [LOTE-ENVIADO] numero=%d | eventos=%d | envios=%d | ventana=%s -> %s%n",
-                    state.getUltimoLoteEmitidoNumero().get(), eventosBatch.size(),
-                    solucion.getAsignaciones().size(), ventanaInicio, ventanaFin);
-            System.out.println("╚══════════════════════════════════════════════════════════════╝");
+            long totalMs = taCalculadoMs;
+            System.out.printf("[TIMING] bloque=%d | planificacion=%dms | eventos=%dms | TOTAL=%dms | sa=%dms%n",
+                    state.getBloquesProcesados() + 1, planMs, tiempoGeneracionEventosMs, totalMs, saMs);
 
             state.guardarSnapshot();
             state.setBloquesProcesados(state.getBloquesProcesados() + 1);
@@ -1222,11 +1154,6 @@ public class SimulacionJob implements Runnable {
         state.setEnviosPendientes(List.of());
         long taCalculadoMs = System.currentTimeMillis() - inicioCronometroTa;
         this.tiempoUltimoLoteMs = taCalculadoMs;
-
-        System.out.println("[OPERACION-DIA] enviosNuevos=0");
-        System.out.println("[OPERACION-DIA] sinEnvios=true skipPlanificador=true");
-        System.out.println("[OPERACION-DIA] estado=EN_EJECUCION");
-
         state.setTiempoActual(ventanaFin);
         EventoBaseDTO eventoActivo = new EventoEstadoSimulacionDTO(
                 TipoEvento.OPERACION_DIA_ACTIVA,

@@ -44,6 +44,7 @@ import org.springframework.data.domain.Pageable;
 public class EnvioDataStore {
 
     private final TreeMap<LocalDateTime, List<Envio>> enviosPorTiempo = new TreeMap<>();
+    private final TreeMap<LocalDateTime, List<Envio>> enviosOperacionDiaPorTiempo = new TreeMap<>();
     private final NavigableMap<LocalDate, RangoDia> indicePorDia = new TreeMap<>();
     private final Map<String, AtomicInteger> contadorManualPorOrigen = new ConcurrentHashMap<>();
     private final Map<String, Envio> enviosCrudPorId = new ConcurrentHashMap<>();
@@ -75,6 +76,7 @@ public class EnvioDataStore {
         envio.setIdCliente(dto.getIdCliente());
         envio.setFechaHora(parsearFechaHoraUtc(dto.getFechaHora()));
         envio.setActivo(true);
+        envio.setEsOperacionDia(dto.isEsOperacionDia());
 
         upsert(envio);
         return envio;
@@ -84,15 +86,29 @@ public class EnvioDataStore {
         envio.setActivo(true);
         enviosEliminados.remove(envio.getIdPedido());
         enviosCrudPorId.put(envio.getIdPedido(), envio);
+        if (envio.isEsOperacionDia()) {
+            enviosOperacionDiaPorTiempo
+                    .computeIfAbsent(envio.getFechaHora(), k -> new ArrayList<>())
+                    .add(envio);
+        }
         actualizarContadorManual(envio.getIdPedido(), envio.getOrigenIata());
-        System.out.println("[ENVIO-DATASTORE] upsert id=" + envio.getIdPedido());
+        System.out.println("[ENVIO-DATASTORE] upsert id=" + envio.getIdPedido()
+                + " esOperacionDia=" + envio.isEsOperacionDia());
     }
 
     public synchronized boolean eliminar(String idPedido) {
         boolean existia = buscarPorId(idPedido).isPresent();
-        enviosCrudPorId.remove(idPedido);
+        Envio removido = enviosCrudPorId.remove(idPedido);
+        if (removido != null && removido.isEsOperacionDia()) {
+            List<Envio> lista = enviosOperacionDiaPorTiempo.get(removido.getFechaHora());
+            if (lista != null) {
+                lista.removeIf(e -> idPedido.equals(e.getIdPedido()));
+                if (lista.isEmpty()) {
+                    enviosOperacionDiaPorTiempo.remove(removido.getFechaHora());
+                }
+            }
+        }
         enviosEliminados.add(idPedido);
-        System.out.println("[ENVIO-DATASTORE] delete id=" + idPedido);
         return existia;
     }
 
@@ -122,14 +138,19 @@ public class EnvioDataStore {
 
     public synchronized List<Envio> obtenerEnviosCrudEnVentana(
             LocalDateTime inicio,
-            LocalDateTime fin,
-            Set<String> idsExcluidos
+            LocalDateTime fin
     ) {
-        Set<String> excluidos = idsExcluidos == null ? Set.of() : idsExcluidos;
-        return enviosCrudPorId.values().stream()
-                .filter(Envio::isActivo)
-                .filter(envio -> !excluidos.contains(envio.getIdPedido()))
-                .filter(envio -> !envio.getFechaHora().isBefore(inicio) && envio.getFechaHora().isBefore(fin))
+        Map<String, Envio> resultadoPorId = new java.util.LinkedHashMap<>();
+        SortedMap<LocalDateTime, List<Envio>> subMapa =
+                new TreeMap<>(enviosOperacionDiaPorTiempo.subMap(inicio, fin));
+        for (List<Envio> lista : subMapa.values()) {
+            for (Envio envio : lista) {
+                if (envio.isActivo() && !enviosEliminados.contains(envio.getIdPedido())) {
+                    resultadoPorId.put(envio.getIdPedido(), envio);
+                }
+            }
+        }
+        return resultadoPorId.values().stream()
                 .sorted(Comparator.comparing(Envio::getFechaHora))
                 .toList();
     }
@@ -172,6 +193,7 @@ public class EnvioDataStore {
         envioRepository = repo;
 
         enviosPorTiempo.clear();
+        enviosOperacionDiaPorTiempo.clear();
         indicePorDia.clear();
         enviosCrudPorId.clear();
         enviosEliminados.clear();
@@ -305,12 +327,12 @@ public class EnvioDataStore {
             }
             //Seguir con la iteracion
             indexDate = nextDate;
-            System.out.println("[ENVIO-DATASTORE] Cantidad de envios acumulados en ventana: "+resultadoPorId.size());
             //System.out.println(indexDate.compareTo(fin.toLocalDate()));
         }
 
         enviosCrudPorId.values().stream()
                 .filter(Envio::isActivo)
+                .filter(envio -> !envio.isEsOperacionDia())
                 .filter(envio -> !envio.getFechaHora().isBefore(inicio) && envio.getFechaHora().isBefore(fin))
                 .sorted(Comparator.comparing(Envio::getFechaHora))
                 .forEach(envio -> resultadoPorId.put(envio.getIdPedido(), envio));
@@ -372,8 +394,20 @@ public class EnvioDataStore {
             LocalDateTime inicio, LocalDateTime fin,
             String origenIata, String destinoIata, String idCliente, String q,
             Integer maletasMin, Integer maletasMax,
-            Pageable pageable
+            Pageable pageable, Boolean esOperacionDiaFilter
     ) {
+        if (Boolean.TRUE.equals(esOperacionDiaFilter)) {
+            return obtenerEnviosOperacionDiaPaginados(
+                    inicio, fin, origenIata, destinoIata, idCliente, q,
+                    maletasMin, maletasMax, pageable
+            );
+        }
+        if (Boolean.FALSE.equals(esOperacionDiaFilter)) {
+            return obtenerEnviosSimulacionPaginados(
+                    inicio, fin, origenIata, destinoIata, idCliente, q,
+                    maletasMin, maletasMax, pageable
+            );
+        }
         if (enviosCrudPorId.isEmpty() && enviosEliminados.isEmpty() && spoolPath != null) {
             return obtenerEnviosBasePaginados(
                     inicio, fin, origenIata, destinoIata, idCliente, q,
@@ -402,6 +436,57 @@ public class EnvioDataStore {
         int desde = (int) pageable.getOffset();
         int hasta = Math.min(desde + pageable.getPageSize(), total);
         List<Envio> contenido = desde >= total ? List.of() : todosFiltrados.subList(desde, hasta);
+        return new PageImpl<>(contenido, pageable, total);
+    }
+
+    private Page<Envio> obtenerEnviosSimulacionPaginados(
+            LocalDateTime inicio, LocalDateTime fin,
+            String origenIata, String destinoIata, String idCliente, String q,
+            Integer maletasMin, Integer maletasMax,
+            Pageable pageable
+    ) {
+        if (q != null) {
+            Optional<Envio> coincidenciaExacta = buscarPorId(q);
+            if (coincidenciaExacta.isPresent()) {
+                Envio envio = coincidenciaExacta.get();
+                if (envio.isEsOperacionDia()) return new PageImpl<>(List.of(), pageable, 0);
+                List<Envio> coincidencias = aplicarFiltros(
+                        List.of(envio), origenIata, destinoIata, idCliente, q, maletasMin, maletasMax
+                ).stream()
+                        .filter(e -> !e.getFechaHora().isBefore(inicio) && e.getFechaHora().isBefore(fin))
+                        .toList();
+                return new PageImpl<>(coincidencias, pageable, coincidencias.size());
+            }
+        }
+        List<Envio> todosFiltrados = aplicarFiltros(
+                obtenerEnviosEnVentana(inicio, fin),
+                origenIata, destinoIata, idCliente, q, maletasMin, maletasMax
+        );
+        todosFiltrados = new ArrayList<>(todosFiltrados);
+        todosFiltrados.sort(Comparator.comparing(Envio::getFechaHora));
+        int total = todosFiltrados.size();
+        int desde = (int) pageable.getOffset();
+        int hasta = Math.min(desde + pageable.getPageSize(), total);
+        List<Envio> contenido = desde >= total ? List.of() : todosFiltrados.subList(desde, hasta);
+        return new PageImpl<>(contenido, pageable, total);
+    }
+
+    private Page<Envio> obtenerEnviosOperacionDiaPaginados(
+            LocalDateTime inicio, LocalDateTime fin,
+            String origenIata, String destinoIata, String idCliente, String q,
+            Integer maletasMin, Integer maletasMax,
+            Pageable pageable
+    ) {
+        List<Envio> todos = obtenerEnviosCrudEnVentana(inicio, fin);
+        List<Envio> filtrados = aplicarFiltros(
+                todos, origenIata, destinoIata, idCliente, q, maletasMin, maletasMax
+        );
+        filtrados = new ArrayList<>(filtrados);
+        filtrados.sort(Comparator.comparing(Envio::getFechaHora));
+        int total = filtrados.size();
+        int desde = (int) pageable.getOffset();
+        int hasta = Math.min(desde + pageable.getPageSize(), total);
+        List<Envio> contenido = desde >= total ? List.of() : filtrados.subList(desde, hasta);
         return new PageImpl<>(contenido, pageable, total);
     }
 
@@ -585,8 +670,6 @@ public class EnvioDataStore {
             }
         }
         long finTiempo = System.currentTimeMillis();
-        System.out.println("[POPULATE-ENVIOS] Envios cargados: "+envios.size());
-        System.out.println("[POPULATE-ENVIOS] Tiempo de llenado de mapa de envios: "+(finTiempo-inicioTiempo)+"ms");
     }
 
     public void firstPopulateEnvios(LocalDateTime inicio){

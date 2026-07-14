@@ -98,10 +98,7 @@ public class SimulacionManager {
             state.setModoSimulacion(MODO_OPERACION_DIA.equals(modoNormalizado) ? "OPERACION_DIA" : "ESTANDAR");
         }
 
-        Set<String> enviosCrudExistentes = MODO_OPERACION_DIA.equals(modoNormalizado)
-                ? planificadorService.obtenerIdsEnviosCrudActivos()
-                : Set.of();
-        registrarConfiguracionModo(fechaInicio, fechaFinNormalizada, modoNormalizado, enviosCrudExistentes.size());
+        registrarConfiguracionModo(fechaInicio, fechaFinNormalizada, modoNormalizado);
         SimulacionContextoDatos contextoDatos = crearContextoDatosSnapshot();
 
         // 3. Instanciamos la fábrica de eventos pasándole la configuración
@@ -122,7 +119,6 @@ public class SimulacionManager {
                 configColapso,
                 mutator,
                 modoNormalizado,
-                enviosCrudExistentes,
                 contextoDatos,
                 propietario
         );
@@ -328,22 +324,14 @@ public class SimulacionManager {
     private void registrarConfiguracionModo(
             LocalDateTime fechaInicio,
             LocalDateTime fechaFin,
-            String modo,
-            int enviosCrudExistentes
+            String modo
     ) {
         if (MODO_OPERACION_DIA.equals(modo)) {
-            System.out.println("[OPERACION-DIA] modo=OPERACION_DIA");
-            System.out.println("[OPERACION-DIA] enviosIniciales=0");
-            System.out.println("[OPERACION-DIA] enviosCrudExcluidos=" + enviosCrudExistentes);
-            System.out.println("[OPERACION-DIA] usaZip=false");
-            System.out.println("[OPERACION-DIA] horizonteHoras=" + Duration.between(fechaInicio, fechaFin).toHours());
             return;
         }
         if (MODO_COLAPSO_OPERATIVO.equals(modo)) {
-            System.out.println("[SIMULACION-CONFIG] modo=COLAPSO usaZip=true");
             return;
         }
-        System.out.println("[SIM5D-CONFIG] modo=SIM5D usaZip=true");
     }
 
     public void detenerJob(String simulacionId) {
@@ -549,7 +537,8 @@ public class SimulacionManager {
                 envio.getDestinoIata(),
                 envio.getFechaHora() != null ? envio.getFechaHora().toString() : null,
                 envio.getCantidadMaletas(),
-                envio.getIdCliente()
+                envio.getIdCliente(),
+                envio.isEsOperacionDia()
         );
     }
 

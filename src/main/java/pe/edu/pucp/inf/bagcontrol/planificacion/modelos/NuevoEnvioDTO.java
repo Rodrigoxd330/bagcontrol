@@ -15,4 +15,5 @@ public class NuevoEnvioDTO {
     private String idCliente;
     @JsonAlias("fechaHoraRegistro")
     private String fechaHora;
+    private boolean esOperacionDia;
 }

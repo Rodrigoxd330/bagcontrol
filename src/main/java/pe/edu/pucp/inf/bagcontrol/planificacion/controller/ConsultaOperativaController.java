@@ -68,13 +68,14 @@ public class ConsultaOperativaController {
             @RequestParam(required = false) String q,
             @RequestParam(required = false) Integer maletasMin,
             @RequestParam(required = false) Integer maletasMax,
+            @RequestParam(required = false) Boolean esOperacionDia,
             @PageableDefault(size = 50) Pageable pageable
     ) {
         return consultaOperativaService.obtenerEnviosPorDiasPaginados(
                 fechaInicio, dias,
                 origenIata, destinoIata, idCliente, q,
                 maletasMin, maletasMax,
-                pageable
+                pageable, esOperacionDia
         );
     }
 }

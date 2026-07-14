@@ -21,7 +21,6 @@ public class EnvioCrudService {
     public Envio crear(NuevoEnvioDTO dto) {
         Envio envio = envioDataStore.agregarEnvio(dto, null);
         envioRepository.save(envio);
-        System.out.println("[CRUD-ENVIO] creado id=" + envio.getIdPedido());
         return envio;
     }
 
@@ -40,9 +39,9 @@ public class EnvioCrudService {
         envio.setIdCliente(dto.getIdCliente());
         envio.setFechaHora(EnvioDataStore.parsearFechaHoraUtc(dto.getFechaHora()));
         envio.setActivo(true);
+        envio.setEsOperacionDia(dto.isEsOperacionDia());
         envioRepository.save(envio);
         envioDataStore.upsert(envio);
-        System.out.println("[CRUD-ENVIO] actualizado id=" + idPedido);
         return Optional.of(envio);
     }
 
@@ -63,7 +62,6 @@ public class EnvioCrudService {
         tombstone.setActivo(false);
         envioRepository.save(tombstone);
         envioDataStore.eliminar(idPedido);
-        System.out.println("[CRUD-ENVIO] eliminado id=" + idPedido);
         return true;
     }
 }

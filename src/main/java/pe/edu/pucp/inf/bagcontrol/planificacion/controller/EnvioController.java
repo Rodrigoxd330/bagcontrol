@@ -10,7 +10,10 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
+import pe.edu.pucp.inf.bagcontrol.auth.AuthService;
+import pe.edu.pucp.inf.bagcontrol.auth.UsuarioSesion;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
@@ -33,9 +36,19 @@ public class EnvioController {
     private final EnvioDataStore envioDataStore;
     private final AeropuertoRepository aeropuertoRepository;
     private final EnvioCrudService envioCrudService;
+    private final AuthService authService;
 
     @PostMapping("/api/envios")
-    public ResponseEntity<EnvioDTO> registrarEnvio(@RequestBody NuevoEnvioDTO dto) {
+    public ResponseEntity<EnvioDTO> registrarEnvio(
+            @RequestBody NuevoEnvioDTO dto,
+            @RequestHeader(value = "Authorization", required = false) String authorization
+    ) {
+        String origenIata = resolverOrigenDesdeSesion(authorization);
+        if (origenIata == null) {
+            return ResponseEntity.badRequest().build();
+        }
+        dto.setOrigenIata(origenIata);
+
         ResponseEntity<EnvioDTO> error = validar(dto);
         if (error != null) {
             return error;
@@ -47,7 +60,8 @@ public class EnvioController {
     @PutMapping("/api/envios/{idPedido}")
     public ResponseEntity<EnvioDTO> actualizarEnvio(
             @PathVariable String idPedido,
-            @RequestBody NuevoEnvioDTO dto
+            @RequestBody NuevoEnvioDTO dto,
+            @RequestHeader(value = "Authorization", required = false) String authorization
     ) {
         ResponseEntity<EnvioDTO> error = validar(dto);
         if (error != null) {
@@ -81,6 +95,14 @@ public class EnvioController {
 
         Envio envio = encontrados.get(0);
         return ResponseEntity.ok(toDto(envio));
+    }
+
+    private String resolverOrigenDesdeSesion(String authorization) {
+        UsuarioSesion sesion = authService.resolverBearer(authorization);
+        if (sesion == null || sesion.aeropuerto() == null || sesion.aeropuerto().isBlank()) {
+            return null;
+        }
+        return sesion.aeropuerto().trim().toUpperCase();
     }
 
     private ResponseEntity<EnvioDTO> validar(NuevoEnvioDTO dto) {
@@ -146,7 +168,8 @@ public class EnvioController {
                         ? envio.getFechaHora().toInstant(ZoneOffset.UTC).toString()
                         : null,
                 envio.getCantidadMaletas(),
-                envio.getIdCliente()
+                envio.getIdCliente(),
+                envio.isEsOperacionDia()
         );
     }
 }

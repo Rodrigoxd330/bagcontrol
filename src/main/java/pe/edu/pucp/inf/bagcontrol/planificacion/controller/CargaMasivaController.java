@@ -159,7 +159,7 @@ public class CargaMasivaController {
             String linea;
             while ((linea = br.readLine()) != null) {
                 fila++;
-                linea = linea.trim();
+                linea = linea.trim().replace("\uFEFF", "");
                 if (linea.isEmpty() || linea.startsWith("#")) {
                     continue;
                 }
@@ -225,7 +225,7 @@ public class CargaMasivaController {
             throw new IllegalArgumentException("identificador de envío inválido");
         }
         if (!fechaStr.matches("^\\d{8}$") || !horaStr.matches("^\\d{2}$")
-                || !minStr.matches("^\\d{2}$") || !cantidadStr.matches("^\\d{3}$")
+                || !minStr.matches("^\\d{2}$") || !cantidadStr.matches("^\\d{1,3}$")
                 || idCliente.isBlank()) {
             throw new IllegalArgumentException("campos obligatorios incompletos o mal formados");
         }
@@ -284,7 +284,8 @@ public class CargaMasivaController {
                 p[1].trim().toUpperCase(),
                 Integer.parseInt(p[2].trim()),
                 p[3].trim(),
-                p[4].trim()
+                p[4].trim(),
+                false
         );
         envioDataStore.agregarEnvio(dto, aeropuertoOrigen);
     }

@@ -14,4 +14,5 @@ public class EnvioDTO {
     private String fechaHora;
     private int cantidadMaletas;
     private String idCliente;
+    private boolean esOperacionDia;
 }

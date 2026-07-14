@@ -36,7 +36,8 @@ public class ConsultaOperativaService {
                         envio.getDestinoIata(),
                         envio.getFechaHora().toInstant(ZoneOffset.UTC).toString(),
                         envio.getCantidadMaletas(),
-                        envio.getIdCliente()
+                        envio.getIdCliente(),
+                        envio.isEsOperacionDia()
                 ))
                 .toList();
     }
@@ -74,14 +75,14 @@ public class ConsultaOperativaService {
             LocalDate fechaInicio, int dias,
             String origenIata, String destinoIata, String idCliente, String q,
             Integer maletasMin, Integer maletasMax,
-            Pageable pageable
+            Pageable pageable, Boolean esOperacionDia
     ) {
         LocalDateTime inicio = fechaInicio.atStartOfDay();
         LocalDateTime fin = fechaInicio.plusDays(dias).atStartOfDay();
 
         return envioDataStore.obtenerEnviosEnVentanaPaginados(
                 inicio, fin, origenIata, destinoIata, idCliente, q,
-                maletasMin, maletasMax, pageable
+                maletasMin, maletasMax, pageable, esOperacionDia
         ).map(this::toEnvioDTO);
     }
 
@@ -92,7 +93,8 @@ public class ConsultaOperativaService {
                 envio.getDestinoIata(),
                 envio.getFechaHora().toInstant(ZoneOffset.UTC).toString(),
                 envio.getCantidadMaletas(),
-                envio.getIdCliente()
+                envio.getIdCliente(),
+                envio.isEsOperacionDia()
         );
     }
 }

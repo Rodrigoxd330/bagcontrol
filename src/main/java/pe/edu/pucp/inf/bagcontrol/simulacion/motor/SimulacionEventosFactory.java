@@ -143,7 +143,7 @@ public class SimulacionEventosFactory {
                             new EnvioDTO(
                                     e.getIdPedido(), e.getOrigenIata(), e.getDestinoIata(),
                                     e.getFechaHora() != null ? e.getFechaHora().toString() : null,
-                                    e.getCantidadMaletas(), e.getIdCliente()
+                                    e.getCantidadMaletas(), e.getIdCliente(), e.isEsOperacionDia()
                             ),
                             itinerario != null ? itinerario.getFechaHoraSalidaUtc() : null,
                             itinerario != null ? itinerario.getFechaHoraLlegadaUtc() : null

@@ -184,17 +184,7 @@ public class PlanificadorService {
         long inicioGeneracionItinerarios = System.currentTimeMillis();
         Map<String, List<Itinerario>> itinerariosPorRuta = itinerarioService.generarItinerariosPorRuta(vuelosInstanciados);
         long tiempoGeneracionItinerarios = System.currentTimeMillis() - inicioGeneracionItinerarios;
-
-        System.out.println("========================================");
-        System.out.println("VENTANA DE SIMULACIÓN");
-        System.out.println("Inicio: " + inicio);
-        System.out.println("Fin   : " + fin);
-        System.out.println("Días simulados: " + cantidadDias);
-        System.out.println("Envios usados: " + envios.size());
-        System.out.println("========================================");
-
         // --- GRASP ---
-        System.out.println("\n=== EJECUTANDO GRASP ===");
         long inicioGrasp = System.currentTimeMillis();
         SolucionRuta solucionGrasp = graspSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos);
         registrarUsoVuelosCrud(vuelosBase, solucionGrasp);
@@ -205,15 +195,6 @@ public class PlanificadorService {
 
         double entregaPromGrasp = calcularTiempoEntregaPromedio(solucionGrasp);
         double vuelosPromGrasp = calcularVuelosPromedio(solucionGrasp, envios.size());
-
-        System.out.println("[RESULTADO GRASP]");
-        System.out.println("Factor 1 (Tiempo ejecución ms): " + tiempoGrasp);
-        System.out.println("Factor 2 (Entrega promedio hr): " + entregaPromGrasp);
-        System.out.println("Factor 3 (Vuelos promedio): " + vuelosPromGrasp);
-        System.out.println("Fitness: " + solucionGrasp.getFitness());
-        System.out.println("SLA Incumplidos: " + solucionGrasp.getExcedeSlaCount());
-        System.out.println("Sin Itinerario: " + solucionGrasp.getSinItinerarioCount() + "/" + envios.size());
-
         solucionGrasp.getAsignaciones().stream()
                 .filter(a -> a.getItinerario() == null)
                 .forEach(a -> {
@@ -225,7 +206,6 @@ public class PlanificadorService {
                 });
 
         // --- TABU ---
-        System.out.println("\n=== EJECUTANDO TABU ===");
         long inicioTabu = System.currentTimeMillis();
         SolucionRuta solucionTabu = tabuSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos);
         registrarUsoVuelosCrud(vuelosBase, solucionTabu);
@@ -236,14 +216,6 @@ public class PlanificadorService {
 
         double entregaPromTabu = calcularTiempoEntregaPromedio(solucionTabu);
         double vuelosPromTabu = calcularVuelosPromedio(solucionTabu, envios.size());
-
-        System.out.println("[RESULTADO TABU]");
-        System.out.println("Factor 1 (Tiempo ejecución ms): " + tiempoTabu);
-        System.out.println("Factor 2 (Entrega promedio hr): " + entregaPromTabu);
-        System.out.println("Factor 3 (Vuelos promedio): " + vuelosPromTabu);
-        System.out.println("Fitness: " + solucionTabu.getFitness());
-        System.out.println("SLA Incumplidos: " + solucionTabu.getExcedeSlaCount());
-        System.out.println("Sin Itinerario: " + solucionTabu.getSinItinerarioCount() + "/" + envios.size());
         solucionTabu.getAsignaciones().stream()
                 .filter(a -> a.getItinerario() == null)
                 .forEach(a -> {
@@ -342,30 +314,11 @@ public class PlanificadorService {
         );
     }
 
-    public SolucionRuta calcularSolucionOperacionDia(
-            String algoritmo,
-            LocalDateTime inicio,
-            LocalDateTime fin,
-            List<Envio> pendientes,
-            Map<String, Integer> inventarioActual,
-            Set<String> idsCrudExcluidos
-    ) {
-        return calcularSolucionOperacionDia(
-                algoritmo,
-                inicio,
-                fin,
-                pendientes,
-                inventarioActual,
-                obtenerEnviosOperacionDiaEnVentana(inicio, fin, idsCrudExcluidos)
-        );
-    }
-
     public List<Envio> obtenerEnviosOperacionDiaEnVentana(
             LocalDateTime inicio,
-            LocalDateTime fin,
-            Set<String> idsCrudExcluidos
+            LocalDateTime fin
     ) {
-        return envioDataStore.obtenerEnviosCrudEnVentana(inicio, fin, idsCrudExcluidos);
+        return envioDataStore.obtenerEnviosCrudEnVentana(inicio, fin);
     }
 
     public SolucionRuta calcularSolucionOperacionDia(
@@ -626,7 +579,6 @@ public class PlanificadorService {
     }
 
     private void registrarVuelosBase(List<Vuelo> vuelosBase) {
-        System.out.println("[PLANIFICADOR] vuelosBase=" + vuelosBase.size());
         vuelosBase.stream()
                 .filter(Vuelo::isCreadoPorCrud)
                 .forEach(vuelo -> System.out.println(
@@ -838,20 +790,11 @@ public class PlanificadorService {
         LocalDate fechaInicio = LocalDate.of(2026, 2, 25);
         int cantidadDias = 5;
         int iteraciones = 15;
-
-        System.out.println("========================================");
-        System.out.println("INICIANDO EXPERIMENTACIÓN (" + iteraciones + " iteraciones)");
-        System.out.println("========================================");
-
         double sumaFitGrasp = 0, sumaFitTabu = 0;
         long sumaTimeGrasp = 0, sumaTimeTabu = 0;
         int winsGrasp = 0, winsTabu = 0;
 
         for (int i = 1; i <= iteraciones; i++) {
-            System.out.println("\n----------------------------------------");
-            System.out.println("ITERACIÓN " + i);
-            System.out.println("----------------------------------------");
-
             ResultadoSimulacionDTO r = ejecutarSimulacion(fechaInicio, cantidadDias);
 
             sumaFitGrasp += r.getFitnessGrasp();
@@ -862,15 +805,5 @@ public class PlanificadorService {
             if (r.getGanador().equals("GRASP")) winsGrasp++;
             else if (r.getGanador().equals("TABU")) winsTabu++;
         }
-
-        System.out.println("\n========================================");
-        System.out.println("RESUMEN FINAL");
-        System.out.println("========================================");
-        System.out.println("GRASP Wins: " + winsGrasp + " | TABU Wins: " + winsTabu);
-        System.out.println("Promedio Fitness GRASP: " + (sumaFitGrasp / iteraciones));
-        System.out.println("Promedio Fitness TABU : " + (sumaFitTabu / iteraciones));
-        System.out.println("Promedio Tiempo GRASP : " + (sumaTimeGrasp / iteraciones) + " ms");
-        System.out.println("Promedio Tiempo TABU  : " + (sumaTimeTabu / iteraciones) + " ms");
-        System.out.println("========================================");
     }
 }
