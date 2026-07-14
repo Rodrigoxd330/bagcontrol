@@ -2,6 +2,7 @@ package pe.edu.pucp.inf.bagcontrol.planificacion.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
@@ -32,6 +33,9 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 public class PlanificadorService {
+
+    @Value("${simulacion.planificacion.timeout-ms:83000}")
+    private long planificacionTimeoutMs = 83_000L;
 
     private final EnvioDataStore envioDataStore;
     private final VueloRepository vueloRepository;
@@ -428,6 +432,7 @@ public class PlanificadorService {
         if (!fin.isAfter(inicio)) throw new IllegalArgumentException("La fecha fin debe ser mayor a la inicio.");
 
         long inicioTotal = System.currentTimeMillis();
+        long deadlinePlanificacionMs = inicioTotal + planificacionTimeoutMs;
         long inicioCargaEnvios = System.currentTimeMillis();
         System.out.println("[BACK-SIM-TIME] carga envios inicio ventanaInicio=" + inicio
                 + " ventanaFin=" + fin
@@ -444,6 +449,14 @@ public class PlanificadorService {
         if (pendientes != null && !pendientes.isEmpty()) {
             todosLosEnvios.addAll(pendientes);
         }
+        System.out.println("[PLAN-PERF] simulacionId=gestionado-por-job bloque=actual"
+                + " enviosNuevos=" + enviosVentana.size()
+                + " enviosPendientes=" + (pendientes == null ? 0 : pendientes.size())
+                + " enviosTotales=" + todosLosEnvios.size()
+                + " vuelosDisponibles=" + vuelosBaseSnapshot.size()
+                + " aeropuertos=" + aeropuertosSnapshot.size()
+                + " inicioMs=" + inicioTotal);
+        System.out.println("[PLAN-PERF-PHASE] fase=CARGA_DATOS_CSV duracionMs=" + tiempoCargaEnvios);
 
         List<Vuelo> vuelosBase = new ArrayList<>(vuelosBaseSnapshot);
         registrarVuelosBase(vuelosBase);
@@ -459,6 +472,7 @@ public class PlanificadorService {
         aplicarIncidencias(vuelosInstanciados, incidenciasSnapshot);
 
         long tiempoGeneracionVuelos = System.currentTimeMillis() - inicioGeneracionVuelos;
+        System.out.println("[PLAN-PERF-PHASE] fase=GENERACION_VUELOS duracionMs=" + tiempoGeneracionVuelos);
         System.out.println("[BACK-SIM-TIME] generacion vuelos fin vuelosInstanciados=" + vuelosInstanciados.size()
                 + " diasGeneracion=" + diasGeneracion
                 + " elapsedMs=" + tiempoGeneracionVuelos);
@@ -469,6 +483,7 @@ public class PlanificadorService {
         Map<String, List<Itinerario>> itinerariosPorRuta = itinerarioService.generarItinerariosPorRuta(vuelosInstanciados);
 
         long tiempoGeneracionItinerarios = System.currentTimeMillis() - inicioGeneracionItinerarios;
+        System.out.println("[PLAN-PERF-PHASE] fase=GENERACION_ITINERARIOS duracionMs=" + tiempoGeneracionItinerarios);
         System.out.println("[BACK-SIM-TIME] generacion itinerarios fin rutas=" + itinerariosPorRuta.size()
                 + " itinerarios=" + contarItinerarios(itinerariosPorRuta)
                 + " elapsedMs=" + tiempoGeneracionItinerarios);
@@ -484,11 +499,13 @@ public class PlanificadorService {
             pendientes.stream().map(Envio::getIdPedido).forEach(enviosNuevos::add);
         }
         SolucionRuta solucion = algoritmo.equalsIgnoreCase("TABU")
-                ? tabuSearch.ejecutar(todosLosEnvios, itinerariosPorRuta, aeropuertos, inventarioInicial, enviosNuevos)
+                ? tabuSearch.ejecutar(todosLosEnvios, itinerariosPorRuta, aeropuertos, inventarioInicial,
+                        enviosNuevos, deadlinePlanificacionMs, planificacionTimeoutMs)
                 : graspSearch.ejecutar(todosLosEnvios, itinerariosPorRuta, aeropuertos);
 
         registrarUsoVuelosCrud(vuelosBase, solucion);
         long tiempoAlgoritmo = System.currentTimeMillis() - inicioAlgoritmo;
+        System.out.println("[PLAN-PERF-PHASE] fase=TABU duracionMs=" + tiempoAlgoritmo);
         System.out.println("[BACK-SIM-TIME] " + algoritmo.toUpperCase() + " fin asignaciones="
                 + solucion.getAsignaciones().size()
                 + " elapsedMs=" + tiempoAlgoritmo);
@@ -520,6 +537,12 @@ public class PlanificadorService {
                 + " tiempoGeneracionItinerariosMs=" + tiempoGeneracionItinerarios
                 + " tiempoTabuMs=" + tiempoAlgoritmo
                 + " tiempoTotalPlanificacionMs=" + (System.currentTimeMillis() - inicioTotal));
+        long totalPlanificacionMs = System.currentTimeMillis() - inicioTotal;
+        System.out.println("[PLAN-PERF-SUMMARY] planificacionMs=" + totalPlanificacionMs
+                + " postprocesamientoMs=pendiente-job totalMs=" + totalPlanificacionMs
+                + " presupuestoMs=" + planificacionTimeoutMs
+                + " excedioPresupuesto=" + (totalPlanificacionMs > planificacionTimeoutMs)
+                + " solucionFactible=true enviosPendientes=" + solucion.obtenerEnviosConConflictos().size());
 
         return solucion;
     }

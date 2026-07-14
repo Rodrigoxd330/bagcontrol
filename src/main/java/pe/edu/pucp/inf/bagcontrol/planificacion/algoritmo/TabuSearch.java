@@ -45,6 +45,19 @@ public class TabuSearch {
         );
     }
 
+    public SolucionRuta ejecutar(
+            List<Envio> envios,
+            Map<String, List<Itinerario>> itinerariosPorRuta,
+            List<Aeropuerto> aeropuertos,
+            Map<String, Integer> inventarioInicial,
+            Set<String> enviosNuevos,
+            long deadlineMs,
+            long budgetMs
+    ) {
+        return ejecutarConParametros(envios, itinerariosPorRuta, aeropuertos, inventarioInicial,
+                enviosNuevos, 120, 12, 50, deadlineMs, budgetMs);
+    }
+
     public SolucionRuta ejecutarConParametros(
             List<Envio> envios,
             Map<String, List<Itinerario>> itinerariosPorRuta,
@@ -69,6 +82,24 @@ public class TabuSearch {
             int tenure,
             int maxVecinos
     ) {
+        long budgetMs = 83_000L;
+        return ejecutarConParametros(envios, itinerariosPorRuta, aeropuertos, inventarioInicial,
+                enviosNuevos, iteraciones, tenure, maxVecinos,
+                System.currentTimeMillis() + budgetMs, budgetMs);
+    }
+
+    private SolucionRuta ejecutarConParametros(
+            List<Envio> envios,
+            Map<String, List<Itinerario>> itinerariosPorRuta,
+            List<Aeropuerto> aeropuertos,
+            Map<String, Integer> inventarioInicial,
+            Set<String> enviosNuevos,
+            int iteraciones,
+            int tenure,
+            int maxVecinos,
+            long deadlineMs,
+            long budgetMs
+    ) {
         long inicio = System.currentTimeMillis();
         PlanificadorUtils.reiniciarMetricasRendimiento();
         long memoriaAntes = memoriaUsada();
@@ -81,12 +112,16 @@ public class TabuSearch {
         int mejorasGlobales = 0;
         int copiasSolucion = 0;
         long tiempoCopiasSolucionNanos = 0L;
+        String motivoParada = "ITERACIONES_COMPLETADAS";
 
         Map<String, Aeropuerto> mapaAeropuertos = aeropuertos.stream()
                 .collect(Collectors.toMap(Aeropuerto::getCodigoIata, a -> a));
 
         ResultadoSolucionInicial resultadoInicial =
-                generarSolucionInicial(envios, itinerariosPorRuta, mapaAeropuertos, inventarioInicial, enviosNuevos);
+                generarSolucionInicial(envios, itinerariosPorRuta, mapaAeropuertos, inventarioInicial,
+                        enviosNuevos, deadlineMs);
+        long finSolucionInicial = System.currentTimeMillis();
+        System.out.println("[PLAN-PERF-PHASE] fase=SOLUCION_INICIAL duracionMs=" + (finSolucionInicial - inicio));
         SolucionRuta actual = resultadoInicial.solucion();
         rutasDescartadasPorCapacidadAeropuerto += resultadoInicial.rutasDescartadasPorCapacidadAeropuerto();
         double actualFitness = fitnessEvaluator.evaluar(actual, mapaAeropuertos, inventarioInicial);
@@ -98,12 +133,18 @@ public class TabuSearch {
         double mejorFitnessGlobal = actualFitness;
 
         for (int i = 0; i < iteraciones; i++) {
+            if (System.currentTimeMillis() >= deadlineMs) {
+                motivoParada = "TIME_BUDGET_REACHED";
+                break;
+            }
             iteracionesEjecutadas++;
+            long restanteMs = deadlineMs - System.currentTimeMillis();
+            int vecinosPermitidos = restanteMs < 5_000L ? Math.min(maxVecinos, 10) : maxVecinos;
             List<Movimiento> vecinos = PlanificadorUtils.generarVecindario(
                     actual,
                     itinerariosPorRuta,
                     mapaAeropuertos,
-                    maxVecinos
+                    vecinosPermitidos
             );
             vecinosGenerados += vecinos.size();
 
@@ -111,6 +152,10 @@ public class TabuSearch {
             double mejorFitnessVecino = Double.MAX_VALUE;
 
             for (Movimiento mov : vecinos) {
+                if (System.currentTimeMillis() >= deadlineMs) {
+                    motivoParada = "TIME_BUDGET_REACHED";
+                    break;
+                }
                 vecinosEvaluados++;
                 String id = mov.getIdMovimientoTabu();
 
@@ -138,7 +183,10 @@ public class TabuSearch {
                 actual.setFitness(actualFitness);
             }
 
-            if (mejorMovimiento == null) break;
+            if (mejorMovimiento == null) {
+                if (!"TIME_BUDGET_REACHED".equals(motivoParada)) motivoParada = "SIN_VECINOS";
+                break;
+            }
 
             actual.aplicarMovimientoDefinitivo(mejorMovimiento);
             movimientosAceptados++;
@@ -179,6 +227,16 @@ public class TabuSearch {
                 + " enviosReplanificadosPorCapacidad=" + movimientosAceptados
                 + " mejorFitnessFinal=" + mejorFitnessGlobal
                 + " tiempoTotalMs=" + tiempoTotal);
+        System.out.println("[PLAN-PERF-PHASE] fase=VALIDACION_CAPACIDAD duracionMs="
+                + metricasUtils.tiempoValidacionCapacidadMs());
+        System.out.println("[PLAN-PERF-PHASE] fase=TABU duracionMs=" + tiempoTotal
+                + " iteracionesEjecutadas=" + iteracionesEjecutadas
+                + " vecinosEvaluados=" + vecinosEvaluados
+                + " movimientosAceptados=" + movimientosAceptados);
+        System.out.println("[TABU-STOP] motivo=" + motivoParada
+                + " elapsedMs=" + tiempoTotal + " budgetMs=" + budgetMs
+                + " iteraciones=" + iteracionesEjecutadas
+                + " mejorFitness=" + mejorFitnessGlobal + " solucionFactible=true");
         System.out.println("[SIM5D-PERF] llamadasRegistrarMovimientosAeropuertos="
                 + metricasUtils.llamadasRegistrarMovimientosAeropuertos()
                 + " movimientosAeropuertoGenerados=" + metricasUtils.movimientosAeropuertoGenerados()
@@ -205,7 +263,8 @@ public class TabuSearch {
             Map<String, List<Itinerario>> itinerariosPorRuta,
             Map<String, Aeropuerto> mapaAeropuertos,
             Map<String, Integer> inventarioInicial,
-            Set<String> enviosNuevos
+            Set<String> enviosNuevos,
+            long deadlineMs
     ) {
         SolucionRuta solucion = new SolucionRuta();
         Map<VueloInstanciado, Integer> cargaAcumulada = new HashMap<>();
@@ -224,6 +283,11 @@ public class TabuSearch {
                 .toList();
 
         for (Envio envio : enviosPriorizados) {
+            if (System.currentTimeMillis() >= deadlineMs) {
+                solucion.agregarAsignacion(envio, null);
+                enviosPendientesPorCapacidad++;
+                continue;
+            }
             List<Itinerario> posibles = PlanificadorUtils.buscarItinerariosViablesParaEnvio(
                             envio, itinerariosPorRuta, mapaAeropuertos)
                     .stream()

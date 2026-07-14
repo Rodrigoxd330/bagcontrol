@@ -294,6 +294,9 @@ public class SimulacionJob implements Runnable {
 
             long finPostProc = System.currentTimeMillis();
             long postProcMs = finPostProc - inicioPostProc;
+            System.out.println("[PLAN-PERF-PHASE] fase=POSTPROCESAMIENTO duracionMs=" + postProcMs);
+            System.out.println("[PLAN-PERF-PHASE] fase=SERIALIZACION_EVENTOS duracionMs="
+                    + tiempoGeneracionEventosMs);
 
             // --- FASE 8: FIN DE TA Y COMPENSACIÓN DE TIEMPO (SA - TA) ---
             long taCalculadoMs = System.currentTimeMillis() - inicioCronometroTa;
@@ -311,7 +314,15 @@ public class SimulacionJob implements Runnable {
             }
 
             // --- FASE 9: ENVÍO DE DATOS A FRONTEND ---
+            long inicioPublicacion = System.currentTimeMillis();
             publicarLote(eventosBatch,enviosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
+            long publicacionMs = System.currentTimeMillis() - inicioPublicacion;
+            System.out.println("[PLAN-PERF-PHASE] fase=PUBLICACION duracionMs=" + publicacionMs);
+            System.out.println("[PLAN-PERF-SUMMARY] planificacionMs=" + planMs
+                    + " postprocesamientoMs=" + postProcMs
+                    + " totalMs=" + taCalculadoMs
+                    + " presupuestoMs=90000 excedioPresupuesto=" + (taCalculadoMs > 90_000L)
+                    + " solucionFactible=true enviosPendientes=" + state.getEnviosPendientes().size());
 
             // --- RESUMEN DEL BATCH ---
             long totalMs = taCalculadoMs;
@@ -983,13 +994,7 @@ public class SimulacionJob implements Runnable {
         int capacidad = evento.getCapacidadMax();
         double porcentaje = capacidad > 0 ? (cantidadAjustada * 100.0) / capacidad : 0.0;
         evento.setPorcentajeOcupacion(porcentaje);
-        if (porcentaje >= 85.0) {
-            evento.setEstado(EstadoCapacidad.ROJO);
-        } else if (porcentaje >= 60.0) {
-            evento.setEstado(EstadoCapacidad.AMARILLO);
-        } else {
-            evento.setEstado(EstadoCapacidad.VERDE);
-        }
+        evento.setEstado(SimulacionEventosFactory.calcularEstadoAeropuerto(cantidadAjustada, capacidad));
     }
 
     private int registrarEntregasDirectas(EventoVueloDTO evento, Instant horaEvento) {

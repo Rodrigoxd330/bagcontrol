@@ -4,12 +4,35 @@ import org.junit.jupiter.api.Test;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.TipoEvento;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EstadoCapacidad;
 
 import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class SimulacionEventosFactoryTest {
+
+    @Test
+    void clasificaVacioSoloCuandoLaOcupacionEsCero() {
+        assertThat(SimulacionEventosFactory.calcularEstadoAeropuerto(0, 1000))
+                .isEqualTo(EstadoCapacidad.VACIO);
+        assertThat(SimulacionEventosFactory.calcularEstadoAeropuerto(1, 1000))
+                .isEqualTo(EstadoCapacidad.VERDE);
+        assertThat(SimulacionEventosFactory.calcularEstadoAeropuerto(100, 400))
+                .isEqualTo(EstadoCapacidad.VERDE);
+        assertThat(SimulacionEventosFactory.calcularEstadoAeropuerto(10, 1000))
+                .isNotEqualTo(EstadoCapacidad.VACIO);
+    }
+
+    @Test
+    void salidaTotalYEntradaPosteriorRecalculanEstado() {
+        assertThat(SimulacionEventosFactory.calcularEstadoAeropuerto(10, 1000))
+                .isEqualTo(EstadoCapacidad.VERDE);
+        assertThat(SimulacionEventosFactory.calcularEstadoAeropuerto(0, 1000))
+                .isEqualTo(EstadoCapacidad.VACIO);
+        assertThat(SimulacionEventosFactory.calcularEstadoAeropuerto(1, 1000))
+                .isEqualTo(EstadoCapacidad.VERDE);
+    }
 
     @Test
     void conservaSaturacionComoAlertaOperativa() {

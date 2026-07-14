@@ -34,7 +34,7 @@ class EnvioDataStoreTest {
         aeropuerto.setCodigoIata("SPIM");
 
         Envio creado = store.agregarEnvio(new NuevoEnvioDTO(
-                "SPIM", "SKBO", 5, "CLI-1", "2026-07-20T08:30:00"
+                "SPIM", "SKBO", 5, "CLI-1", "2026-07-20T08:30:00", false
         ), aeropuerto);
 
         assertThat(store.obtenerEnviosEnVentana(

@@ -19,8 +19,8 @@ import java.util.stream.Stream;
 public class SimulacionEventosFactory {
 
     private final ConfiguracionColapsoDTO configuracionColapso;
-    private final double COTA_ROJO = 85.0;
-    private final double COTA_AMARILLO = 60.0;
+    private static final double COTA_ROJO = 85.0;
+    private static final double COTA_AMARILLO = 60.0;
 
     public SimulacionEventosFactory(ConfiguracionColapsoDTO configuracionColapso) {
         this.configuracionColapso = configuracionColapso;
@@ -118,10 +118,21 @@ public class SimulacionEventosFactory {
     public EventoAeropuertoDTO crearEventoAeropuerto(Aeropuerto aeropuerto, int maletasActuales, Instant tiempoEvento, SimulacionState state) {
         int capacidad = aeropuerto.getCapacidadAlmacen();
         double porcentaje = capacidad > 0 ? (maletasActuales * 100.0) / capacidad : 0.0;
-
-        EstadoCapacidad estadoSemaforo = EstadoCapacidad.VERDE;
-        if (porcentaje >= COTA_ROJO) estadoSemaforo = EstadoCapacidad.ROJO;
-        else if (porcentaje >= COTA_AMARILLO) estadoSemaforo = EstadoCapacidad.AMARILLO;
+        EstadoCapacidad estadoSemaforo = calcularEstadoAeropuerto(maletasActuales, capacidad);
+        boolean consistente = (maletasActuales <= 0) == (estadoSemaforo == EstadoCapacidad.VACIO);
+        if (!consistente) {
+            System.err.println("[AIRPORT-STATE-AUDIT] simulacionId=" + state.getSimulacionId()
+                    + " bloque=" + state.getBloquesProcesados()
+                    + " iata=" + aeropuerto.getCodigoIata()
+                    + " capacidad=" + capacidad
+                    + " ocupacionInventarioBackend=" + maletasActuales
+                    + " ocupacionDto=" + maletasActuales
+                    + " estadoBackend=" + estadoSemaforo
+                    + " estadoDto=" + estadoSemaforo
+                    + " porcentaje=" + porcentaje
+                    + " timestampSimulado=" + tiempoEvento
+                    + " coincide=false");
+        }
 
         String codigoIata = aeropuerto.getCodigoIata();
 
@@ -154,6 +165,14 @@ public class SimulacionEventosFactory {
         return new EventoAeropuertoDTO(
                 TipoEvento.AEROPUERTO_ACTUALIZADO, tiempoEvento.toString(), codigoIata,
                 estadoSemaforo, porcentaje, maletasActuales, capacidad, top5Envios);
+    }
+
+    public static EstadoCapacidad calcularEstadoAeropuerto(int ocupacion, int capacidad) {
+        if (ocupacion <= 0) return EstadoCapacidad.VACIO;
+        double porcentaje = capacidad > 0 ? ocupacion * 100.0 / capacidad : 0.0;
+        if (porcentaje >= COTA_ROJO) return EstadoCapacidad.ROJO;
+        if (porcentaje >= COTA_AMARILLO) return EstadoCapacidad.AMARILLO;
+        return EstadoCapacidad.VERDE;
     }
 
     public EventoAeropuertoDTO crearAlertaAeropuertoSaturado(EventoAeropuertoDTO evento) {

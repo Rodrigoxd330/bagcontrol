@@ -150,7 +150,7 @@ class SimulacionJobTest {
                 "sim-colapso-capacidad", LocalDateTime.of(2026, 7, 20, 8, 15),
                 LocalDateTime.of(2026, 7, 20, 12, 15), 240, "TABU", planificador, repo, publisher,
                 new SimulacionEventosFactory(new ConfiguracionColapsoDTO()), state,
-                new ConfiguracionColapsoDTO(), new SimulacionStateMutator(state, repo), "ESTANDAR", Set.of()
+                new ConfiguracionColapsoDTO(), new SimulacionStateMutator(state, repo), "ESTANDAR"
         );
 
         job.run();
@@ -195,8 +195,7 @@ class SimulacionJobTest {
                 state,
                 configuracion,
                 new SimulacionStateMutator(state, aeropuertoRepository),
-                "ESTANDAR",
-                java.util.Set.of()
+                "ESTANDAR"
         );
 
         job.run();
@@ -250,8 +249,7 @@ class SimulacionJobTest {
                 state,
                 new ConfiguracionColapsoDTO(),
                 new SimulacionStateMutator(state, aeropuertoRepository),
-                "ESTANDAR",
-                java.util.Set.of()
+                "ESTANDAR"
         );
 
         Method registrarEventosReplanificacion = SimulacionJob.class.getDeclaredMethod(
@@ -334,8 +332,7 @@ class SimulacionJobTest {
                 state,
                 new ConfiguracionColapsoDTO(),
                 new SimulacionStateMutator(state, aeropuertoRepository),
-                "ESTANDAR",
-                java.util.Set.of()
+                "ESTANDAR"
         );
 
         EventoVueloDTO despega = crearEventoVuelo(TipoEvento.VUELO_DESPEGA);
@@ -389,7 +386,7 @@ class SimulacionJobTest {
                 LocalDateTime.of(2026, 7, 20, 12, 15), 240, "TABU",
                 mock(PlanificadorService.class), repo, mock(WebSocketPublisher.class),
                 new SimulacionEventosFactory(new ConfiguracionColapsoDTO()), state,
-                new ConfiguracionColapsoDTO(), new SimulacionStateMutator(state, repo), "ESTANDAR", Set.of()
+                new ConfiguracionColapsoDTO(), new SimulacionStateMutator(state, repo), "ESTANDAR"
         );
     }
 
