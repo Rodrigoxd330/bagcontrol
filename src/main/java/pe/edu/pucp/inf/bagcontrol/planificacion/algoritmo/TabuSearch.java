@@ -108,9 +108,9 @@ public class TabuSearch {
                 vecinosEvaluados++;
                 String id = mov.getIdMovimientoTabu();
 
-                actual.aplicarMovimientoDefinitivo(mov);
+                boolean noRespeta = actual.aplicarMovimientoDefinitivo(mov,mapaAeropuertos,inventarioInicial,enviosNuevos);
 
-                boolean noRespeta = false;
+                /*
                 for(RutaAsignada asignacion : actual.getAsignaciones()){
                     if (!PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
                             asignacion, mapaAeropuertos, inventarioInicial, enviosNuevos
@@ -121,8 +121,13 @@ public class TabuSearch {
                         noRespeta = true;
                         break;
                     }
+                }*/
+                if(noRespeta) {
+                    rutasDescartadasPorCapacidadAeropuerto++;
+                    actual.deshacerMovimiento(mov);
+                    actual.setFitness(actualFitness);
+                    continue;
                 }
-                if(noRespeta)continue;
 
                 double fitnessCandidato = fitnessEvaluator.evaluar(actual, mapaAeropuertos, inventarioInicial);
 
@@ -141,7 +146,9 @@ public class TabuSearch {
 
             if (mejorMovimiento == null) break;
 
-            actual.aplicarMovimientoDefinitivo(mejorMovimiento);
+            boolean noRespeta = actual.aplicarMovimientoDefinitivo(mejorMovimiento,mapaAeropuertos,inventarioInicial,enviosNuevos);
+            if(noRespeta){actual.deshacerMovimiento(mejorMovimiento);break;}
+
             movimientosAceptados++;
             actualFitness = fitnessEvaluator.evaluar(actual, mapaAeropuertos, inventarioInicial);
 
@@ -213,7 +220,7 @@ public class TabuSearch {
             for (Itinerario posible : posibles) {
                 RutaAsignada asignacion = solucion.agregarAsignacion(envio, posible);
                 boolean capacidadDisponible = PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
-                        asignacion, mapaAeropuertos, inventarioInicial, enviosNuevos
+                        asignacion, mapaAeropuertos, inventarioAcumulado, enviosNuevos
                 );
                 solucion.getAsignaciones().remove(solucion.getAsignaciones().size() - 1);
                 if (capacidadDisponible) {

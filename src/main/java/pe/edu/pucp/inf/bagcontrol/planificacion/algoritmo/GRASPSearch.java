@@ -136,7 +136,7 @@ public class GRASPSearch {
 
             for (var movimiento : vecinos) {
                 vecinosEvaluados++;
-                mejor.aplicarMovimientoDefinitivo(movimiento);
+                //mejor.aplicarMovimientoDefinitivo,(movimiento,mapaAeropuertos);
                 double fitnessCandidato = fitnessEvaluator.evaluar(mejor, mapaAeropuertos);
 
                 if (fitnessCandidato < mejorFitness) {
