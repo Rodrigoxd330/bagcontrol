@@ -554,6 +554,17 @@ public class PlanificadorService {
                 + " tabuOAlgoritmoMs=" + tiempoAlgoritmo
                 + " vuelosCanceladosUsados=" + solucion.getVuelosCanceladosUsadosCount()
                 + " totalMs=" + (System.currentTimeMillis() - inicioTotal));
+        System.out.println("[SIM5D-PERF] envios=" + todosLosEnvios.size()
+                + " maletas=" + sumarMaletas(todosLosEnvios)
+                + " vuelosBase=" + vuelosBase.size()
+                + " vuelosInstanciados=" + vuelosInstanciados.size()
+                + " itinerariosGenerados=" + contarItinerarios(itinerariosPorRuta)
+                + " rutas=" + itinerariosPorRuta.size()
+                + " tiempoCargaEnviosMs=" + tiempoCargaEnvios
+                + " tiempoGeneracionVuelosMs=" + tiempoGeneracionVuelos
+                + " tiempoGeneracionItinerariosMs=" + tiempoGeneracionItinerarios
+                + " tiempoTabuMs=" + tiempoAlgoritmo
+                + " tiempoTotalPlanificacionMs=" + (System.currentTimeMillis() - inicioTotal));
 
         return solucion;
     }

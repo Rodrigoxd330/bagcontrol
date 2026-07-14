@@ -16,6 +16,17 @@ import java.util.*;
 
 public class PlanificadorUtils {
 
+    private static final ThreadLocal<MetricasRendimiento> METRICAS =
+            ThreadLocal.withInitial(MetricasRendimiento::new);
+
+    public static void reiniciarMetricasRendimiento() {
+        METRICAS.set(new MetricasRendimiento());
+    }
+
+    public static MetricasRendimiento snapshotMetricasRendimiento() {
+        return METRICAS.get().copiar();
+    }
+
     public static double calcularDuracionItinerarioHoras(Itinerario itinerario) {
         Duration duracion = Duration.between(
                 itinerario.getFechaHoraSalidaUtc(),
@@ -178,6 +189,24 @@ public class PlanificadorUtils {
             Map<String, Integer> inventarioInicial,
             Set<String> enviosNuevos
     ) {
+        long inicioNanos = System.nanoTime();
+        MetricasRendimiento metricas = METRICAS.get();
+        metricas.llamadasValidacionCapacidad++;
+        try {
+            return solucionRespetaCapacidadAeropuertosInterna(
+                    solucion, mapaAeropuertos, inventarioInicial, enviosNuevos
+            );
+        } finally {
+            metricas.tiempoValidacionCapacidadNanos += System.nanoTime() - inicioNanos;
+        }
+    }
+
+    private static boolean solucionRespetaCapacidadAeropuertosInterna(
+            SolucionRuta solucion,
+            Map<String, Aeropuerto> mapaAeropuertos,
+            Map<String, Integer> inventarioInicial,
+            Set<String> enviosNuevos
+    ) {
         Map<String, NavigableMap<Instant, Integer>> movimientosPorAeropuerto = new HashMap<>();
 
         for (RutaAsignada asignacion : solucion.getAsignaciones()) {
@@ -222,6 +251,75 @@ public class PlanificadorUtils {
             }
         }
         return true;
+    }
+
+    public static EvaluadorCapacidadIncremental crearEvaluadorCapacidadIncremental(
+            Map<String, Aeropuerto> mapaAeropuertos,
+            Map<String, Integer> inventarioInicial,
+            Set<String> enviosNuevos
+    ) {
+        return new EvaluadorCapacidadIncremental(mapaAeropuertos, inventarioInicial, enviosNuevos);
+    }
+
+    public static final class EvaluadorCapacidadIncremental {
+        private final Map<String, Aeropuerto> aeropuertos;
+        private final Map<String, Integer> inventarioInicial;
+        private final Set<String> enviosNuevos;
+        private final Map<String, NavigableMap<Instant, Integer>> movimientos = new HashMap<>();
+
+        private EvaluadorCapacidadIncremental(
+                Map<String, Aeropuerto> aeropuertos,
+                Map<String, Integer> inventarioInicial,
+                Set<String> enviosNuevos
+        ) {
+            this.aeropuertos = aeropuertos;
+            this.inventarioInicial = inventarioInicial;
+            this.enviosNuevos = enviosNuevos;
+        }
+
+        public boolean respetaCapacidadAlAgregar(Envio envio, Itinerario itinerario) {
+            long inicioNanos = System.nanoTime();
+            MetricasRendimiento metricas = METRICAS.get();
+            metricas.llamadasValidacionCapacidad++;
+            Map<String, NavigableMap<Instant, Integer>> candidato = new HashMap<>();
+            try {
+                if (enviosNuevos.contains(envio.getIdPedido())) {
+                    registrarMovimiento(candidato, envio.getOrigenIata(), obtenerFechaIngresoUtc(envio),
+                            envio.getCantidadMaletas());
+                }
+                registrarMovimientosAeropuertos(itinerario, envio.getCantidadMaletas(), candidato);
+
+                for (Map.Entry<String, NavigableMap<Instant, Integer>> entry : candidato.entrySet()) {
+                    String codigoIata = entry.getKey();
+                    Aeropuerto aeropuerto = aeropuertos.get(codigoIata);
+                    if (aeropuerto == null) return false;
+
+                    NavigableMap<Instant, Integer> combinados = new TreeMap<>(
+                            movimientos.getOrDefault(codigoIata, Collections.emptyNavigableMap())
+                    );
+                    entry.getValue().forEach((instante, variacion) ->
+                            combinados.merge(instante, variacion, Integer::sum));
+
+                    int ocupacion = inventarioInicial.getOrDefault(codigoIata, 0);
+                    if (ocupacion < 0 || ocupacion > aeropuerto.getCapacidadAlmacen()) return false;
+                    for (int variacion : combinados.values()) {
+                        ocupacion += variacion;
+                        if (ocupacion < 0 || ocupacion > aeropuerto.getCapacidadAlmacen()) return false;
+                    }
+                }
+                return true;
+            } finally {
+                metricas.tiempoValidacionCapacidadNanos += System.nanoTime() - inicioNanos;
+            }
+        }
+
+        public void agregar(Envio envio, Itinerario itinerario) {
+            if (enviosNuevos.contains(envio.getIdPedido())) {
+                registrarMovimiento(movimientos, envio.getOrigenIata(), obtenerFechaIngresoUtc(envio),
+                        envio.getCantidadMaletas());
+            }
+            registrarMovimientosAeropuertos(itinerario, envio.getCantidadMaletas(), movimientos);
+        }
     }
 
     public static Map<String, Integer> construirInventarioInicial(
@@ -309,13 +407,21 @@ public class PlanificadorUtils {
             int cantidadMaletas,
             Map<String, NavigableMap<Instant, Integer>> movimientosPorAeropuerto
     ) {
-        for (VueloInstanciado vuelo : itinerario.getVuelos()) {
-            registrarMovimiento(
-                    movimientosPorAeropuerto, vuelo.getOrigenIata(), vuelo.getFechaHoraSalidaUtc(), -cantidadMaletas
-            );
-            registrarMovimiento(
-                    movimientosPorAeropuerto, vuelo.getDestinoIata(), vuelo.getFechaHoraLlegadaUtc(), cantidadMaletas
-            );
+        long inicioNanos = System.nanoTime();
+        MetricasRendimiento metricas = METRICAS.get();
+        metricas.llamadasRegistrarMovimientosAeropuertos++;
+        try {
+            for (VueloInstanciado vuelo : itinerario.getVuelos()) {
+                registrarMovimiento(
+                        movimientosPorAeropuerto, vuelo.getOrigenIata(), vuelo.getFechaHoraSalidaUtc(), -cantidadMaletas
+                );
+                registrarMovimiento(
+                        movimientosPorAeropuerto, vuelo.getDestinoIata(), vuelo.getFechaHoraLlegadaUtc(), cantidadMaletas
+                );
+                metricas.movimientosAeropuertoGenerados += 2;
+            }
+        } finally {
+            metricas.tiempoRegistrarMovimientosAeropuertosNanos += System.nanoTime() - inicioNanos;
         }
     }
 
@@ -346,5 +452,29 @@ public class PlanificadorUtils {
     }
 
     private record MovimientoInventario(Instant instante, String codigoIata, int variacion) {
+    }
+
+    public static final class MetricasRendimiento {
+        private long llamadasRegistrarMovimientosAeropuertos;
+        private long movimientosAeropuertoGenerados;
+        private long tiempoRegistrarMovimientosAeropuertosNanos;
+        private long llamadasValidacionCapacidad;
+        private long tiempoValidacionCapacidadNanos;
+
+        private MetricasRendimiento copiar() {
+            MetricasRendimiento copia = new MetricasRendimiento();
+            copia.llamadasRegistrarMovimientosAeropuertos = llamadasRegistrarMovimientosAeropuertos;
+            copia.movimientosAeropuertoGenerados = movimientosAeropuertoGenerados;
+            copia.tiempoRegistrarMovimientosAeropuertosNanos = tiempoRegistrarMovimientosAeropuertosNanos;
+            copia.llamadasValidacionCapacidad = llamadasValidacionCapacidad;
+            copia.tiempoValidacionCapacidadNanos = tiempoValidacionCapacidadNanos;
+            return copia;
+        }
+
+        public long llamadasRegistrarMovimientosAeropuertos() { return llamadasRegistrarMovimientosAeropuertos; }
+        public long movimientosAeropuertoGenerados() { return movimientosAeropuertoGenerados; }
+        public long tiempoRegistrarMovimientosAeropuertosMs() { return tiempoRegistrarMovimientosAeropuertosNanos / 1_000_000; }
+        public long llamadasValidacionCapacidad() { return llamadasValidacionCapacidad; }
+        public long tiempoValidacionCapacidadMs() { return tiempoValidacionCapacidadNanos / 1_000_000; }
     }
 }

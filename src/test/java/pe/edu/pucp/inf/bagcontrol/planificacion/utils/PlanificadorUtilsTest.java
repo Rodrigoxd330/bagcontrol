@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -122,6 +123,39 @@ class PlanificadorUtilsTest {
         );
 
         assertThat(inventarioReservado.get("BOG")).isZero();
+    }
+
+    @Test
+    void evaluadorIncrementalCoincideConValidacionCompleta() {
+        Envio primero = crearEnvio("PED-I1", "LIM", "MAD", LocalDateTime.of(2026, 7, 20, 8, 0));
+        Envio segundo = crearEnvio("PED-I2", "LIM", "MAD", LocalDateTime.of(2026, 7, 20, 8, 5));
+        primero.setCantidadMaletas(2);
+        segundo.setCantidadMaletas(2);
+        Map<String, Aeropuerto> aeropuertos = Map.of(
+                "LIM", crearAeropuerto("LIM", "AMERICA", -5, 10),
+                "BOG", crearAeropuerto("BOG", "AMERICA", -5, 3),
+                "MAD", crearAeropuerto("MAD", "EUROPA", 1, 10)
+        );
+        Itinerario itinerario = new Itinerario(List.of(
+                crearVuelo("LIM", "BOG", "2026-07-20T09:00:00Z", "2026-07-20T10:00:00Z"),
+                crearVuelo("BOG", "MAD", "2026-07-20T11:00:00Z", "2026-07-20T13:00:00Z")
+        ));
+        Set<String> nuevos = Set.of(primero.getIdPedido(), segundo.getIdPedido());
+        var incremental = PlanificadorUtils.crearEvaluadorCapacidadIncremental(
+                aeropuertos, Map.of(), nuevos
+        );
+        SolucionRuta completa = new SolucionRuta();
+
+        assertThat(incremental.respetaCapacidadAlAgregar(primero, itinerario)).isTrue();
+        incremental.agregar(primero, itinerario);
+        completa.agregarAsignacion(primero, itinerario);
+
+        completa.agregarAsignacion(segundo, itinerario);
+        assertThat(incremental.respetaCapacidadAlAgregar(segundo, itinerario))
+                .isEqualTo(PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
+                        completa, aeropuertos, Map.of(), nuevos
+                ))
+                .isFalse();
     }
 
     private Envio crearEnvio(String id, String origen, String destino, LocalDateTime fechaHoraUtc) {

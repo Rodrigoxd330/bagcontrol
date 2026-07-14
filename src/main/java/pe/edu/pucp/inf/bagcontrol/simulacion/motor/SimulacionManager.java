@@ -137,15 +137,18 @@ public class SimulacionManager {
         if (job == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Simulación no encontrada: " + simulacionId);
         }
-        if (!"CREADA".equals(job.getState().getEstado())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "La simulacion ya fue arrancada: " + simulacionId);
+        synchronized (job) {
+            if (!"CREADA".equals(job.getState().getEstado())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "La simulacion ya fue arrancada: " + simulacionId);
+            }
+            job.getState().setEstado("EN_PROCESO");
+            Thread thread = new Thread(job, "simulacion-" + simulacionId);
+            job.asignarHilo(thread);
+            thread.start();
+            System.out.println("[BACK-SIM-TIME] job iniciado id=" + simulacionId
+                    + " thread=" + thread.getName()
+                    + " ts=" + java.time.Instant.now());
         }
-        Thread thread = new Thread(job, "simulacion-" + simulacionId);
-        job.asignarHilo(thread);
-        thread.start();
-        System.out.println("[BACK-SIM-TIME] job iniciado id=" + simulacionId
-                + " thread=" + thread.getName()
-                + " ts=" + java.time.Instant.now());
     }
 
     public String crearYArrancarJob(LocalDateTime fechaInicio, LocalDateTime fechaFin, int k, String algoritmo, String modo) {

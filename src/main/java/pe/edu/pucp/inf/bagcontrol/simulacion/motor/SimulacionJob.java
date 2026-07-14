@@ -195,6 +195,9 @@ public class SimulacionJob implements Runnable {
         while (state.getTiempoActual().isBefore(tiempoFin)) {
             // --- FASE 1: INICIO DE MEDICIÓN DE TA ---
             long inicioCronometroTa = System.currentTimeMillis();
+            long memoriaInicioBloque = memoriaUsada();
+            long gcCountInicio = gcCount();
+            long gcTimeInicio = gcTimeMs();
             boolean esPrimerBloque = state.getBloquesProcesados() == 0;
 
             System.out.println("╔══════════════════════════════════════════════════════════════╗");
@@ -261,11 +264,13 @@ public class SimulacionJob implements Runnable {
             registrarEnviosNuevos(solucion, eventosBatch, inventarioReservado);
 
             // --- FASE 5: GENERACIÓN Y ORDENAMIENTO DE EVENTOS EN LA VENTANA ---
+            long inicioGeneracionEventos = System.currentTimeMillis();
             SimulacionEventosFactory.ResultadoEventosVuelo eventosVuelos =
                     simulacionEventosFactory.generarEventosVuelo(solucion, ventanaFinUtc);
             eventosBatch.addAll(eventosVuelos.actuales());
             agregarEventosVueloPostergados(eventosVuelos.futuros(), eventosVueloPostergados);
             eventosBatch.sort(comparadorEventos());
+            long tiempoGeneracionEventosMs = System.currentTimeMillis() - inicioGeneracionEventos;
 
             // --- FASE 6: CÁLCULO DE SLA Y COLAPSOS ---
             IncumplimientoSla incumplimiento = encontrarPrimerIncumplimientoSla(ventanaFinUtc).orElse(null);
@@ -310,17 +315,51 @@ public class SimulacionJob implements Runnable {
             // --- FASE 8: FIN DE TA Y COMPENSACIÓN DE TIEMPO (SA - TA) ---
             long taCalculadoMs = System.currentTimeMillis() - inicioCronometroTa;
             this.tiempoUltimoLoteMs = taCalculadoMs;
+            if (esSimulacionCincoDias()) {
+                long bloque = state.getBloquesProcesados() + 1L;
+                int maletas = solucion.getAsignaciones().stream()
+                        .mapToInt(asignacion -> asignacion.getEnvio().getCantidadMaletas()).sum();
+                System.out.println("[SIM5D-PERF] bloque=" + bloque
+                        + " envios=" + solucion.getAsignaciones().size()
+                        + " maletas=" + maletas
+                        + " rutas=" + solucion.getAsignaciones().stream()
+                                .filter(asignacion -> asignacion.getItinerario() != null).count()
+                        + " tiempoGeneracionEventosMs=" + tiempoGeneracionEventosMs
+                        + " eventosGenerados=" + eventosBatch.size()
+                        + " tiempoPostProcesamientoMs=" + postProcMs
+                        + " tiempoTotalPlanificacionMs=" + taCalculadoMs
+                        + " memoriaAntesBytes=" + memoriaInicioBloque
+                        + " memoriaDespuesBytes=" + memoriaUsada()
+                        + " gcCollections=" + Math.max(0L, gcCount() - gcCountInicio)
+                        + " gcTimeMs=" + Math.max(0L, gcTimeMs() - gcTimeInicio));
+            }
 
             state.setTiempoActual(ventanaFin);
 
-            // Primer lote: publicar inmediato para arrancar el frontend. Siguientes: esperar los SA y publicar al final
             boolean esPrimerLote = state.getBloquesProcesados() == 0;
-            if (!esPrimerLote && state.getTiempoActual().isBefore(tiempoFin)) {
+            long publicacionProgramadaMs = inicioJobMs
+                    + ((long) state.getBloquesProcesados() + 1L) * saMs;
+            if (esSimulacionCincoDias()) {
+                esperarHasta(publicacionProgramadaMs);
+            } else if (!esPrimerLote && state.getTiempoActual().isBefore(tiempoFin)) {
                 esperarConControl();
             }
 
             // --- FASE 9: ENVÍO DE DATOS A FRONTEND ---
             publicarLote(eventosBatch,enviosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
+            long publicacionRealMs = System.currentTimeMillis();
+            long retrasoMs = Math.max(0L, publicacionRealMs - publicacionProgramadaMs);
+            if (esSimulacionCincoDias()) {
+                System.out.println("[SIM5D-SCHEDULE] bloque=" + (state.getBloquesProcesados() + 1)
+                        + " inicioPlanificacion=" + Instant.ofEpochMilli(inicioCronometroTa)
+                        + " finPlanificacion=" + Instant.ofEpochMilli(inicioCronometroTa + taCalculadoMs)
+                        + " publicacionProgramada=" + Instant.ofEpochMilli(publicacionProgramadaMs)
+                        + " publicacionReal=" + Instant.ofEpochMilli(publicacionRealMs)
+                        + " taMs=" + taCalculadoMs
+                        + " saMs=" + saMs
+                        + " retrasoMs=" + retrasoMs
+                        + " dentroDeMargen=" + (taCalculadoMs <= saMs));
+            }
             if (esPrimerLote) {
                 System.out.println("[BACK-SIM-TIME] primer lote listo/enviado id=" + simulacionId
                         + " eventos=" + eventosBatch.size()
@@ -1112,6 +1151,41 @@ public class SimulacionJob implements Runnable {
             dormir(dormirMs);
             acumulado += dormirMs;
         }
+    }
+
+    private void esperarHasta(long instanteObjetivoMs) {
+        while (System.currentTimeMillis() < instanteObjetivoMs) {
+            verificarDetencion();
+            esperarSiPausadaODetenida();
+            long restante = instanteObjetivoMs - System.currentTimeMillis();
+            if (restante <= 0) return;
+            try {
+                Thread.sleep(Math.min(restante, 250L));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                verificarDetencion();
+                throw new SimulacionDetenidaException();
+            }
+        }
+    }
+
+    private boolean esSimulacionCincoDias() {
+        return "1".equals(modo) && horaFin != null;
+    }
+
+    private long memoriaUsada() {
+        Runtime runtime = Runtime.getRuntime();
+        return runtime.totalMemory() - runtime.freeMemory();
+    }
+
+    private long gcCount() {
+        return java.lang.management.ManagementFactory.getGarbageCollectorMXBeans().stream()
+                .mapToLong(bean -> Math.max(bean.getCollectionCount(), 0L)).sum();
+    }
+
+    private long gcTimeMs() {
+        return java.lang.management.ManagementFactory.getGarbageCollectorMXBeans().stream()
+                .mapToLong(bean -> Math.max(bean.getCollectionTime(), 0L)).sum();
     }
 
     private void esperarSiPausadaODetenida() {

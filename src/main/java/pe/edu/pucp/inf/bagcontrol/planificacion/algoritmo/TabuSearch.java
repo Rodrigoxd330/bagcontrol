@@ -70,6 +70,8 @@ public class TabuSearch {
             int maxVecinos
     ) {
         long inicio = System.currentTimeMillis();
+        PlanificadorUtils.reiniciarMetricasRendimiento();
+        long memoriaAntes = memoriaUsada();
         Set<String> listaTabu = new LinkedHashSet<>();
         int iteracionesEjecutadas = 0;
         int vecinosGenerados = 0;
@@ -77,6 +79,8 @@ public class TabuSearch {
         int rutasDescartadasPorCapacidadAeropuerto = 0;
         int movimientosAceptados = 0;
         int mejorasGlobales = 0;
+        int copiasSolucion = 0;
+        long tiempoCopiasSolucionNanos = 0L;
 
         Map<String, Aeropuerto> mapaAeropuertos = aeropuertos.stream()
                 .collect(Collectors.toMap(Aeropuerto::getCodigoIata, a -> a));
@@ -87,7 +91,10 @@ public class TabuSearch {
         rutasDescartadasPorCapacidadAeropuerto += resultadoInicial.rutasDescartadasPorCapacidadAeropuerto();
         double actualFitness = fitnessEvaluator.evaluar(actual, mapaAeropuertos, inventarioInicial);
 
+        long inicioCopia = System.nanoTime();
         SolucionRuta mejor = actual.clonar();
+        tiempoCopiasSolucionNanos += System.nanoTime() - inicioCopia;
+        copiasSolucion++;
         double mejorFitnessGlobal = actualFitness;
 
         for (int i = 0; i < iteraciones; i++) {
@@ -138,7 +145,10 @@ public class TabuSearch {
             actualFitness = fitnessEvaluator.evaluar(actual, mapaAeropuertos, inventarioInicial);
 
             if (actualFitness < mejorFitnessGlobal) {
+                inicioCopia = System.nanoTime();
                 mejor = actual.clonar();
+                tiempoCopiasSolucionNanos += System.nanoTime() - inicioCopia;
+                copiasSolucion++;
                 mejorFitnessGlobal = actualFitness;
                 mejorasGlobales++;
             }
@@ -153,6 +163,8 @@ public class TabuSearch {
         }
 
         long tiempoTotal = System.currentTimeMillis() - inicio;
+        PlanificadorUtils.MetricasRendimiento metricasUtils = PlanificadorUtils.snapshotMetricasRendimiento();
+        long memoriaDespues = memoriaUsada();
         System.out.println("[METRICA TABU] enviosRecibidos=" + envios.size()
                 + " iteracionesConfiguradas=" + iteraciones
                 + " tenure=" + tenure
@@ -167,7 +179,25 @@ public class TabuSearch {
                 + " enviosReplanificadosPorCapacidad=" + movimientosAceptados
                 + " mejorFitnessFinal=" + mejorFitnessGlobal
                 + " tiempoTotalMs=" + tiempoTotal);
+        System.out.println("[SIM5D-PERF] llamadasRegistrarMovimientosAeropuertos="
+                + metricasUtils.llamadasRegistrarMovimientosAeropuertos()
+                + " movimientosAeropuertoGenerados=" + metricasUtils.movimientosAeropuertoGenerados()
+                + " tiempoRegistrarMovimientosAeropuertosMs=" + metricasUtils.tiempoRegistrarMovimientosAeropuertosMs()
+                + " llamadasValidacionCapacidad=" + metricasUtils.llamadasValidacionCapacidad()
+                + " tiempoValidacionCapacidadMs=" + metricasUtils.tiempoValidacionCapacidadMs()
+                + " vecinosGenerados=" + vecinosGenerados
+                + " vecinosEvaluados=" + vecinosEvaluados
+                + " copiasSolucion=" + copiasSolucion
+                + " tiempoCopiasSolucionMs=" + (tiempoCopiasSolucionNanos / 1_000_000)
+                + " memoriaAntesBytes=" + memoriaAntes
+                + " memoriaDespuesBytes=" + memoriaDespues
+                + " memoriaDeltaBytes=" + (memoriaDespues - memoriaAntes));
         return mejor;
+    }
+
+    private long memoriaUsada() {
+        Runtime runtime = Runtime.getRuntime();
+        return runtime.totalMemory() - runtime.freeMemory();
     }
 
     private ResultadoSolucionInicial generarSolucionInicial(
@@ -182,6 +212,10 @@ public class TabuSearch {
         Map<String, Integer> inventarioAcumulado = new HashMap<>(inventarioInicial);
         int rutasDescartadasPorCapacidadAeropuerto = 0;
         int enviosPendientesPorCapacidad = 0;
+        PlanificadorUtils.EvaluadorCapacidadIncremental evaluadorCapacidad =
+                PlanificadorUtils.crearEvaluadorCapacidadIncremental(
+                        mapaAeropuertos, inventarioInicial, enviosNuevos
+                );
 
         List<Envio> enviosPriorizados = envios.stream()
                 .sorted(Comparator
@@ -203,11 +237,7 @@ public class TabuSearch {
 
             List<Itinerario> viablesPorAeropuerto = new ArrayList<>();
             for (Itinerario posible : posibles) {
-                solucion.agregarAsignacion(envio, posible);
-                boolean capacidadDisponible = PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
-                        solucion, mapaAeropuertos, inventarioInicial, enviosNuevos
-                );
-                solucion.getAsignaciones().remove(solucion.getAsignaciones().size() - 1);
+                boolean capacidadDisponible = evaluadorCapacidad.respetaCapacidadAlAgregar(envio, posible);
                 if (capacidadDisponible) {
                     viablesPorAeropuerto.add(posible);
                 } else {
@@ -226,6 +256,7 @@ public class TabuSearch {
                 );
                 PlanificadorUtils.acumularCargaItinerario(elegido, envio, cargaAcumulada);
                 acumularInventarioItinerario(elegido, envio, inventarioAcumulado);
+                evaluadorCapacidad.agregar(envio, elegido);
                 solucion.agregarAsignacion(envio, elegido);
             }
         }
