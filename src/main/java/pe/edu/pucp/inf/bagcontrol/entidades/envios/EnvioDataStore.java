@@ -17,22 +17,14 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.*;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.NavigableMap;
-import java.util.Optional;
-import java.util.Set;
-import java.util.SortedMap;
-import java.util.TreeMap;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -47,14 +39,14 @@ public class EnvioDataStore {
     private final NavigableMap<LocalDate, RangoDia> indicePorDia = new TreeMap<>();
     private final Map<String, AtomicInteger> contadorManualPorOrigen = new ConcurrentHashMap<>();
     private final Map<String, Envio> enviosCrudPorId = new ConcurrentHashMap<>();
-    private final Map<String,Boolean> fechasCacheadas = new ConcurrentHashMap<>();
+    private final Map<String,LocalDateTime> fechasCacheadas = new ConcurrentHashMap<>(); //Value = ultima fecha de acceso
     private final Set<String> enviosEliminados = ConcurrentHashMap.newKeySet();
     private EnvioRepository envioRepository;
     private final ThreadPoolExecutor populateEnvioThreads = new ThreadPoolExecutor(8,8,2,TimeUnit.MINUTES,new LinkedBlockingDeque<>());
 
     private Path spoolPath;
     private int totalEnviosIndexados;
-    private final int maxDiasCacheados = 30;
+    private final int maxDiasCacheados = 100;
     private final int margenDiasCacheados = 5;
 
     @Deprecated
@@ -207,15 +199,6 @@ public class EnvioDataStore {
                         Envio envio = parsearLineaZip(linea, origenIata, gmtOffset);
                         if (envio == null) continue;
                         LocalDate diaUtc = envio.getFechaHora().toLocalDate();
-
-                        /*if(diasCacheados < maxDiasCacheados) {
-                            enviosPorTiempo
-                                    .computeIfAbsent(envio.getFechaHora(), k -> new ArrayList<>())
-                                    .add(envio);
-                            if(fechasCacheadas.containsKey(diaUtc.toString()))diasCacheados++;
-                            fechasCacheadas.put(diaUtc.toString(),true);
-                        }*/
-
                         BufferedWriter writer = writersPorDia.computeIfAbsent(diaUtc, dia -> {
                             try {
                                 Path fragmento = Files.createTempFile(workDir, "envios-" + dia + "-", ".dat");
@@ -267,6 +250,9 @@ public class EnvioDataStore {
             LocalDateTime _inicio = inicio.isAfter(indexDate.atTime(0,0,0)) ? inicio : indexDate.atTime(0,0,0);
             LocalDateTime _fin = fin.isBefore(nextDate.atTime(0,0,0)) ? fin : nextDate.atTime(0,0,0);
             if (fechasCacheadas.containsKey(indexDate.toString()) || spoolPath == null) {
+                //Actualizar ultimo acceso
+                fechasCacheadas.put(indexDate.toString(),LocalDateTime.now());
+                //Acceder a submapa
                 SortedMap<LocalDateTime, List<Envio>> subMapa = new TreeMap<>(enviosPorTiempo.subMap(_inicio, _fin));
                 for (List<Envio> lista : subMapa.values()) {
                     for (Envio envio : lista) {
@@ -277,24 +263,8 @@ public class EnvioDataStore {
                     }
                 }
             } else if (spoolPath != null) {
-                //System.out.println("spool path");
-                //En vez de cargar directamente desde archivo, cargar a cache y acceder desde ahi
-                /*
-                for (Envio envio : obtenerEnviosEnVentanaDesdeSpool(indexDate.atTime(0,0,0), nextDate.plusDays(margenDiasCacheados).atTime(0,0,0))) {
-                    //System.out.println(envio.getFechaHora());
-                    if (!enviosEliminados.contains(envio.getIdPedido())
-                            && !enviosCrudPorId.containsKey(envio.getIdPedido())) {
-                        enviosPorTiempo
-                                .computeIfAbsent(envio.getFechaHora(), k -> new ArrayList<>())
-                                .add(envio);
-                    }
-                }
-                for(int i=0;i<margenDiasCacheados;i++){fechasCacheadas.put(indexDate.plusDays(i).toString(),true);}
-                */
                 populateEnvioMap(indexDate.atTime(0,0,0), nextDate.plusDays(margenDiasCacheados).atTime(0,0,0));
                 continue;
-
-                //TODO: Metodo para garbage collection de envios que no se acceden desde ningun cliente
                 //(revisar que los datos no esten por consultarse o en algun historico
             }
             //Empezar tarea de popular dias adelante
@@ -544,28 +514,8 @@ public class EnvioDataStore {
         long inicioTiempo = System.currentTimeMillis();
         List<Envio> envios = obtenerEnviosEnVentanaDesdeSpool(inicio,fin);
         envios.sort(Comparator.comparing(Envio::getFechaHora));
-
-        /*for (Envio envio : envios) {
-            //System.out.println(envio.getFechaHora());
-            if (!enviosEliminados.contains(envio.getIdPedido())
-                    && !enviosCrudPorId.containsKey(envio.getIdPedido())) {
-                    enviosPorTiempo
-                            .computeIfAbsent(envio.getFechaHora(), k -> new ArrayList<>())
-                            .add(envio);
-            }boolean skip = fechasCacheadas.containsKey(inicio.toLocalDate().plusDays(i).toString());
-            for(;envios.get(j).getFechaHora().toLocalDate().isEqual(indexDate);j++){
-                if(skip)continue;//Lo pongo aqui para que j incremente
-                Envio envio = envios.get(j);
-                if (!enviosEliminados.contains(envio.getIdPedido())
-                        && !enviosCrudPorId.containsKey(envio.getIdPedido())) {
-                    enviosPorTiempo
-                            .computeIfAbsent(envio.getFechaHora(), k -> new ArrayList<>())
-                            .add(envio);
-                }
-            }
-            fechasCacheadas.put(indexDate.toString(),true);
-        }*/
         int j=0;
+        //Popular por cada dia en el rango de fechas
         for(int i=0;inicio.toLocalDate().plusDays(i).compareTo(fin.toLocalDate())<=0;i++){
             LocalDate indexDate = inicio.toLocalDate().plusDays(i);
             synchronized (fechasCacheadas){
@@ -581,9 +531,28 @@ public class EnvioDataStore {
                     }
                 }
                 if(skip)continue;
-                fechasCacheadas.put(indexDate.toString(),true);
+                fechasCacheadas.put(indexDate.toString(),LocalDateTime.now());
             }
         }
+        //Si los dias cargados exceden el maximo, empezar a eliminar
+        if(fechasCacheadas.size()>maxDiasCacheados){
+            System.out.println("[POPULATE-ENVIOS] Eliminando exceso de envios. Tamaño original: "+envios.size());
+            int diff = fechasCacheadas.size() - maxDiasCacheados;
+            synchronized (fechasCacheadas){
+                String[] choppingBlock = (String[]) Arrays.copyOfRange(fechasCacheadas.entrySet()
+                        .stream()
+                        .sorted(Comparator.comparing(Map.Entry::getValue))
+                        .map(Map.Entry::getKey).toArray(),diff,fechasCacheadas.size());
+                for(String key : choppingBlock){
+                    LocalDate keyDate = LocalDate.parse(key);
+                    //Eliminar de treemap
+                    enviosPorTiempo.subMap(keyDate.atTime(LocalTime.MIN),keyDate.atTime(LocalTime.MAX)).clear();
+                    //Eliminar de fechas cacheadas
+                    fechasCacheadas.remove(key);
+                }
+            }
+        }
+        //Metricas
         long finTiempo = System.currentTimeMillis();
         System.out.println("[POPULATE-ENVIOS] Envios cargados: "+envios.size());
         System.out.println("[POPULATE-ENVIOS] Tiempo de llenado de mapa de envios: "+(finTiempo-inicioTiempo)+"ms");

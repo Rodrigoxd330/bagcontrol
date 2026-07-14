@@ -163,27 +163,24 @@ public class PlanificadorUtils {
     }
 
     public static boolean solucionRespetaCapacidadAeropuertos(
-            SolucionRuta solucion,
+            RutaAsignada asignacion,
             Map<String, Aeropuerto> mapaAeropuertos,
             Map<String, Integer> inventarioInicial
     ) {
         return solucionRespetaCapacidadAeropuertos(
-                solucion, mapaAeropuertos, inventarioInicial, Collections.emptySet()
+                asignacion, mapaAeropuertos, inventarioInicial, Collections.emptySet()
         );
     }
 
     public static boolean solucionRespetaCapacidadAeropuertos(
-            SolucionRuta solucion,
+            RutaAsignada asignacion,
             Map<String, Aeropuerto> mapaAeropuertos,
             Map<String, Integer> inventarioInicial,
             Set<String> enviosNuevos
     ) {
-        Map<String, NavigableMap<Instant, Integer>> movimientosPorAeropuerto = new HashMap<>();
+        Map<String, Map<Instant, Integer>> movimientosPorAeropuerto = new HashMap<>();
 
-        for (RutaAsignada asignacion : solucion.getAsignaciones()) {
-            if (asignacion.getItinerario() == null) {
-                continue;
-            }
+        if (asignacion.getItinerario() != null) {
             if (enviosNuevos.contains(asignacion.getEnvio().getIdPedido())) {
                 registrarMovimiento(
                         movimientosPorAeropuerto,
@@ -199,6 +196,7 @@ public class PlanificadorUtils {
             );
         }
 
+
         Set<String> aeropuertosEvaluados = new HashSet<>(inventarioInicial.keySet());
         aeropuertosEvaluados.addAll(movimientosPorAeropuerto.keySet());
         for (String codigoIata : aeropuertosEvaluados) {
@@ -213,7 +211,7 @@ public class PlanificadorUtils {
             }
 
             for (int variacion : movimientosPorAeropuerto
-                    .getOrDefault(codigoIata, Collections.emptyNavigableMap())
+                    .getOrDefault(codigoIata, Collections.emptyMap())
                     .values()) {
                 ocupacion += variacion;
                 if (ocupacion < 0 || ocupacion > aeropuerto.getCapacidadAlmacen()) {
@@ -307,7 +305,7 @@ public class PlanificadorUtils {
     private static void registrarMovimientosAeropuertos(
             Itinerario itinerario,
             int cantidadMaletas,
-            Map<String, NavigableMap<Instant, Integer>> movimientosPorAeropuerto
+            Map<String, Map<Instant, Integer>> movimientosPorAeropuerto
     ) {
         for (VueloInstanciado vuelo : itinerario.getVuelos()) {
             registrarMovimiento(
@@ -320,14 +318,23 @@ public class PlanificadorUtils {
     }
 
     private static void registrarMovimiento(
-            Map<String, NavigableMap<Instant, Integer>> movimientosPorAeropuerto,
+            Map<String, Map<Instant, Integer>> movimientosPorAeropuerto,
             String codigoIata,
             Instant instante,
             int variacion
     ) {
-        movimientosPorAeropuerto
-                .computeIfAbsent(codigoIata, key -> new TreeMap<>())
-                .merge(instante, variacion, Integer::sum);
+        Map<Instant, Integer> movimientosPorInstante = movimientosPorAeropuerto.get(codigoIata);
+        if (movimientosPorInstante == null) {
+            movimientosPorInstante = new HashMap<>();
+            movimientosPorAeropuerto.put(codigoIata, movimientosPorInstante);
+        }
+
+        Integer variacionActual = movimientosPorInstante.get(instante);
+        if (variacionActual == null) {
+            movimientosPorInstante.put(instante, variacion);
+        } else {
+            movimientosPorInstante.put(instante, variacionActual + variacion);
+        }
     }
 
     private static void acumularReservaPico(

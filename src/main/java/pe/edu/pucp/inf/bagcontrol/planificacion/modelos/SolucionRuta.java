@@ -17,8 +17,10 @@ public class SolucionRuta {
     private int vuelosSobrecargadosCount;
     private int aeropuertosSaturadosCount;
 
-    public void agregarAsignacion(Envio envio, Itinerario itinerario) {
+    public RutaAsignada agregarAsignacion(Envio envio, Itinerario itinerario) {
+        RutaAsignada asignacion = new RutaAsignada(envio, itinerario, false);
         asignaciones.add(new RutaAsignada(envio, itinerario, false)); //El excedeSLA se evalua después
+        return asignacion;
     }
 
     public Itinerario obtenerItinerarioAsignado(Envio envio) {
