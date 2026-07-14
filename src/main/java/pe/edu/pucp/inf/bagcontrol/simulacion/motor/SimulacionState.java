@@ -51,6 +51,8 @@ public class SimulacionState {
     private AtomicLong ultimoLoteEmitidoNumero = new AtomicLong(0);
     private String estado = "CREADA";
     private String modoSimulacion = "NORMAL";
+    private Instant fechaHoraInicioReal;
+    private Instant fechaHoraFinReal;
 
     //Colapso
     private MetricasColapsoDTO metricasColapsoActuales;
@@ -78,6 +80,14 @@ public class SimulacionState {
 
     public long getUltimoLoteSnapshot() {
         return ultimoLoteSnapshot.get();
+    }
+
+    public synchronized void registrarInicioReal() {
+        if (fechaHoraInicioReal == null) fechaHoraInicioReal = Instant.now();
+    }
+
+    public synchronized void registrarFinReal() {
+        if (fechaHoraFinReal == null) fechaHoraFinReal = Instant.now();
     }
 
     public Aeropuerto obtenerAeropuerto(String idAeropuerto){

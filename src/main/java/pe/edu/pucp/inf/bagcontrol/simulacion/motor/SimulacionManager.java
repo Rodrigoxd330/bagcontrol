@@ -141,6 +141,7 @@ public class SimulacionManager {
             if (!"CREADA".equals(job.getState().getEstado())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "La simulacion ya fue arrancada: " + simulacionId);
             }
+            job.getState().registrarInicioReal();
             job.getState().setEstado("EN_PROCESO");
             Thread thread = new Thread(job, "simulacion-" + simulacionId);
             job.asignarHilo(thread);
@@ -345,7 +346,9 @@ public class SimulacionManager {
                 job.getK(),
                 job.getFechaInicio().toString(),
                 job.getFechaCreacion().toString(),
-                state.getTiempoActual() != null ? state.getTiempoActual().toString() : null
+                state.getTiempoActual() != null ? state.getTiempoActual().toString() : null,
+                state.getFechaHoraInicioReal() != null ? state.getFechaHoraInicioReal().toString() : null,
+                state.getFechaHoraFinReal() != null ? state.getFechaHoraFinReal().toString() : null
         );
     }
 

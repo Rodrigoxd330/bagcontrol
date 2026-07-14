@@ -19,4 +19,6 @@ public class SimulacionEstadoDTO {
     private String fechaInicio;
     private String fechaCreacion;
     private String tiempoSimuladoActual;
+    private String fechaHoraInicioReal;
+    private String fechaHoraFinReal;
 }

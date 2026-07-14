@@ -55,6 +55,7 @@ public class SimulacionJob implements Runnable {
 
     private final AtomicBoolean pausada = new AtomicBoolean(false);
     private final AtomicBoolean detenida = new AtomicBoolean(false);
+    private final AtomicBoolean colapsoPublicado = new AtomicBoolean(false);
     @Getter
     private final LocalDateTime fechaCreacion = LocalDateTime.now();
 
@@ -67,6 +68,7 @@ public class SimulacionJob implements Runnable {
     private final SimulacionStateMutator simulacionStateMutator;
     private final Map<String, Integer> maletasDespachadasPorVuelo = new LinkedHashMap<>();
     private final Map<String, Set<String>> enviosDespachadosPorVuelo = new LinkedHashMap<>();
+    private final Set<String> enviosConCheckIn = new HashSet<>();
     private long tiempoUltimoLoteMs = 0L;
     private long inicioJobMs = 0L;
     private static final int MAX_EVENTOS_REPLANIFICACION_POR_BLOQUE = 50;
@@ -142,6 +144,7 @@ public class SimulacionJob implements Runnable {
 
     @Override
     public void run() {
+        state.registrarInicioReal();
         state.setEstado("EN_PROCESO");
         long inicioProceso = System.currentTimeMillis();
         inicioJobMs = inicioProceso;
@@ -151,11 +154,13 @@ public class SimulacionJob implements Runnable {
             ejecutarSimulacion();
         } catch (SimulacionDetenidaException e) {
             state.setEstado("DETENIDA");
+            state.registrarFinReal();
             publicarControl(TipoEvento.SIMULACION_DETENIDA);
         } catch (Exception e) {
             System.err.println("Error en la simulacion " + simulacionId + ": " + e.getMessage());
             e.printStackTrace();
             state.setEstado("ERROR");
+            state.registrarFinReal();
             publicarControl(TipoEvento.ERROR);
         } finally {
             long totalMs = System.currentTimeMillis() - inicioProceso;
@@ -261,7 +266,7 @@ public class SimulacionJob implements Runnable {
 
             // --- FASE 4: MUTACIÓN FÍSICA E INDEXACIÓN DEL ESTADO ---
             long inicioPostProc = System.currentTimeMillis();
-            registrarEnviosNuevos(solucion, eventosBatch, inventarioReservado);
+            List<RutaAsignada> checkInsPendientes = registrarEnviosNuevos(solucion);
 
             // --- FASE 5: GENERACIÓN Y ORDENAMIENTO DE EVENTOS EN LA VENTANA ---
             long inicioGeneracionEventos = System.currentTimeMillis();
@@ -276,7 +281,15 @@ public class SimulacionJob implements Runnable {
             IncumplimientoSla incumplimiento = encontrarPrimerIncumplimientoSla(ventanaFinUtc).orElse(null);
             Instant instanteColapso = incumplimiento != null ? incumplimiento.deadline() : null;
 
-            aplicarFisicaHasta(eventosBatch, instanteColapso, clavesEventosPostergadosEnBatch);
+            Optional<ColapsoCapacidad> colapsoCapacidad = aplicarFisicaHasta(
+                    eventosBatch, instanteColapso, clavesEventosPostergadosEnBatch, checkInsPendientes
+            );
+            if (colapsoCapacidad.isPresent()) {
+                instanteColapso = colapsoCapacidad.get().instante();
+                registrarColapsoCapacidad(
+                        ciclo, ventanaInicio, ventanaFin, solucion, colapsoCapacidad.get(), eventosBatch
+                );
+            }
             marcarEnviosEntregadosHasta(
                     instanteColapso != null ? instanteColapso : ventanaFinUtc,
                     eventosBatch
@@ -286,7 +299,7 @@ public class SimulacionJob implements Runnable {
 
             simulacionStateMutator.indexarEnviosPorVuelo(enviosDespachadosPorVuelo);
 
-            if (incumplimiento != null) {
+            if (incumplimiento != null && colapsoCapacidad.isEmpty()) {
                 registrarColapsoSla(ciclo, ventanaInicio, ventanaFin, solucion, incumplimiento, eventosBatch);
             }
 
@@ -297,13 +310,12 @@ public class SimulacionJob implements Runnable {
                     e.getEnvio().getCantidadMaletas(),e.getEnvio().getIdCliente())).toList();
 
             // --- FASE 7: COLAPSO ---
-            if (incumplimiento != null) {
+            if (incumplimiento != null || colapsoCapacidad.isPresent()) {
                 publicarLote(eventosBatch,enviosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
                 state.guardarSnapshot();
                 state.setBloquesProcesados(state.getBloquesProcesados() + 1);
                 publicarMetricasCapacidad(solucion);
                 state.setTiempoActual(LocalDateTime.ofInstant(instanteColapso, ZoneOffset.UTC));
-                publicarControl(TipoEvento.SIMULACION_FINALIZADA);
                 break;
             }
 
@@ -381,16 +393,13 @@ public class SimulacionJob implements Runnable {
 
         if (!esTerminal()) {
             state.setEstado("FINALIZADA");
+            state.registrarFinReal();
             publicarControl(TipoEvento.SIMULACION_FINALIZADA);
         }
     }
 
-    private void registrarEnviosNuevos(
-            SolucionRuta solucion,
-            List<EventoBaseDTO> eventosBatch,
-            Map<String, Integer> inventarioReservado
-    ) {
-        PlanificadorUtils.reservarEscalasSolucion(solucion, inventarioReservado);
+    private List<RutaAsignada> registrarEnviosNuevos(SolucionRuta solucion) {
+        List<RutaAsignada> checkIns = new ArrayList<>();
         for (RutaAsignada asignacion : solucion.getAsignaciones()) {
             Envio envio = asignacion.getEnvio();
             state.getEnviosEnSeguimiento().merge(
@@ -398,27 +407,19 @@ public class SimulacionJob implements Runnable {
                     asignacion,
                     (anterior, nueva) -> nueva.getItinerario() != null ? nueva : anterior
             );
-            if (!state.getEnviosRegistrados().add(envio.getIdPedido())) {
+            state.getEnviosRegistrados().add(envio.getIdPedido());
+            state.getUltimoAeropuertoPorEnvio().putIfAbsent(envio.getIdPedido(), envio.getOrigenIata());
+            if (asignacion.getItinerario() == null) {
+                System.out.println("[SIM5D-PENDING-CAPACITY-CHECK] envioId=" + envio.getIdPedido()
+                        + " pendiente=true tieneMovimientosRegistrados=false"
+                        + " cantidadMovimientosResiduales=0 consumeCapacidad=false");
                 continue;
             }
-
-            String origen = envio.getOrigenIata();
-            state.getUltimoAeropuertoPorEnvio().put(envio.getIdPedido(), origen);
-            Aeropuerto aeropuerto = state.getAeropuertosSnapshot().get(origen);
-            int cantidadMaletas = envio.getCantidadMaletas();
-            boolean registrado = simulacionStateMutator.sumarMaletas(origen, cantidadMaletas);
-            if (!registrado) {
-                System.out.println("[SIMULADOR-INVENTARIO] checkInNoRegistrado idPedido=" + envio.getIdPedido()
-                        + " aeropuerto=" + origen
-                        + " maletas=" + cantidadMaletas
-                        + " causa=SUMAR_MALETAS_FALLO");
+            if (enviosConCheckIn.add(envio.getIdPedido())) {
+                checkIns.add(asignacion);
             }
-            inventarioReservado.merge(origen, cantidadMaletas, Integer::sum);
-            int inventario = state.getInventarioSnapshot().getOrDefault(origen, 0);
-            eventosBatch.add(simulacionEventosFactory.crearEventoAeropuerto(
-                    aeropuerto, inventario, PlanificadorUtils.obtenerFechaIngresoUtc(envio), this.state
-            ));
         }
+        return checkIns;
     }
 
     private void registrarEventosReplanificacion(
@@ -594,6 +595,7 @@ public class SimulacionJob implements Runnable {
     ) {
         Instant instante = incumplimiento.deadline();
         state.setEstado("COLAPSADA");
+        state.registrarFinReal();
         state.setMotivoColapso("SLA_INCUMPLIDO");
         state.setDetalleColapso(crearDetalleColapsoSla(incumplimiento));
         state.setMetricasColapsoActuales(crearMetricasColapsoSla(
@@ -752,26 +754,155 @@ public class SimulacionJob implements Runnable {
             Instant instanteColapso,
             Set<String> clavesEventosPostergadosEnBatch
     ) {
+        aplicarFisicaHasta(eventos, instanteColapso, clavesEventosPostergadosEnBatch, List.of());
+    }
+
+    private void registrarColapsoCapacidad(
+            int ciclo,
+            LocalDateTime ventanaInicio,
+            LocalDateTime ventanaFin,
+            SolucionRuta solucion,
+            ColapsoCapacidad colapso,
+            List<EventoBaseDTO> eventosBatch
+    ) {
+        if (!colapsoPublicado.compareAndSet(false, true)) return;
+        String estadoAnterior = state.getEstado();
+        state.setEstado("COLAPSADA");
+        state.registrarFinReal();
+        state.setMotivoColapso("CAPACIDAD_AEROPUERTO_SUPERADA");
+
+        double porcentaje = colapso.ocupacion() * 100.0 / colapso.capacidad();
+        DetalleColapsoDTO detalle = new DetalleColapsoDTO();
+        detalle.setIdPedido(colapso.envioId());
+        detalle.setCantidadMaletas(colapso.cantidadMovimiento());
+        detalle.setMotivo("CAPACIDAD_AEROPUERTO_SUPERADA");
+        detalle.setVueloAfectado(colapso.vueloId());
+        detalle.setHoraSimulada(colapso.instante().toString());
+        detalle.setTipo("CAPACIDAD_AEROPUERTO");
+        detalle.setCodigoAeropuerto(colapso.aeropuerto());
+        detalle.setCapacidad(colapso.capacidad());
+        detalle.setMaletasActuales(colapso.ocupacion());
+        detalle.setPorcentajeOcupacion(porcentaje);
+        detalle.setHoraColapso(colapso.instante().toString());
+        state.setDetalleColapso(detalle);
+
+        MetricasColapsoDTO metricas = new MetricasColapsoDTO();
+        metricas.setCiclo(ciclo);
+        metricas.setVentanaInicio(ventanaInicio.toString());
+        metricas.setVentanaFin(ventanaFin.toString());
+        metricas.setEnviosProcesados(state.getEnviosRegistrados().size());
+        metricas.setMaletasProcesadas(state.getEnviosEnSeguimiento().values().stream()
+                .mapToInt(a -> a.getEnvio().getCantidadMaletas()).sum());
+        metricas.setAeropuertosSaturados(1);
+        metricas.setOcupacionAeropuertoMaxima(porcentaje / 100.0);
+        metricas.setFitnessUltimaSolucion(solucion.getFitness());
+        metricas.setMotivoColapso("CAPACIDAD_AEROPUERTO_SUPERADA");
+        metricas.setCodigoAeropuertoColapsado(colapso.aeropuerto());
+        metricas.setMaletasActualesAeropuerto(colapso.ocupacion());
+        metricas.setCapacidadAeropuerto(colapso.capacidad());
+        metricas.setPorcentajeOcupacionAeropuerto(porcentaje);
+        metricas.setCausaPrincipal("CAPACIDAD_AEROPUERTO_SUPERADA");
+        metricas.setFechaHoraColapsoExacta(colapso.instante().toString());
+        state.setMetricasColapsoActuales(metricas);
+
+        eventosBatch.removeIf(evento -> Instant.parse(evento.getFechaHoraEvento()).isAfter(colapso.instante()));
+        EventoColapsoDTO evento = new EventoColapsoDTO(
+                colapso.instante().toString(), simulacionId, colapso.instante().toString(), ciclo,
+                "CAPACIDAD_AEROPUERTO_SUPERADA", List.of("CAPACIDAD_AEROPUERTO_SUPERADA"), metricas, detalle
+        );
+        evento.setCodigoAeropuerto(colapso.aeropuerto());
+        evento.setNombreAeropuerto(colapso.nombreAeropuerto());
+        evento.setCapacidadMaxima(colapso.capacidad());
+        evento.setOcupacionActual(colapso.ocupacion());
+        evento.setExceso(colapso.ocupacion() - colapso.capacidad());
+        evento.setPorcentajeOcupacion(porcentaje);
+        evento.setMotivo("CAPACIDAD_AEROPUERTO_SUPERADA");
+        eventosBatch.add(evento);
+
+        System.out.println("[SIM5D-COLLAPSE] simulacionId=" + simulacionId
+                + " bloque=" + ciclo
+                + " aeropuerto=" + colapso.aeropuerto()
+                + " capacidadMaxima=" + colapso.capacidad()
+                + " ocupacionDetectada=" + colapso.ocupacion()
+                + " exceso=" + (colapso.ocupacion() - colapso.capacidad())
+                + " instanteSimulado=" + colapso.instante()
+                + " envioCausante=" + colapso.envioId()
+                + " vueloCausante=" + colapso.vueloId()
+                + " estadoAnterior=" + estadoAnterior
+                + " estadoNuevo=COLAPSADA");
+    }
+
+    private Optional<ColapsoCapacidad> aplicarFisicaHasta(
+            List<EventoBaseDTO> eventos,
+            Instant instanteColapso,
+            Set<String> clavesEventosPostergadosEnBatch,
+            List<RutaAsignada> checkIns
+    ) {
         List<EventoVueloDTO> eventosVuelo = eventos.stream()
                 .filter(EventoVueloDTO.class::isInstance)
                 .map(EventoVueloDTO.class::cast)
                 .filter(evento -> evento.getTipo() != TipoEvento.VUELO_CANCELADO)
                 .filter(evento -> instanteColapso == null
                         || !Instant.parse(evento.getFechaHoraEvento()).isAfter(instanteColapso))
-                .sorted(Comparator.comparing(evento -> Instant.parse(evento.getFechaHoraEvento())))
                 .toList();
+
+        List<MovimientoFisico> movimientos = new ArrayList<>();
         for (EventoVueloDTO evento : eventosVuelo) {
-            aplicarFisicaVuelo(
-                    evento,
-                    Instant.parse(evento.getFechaHoraEvento()),
-                    eventos,
-                    clavesEventosPostergadosEnBatch.contains(claveEventoVuelo(evento))
-            );
-            marcarEnviosEntregadosHasta(Instant.parse(evento.getFechaHoraEvento()), eventos);
+            int prioridad = evento.getTipo() == TipoEvento.VUELO_DESPEGA ? 0 : 2;
+            movimientos.add(new MovimientoFisico(
+                    Instant.parse(evento.getFechaHoraEvento()), prioridad, evento, null
+            ));
         }
+        for (RutaAsignada checkIn : checkIns) {
+            Instant instanteOriginal = PlanificadorUtils.obtenerFechaIngresoUtc(checkIn.getEnvio());
+            LocalDateTime tiempoActual = state.getTiempoActual() != null ? state.getTiempoActual() : horaInicio;
+            Instant inicioBloque = tiempoActual.toInstant(ZoneOffset.UTC);
+            Instant instante = instanteOriginal.isBefore(inicioBloque) ? inicioBloque : instanteOriginal;
+            if (instanteColapso == null || !instante.isAfter(instanteColapso)) {
+                movimientos.add(new MovimientoFisico(instante, 1, null, checkIn));
+            }
+        }
+
+        // Regla operativa para timestamps iguales: primero SALIDA, luego CHECK-IN y finalmente ATERRIZAJE.
+        // Así se libera capacidad antes de registrar entradas simultáneas y se evita un falso colapso.
+        movimientos.sort(Comparator.comparing(MovimientoFisico::instante)
+                .thenComparingInt(MovimientoFisico::prioridad)
+                .thenComparing(movimiento -> movimiento.idDeterministico()));
+
+        for (MovimientoFisico movimiento : movimientos) {
+            Optional<ColapsoCapacidad> colapso;
+            if (movimiento.checkIn() != null) {
+                colapso = aplicarCheckIn(movimiento.checkIn(), movimiento.instante(), eventos);
+            } else {
+                EventoVueloDTO evento = movimiento.eventoVuelo();
+                colapso = aplicarFisicaVuelo(
+                        evento,
+                        movimiento.instante(),
+                        eventos,
+                        clavesEventosPostergadosEnBatch.contains(claveEventoVuelo(evento))
+                );
+                marcarEnviosEntregadosHasta(movimiento.instante(), eventos);
+            }
+            if (colapso.isPresent()) {
+                return colapso;
+            }
+        }
+        return Optional.empty();
     }
 
-    private void aplicarFisicaVuelo(
+    private Optional<ColapsoCapacidad> aplicarCheckIn(
+            RutaAsignada asignacion,
+            Instant horaEvento,
+            List<EventoBaseDTO> eventos
+    ) {
+        Envio envio = asignacion.getEnvio();
+        return sumarInventarioYDetectarColapso(
+                envio.getOrigenIata(), envio.getCantidadMaletas(), horaEvento,
+                "ENTRADA", envio.getIdPedido(), null, eventos
+        );
+    }
+
+    private Optional<ColapsoCapacidad> aplicarFisicaVuelo(
             EventoVueloDTO evento,
             Instant horaEvento,
             List<EventoBaseDTO> eventos,
@@ -795,16 +926,72 @@ public class SimulacionJob implements Runnable {
                     esPostergado
             );
             agregarEventoInventario(origen, horaEvento, eventos);
+            return Optional.empty();
         } else if (evento.getTipo() == TipoEvento.VUELO_ATERRIZA) {
             aplicarCargaRealDespachada(evento);
             String destino = evento.getDestinoIata();
             int entregadasEnDestino = registrarEntregasDirectas(evento, horaEvento);
             int maletasParaAlmacenar = evento.getCantidadMaletas() - entregadasEnDestino;
-            if (maletasParaAlmacenar <= 0
-                    || simulacionStateMutator.sumarMaletas(destino, maletasParaAlmacenar)) {
+            if (maletasParaAlmacenar <= 0) {
                 agregarEventoInventario(destino, horaEvento, eventos);
+                return Optional.empty();
             }
+            return sumarInventarioYDetectarColapso(
+                    destino, maletasParaAlmacenar, horaEvento, "ESCALA",
+                    primerEnvioEvento(evento), evento.getCodigoVuelo(), eventos
+            );
         }
+        return Optional.empty();
+    }
+
+    private Optional<ColapsoCapacidad> sumarInventarioYDetectarColapso(
+            String codigoIata,
+            int cantidad,
+            Instant instante,
+            String tipoMovimiento,
+            String envioId,
+            Long vueloId,
+            List<EventoBaseDTO> eventos
+    ) {
+        Aeropuerto aeropuerto = state.getAeropuertosSnapshot().get(codigoIata);
+        int antes = state.getInventarioSnapshot().getOrDefault(codigoIata, 0);
+        if (aeropuerto == null || cantidad <= 0) {
+            return Optional.empty();
+        }
+        int despuesCompleto = antes + cantidad;
+        boolean supera = despuesCompleto > aeropuerto.getCapacidadAlmacen();
+        int despuesAplicado = supera ? aeropuerto.getCapacidadAlmacen() + 1 : despuesCompleto;
+        state.getInventarioSnapshot().put(codigoIata, despuesAplicado);
+        agregarEventoInventario(codigoIata, instante, eventos);
+
+        System.out.println("[SIM5D-CAPACITY-TRACE] bloque=" + (state.getBloquesProcesados() + 1)
+                + " aeropuerto=" + codigoIata
+                + " instante=" + instante
+                + " capacidadMaxima=" + aeropuerto.getCapacidadAlmacen()
+                + " ocupacionAntes=" + antes
+                + " movimiento=" + tipoMovimiento
+                + " cantidadMaletasMovimiento=" + cantidad
+                + " ocupacionDespues=" + despuesAplicado
+                + " envioId=" + envioId
+                + " vueloId=" + vueloId
+                + " superaCapacidad=" + supera);
+        System.out.println("[SIM5D-CAPACITY-COMPARE] aeropuerto=" + codigoIata
+                + " instante=" + instante
+                + " ocupacionSegunTabu=" + despuesCompleto
+                + " ocupacionSegunSimulador=" + despuesAplicado
+                + " ocupacionSegunFrontendDTO=" + despuesAplicado
+                + " coincide=" + (despuesCompleto == despuesAplicado));
+
+        if (!supera) return Optional.empty();
+        return Optional.of(new ColapsoCapacidad(
+                codigoIata, aeropuerto.getCiudad(), aeropuerto.getCapacidadAlmacen(), despuesAplicado,
+                instante, tipoMovimiento, cantidad, envioId, vueloId
+        ));
+    }
+
+    private String primerEnvioEvento(EventoVueloDTO evento) {
+        return evento.getCodigoEnvios() == null || evento.getCodigoEnvios().isEmpty()
+                ? null : evento.getCodigoEnvios().get(0);
     }
 
     private int registrarCargaRealDespachada(EventoVueloDTO evento, int inventarioDisponible) {
@@ -1239,6 +1426,7 @@ public class SimulacionJob implements Runnable {
         detenida.set(true);
         pausada.set(false);
         state.setEstado("DETENIDA");
+        state.registrarFinReal();
         if (hilo != null) hilo.interrupt();
     }
 
@@ -1255,6 +1443,31 @@ public class SimulacionJob implements Runnable {
     }
 
     private record IncumplimientoSla(RutaAsignada asignacion, Instant deadline) {
+    }
+
+    private record MovimientoFisico(
+            Instant instante,
+            int prioridad,
+            EventoVueloDTO eventoVuelo,
+            RutaAsignada checkIn
+    ) {
+        private String idDeterministico() {
+            if (checkIn != null) return checkIn.getEnvio().getIdPedido();
+            return eventoVuelo.getCodigoVuelo() + "|" + eventoVuelo.getTipo();
+        }
+    }
+
+    private record ColapsoCapacidad(
+            String aeropuerto,
+            String nombreAeropuerto,
+            int capacidad,
+            int ocupacion,
+            Instant instante,
+            String tipoMovimiento,
+            int cantidadMovimiento,
+            String envioId,
+            Long vueloId
+    ) {
     }
 
     private static class SimulacionDetenidaException extends RuntimeException {

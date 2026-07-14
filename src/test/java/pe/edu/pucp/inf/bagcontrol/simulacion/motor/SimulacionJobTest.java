@@ -26,6 +26,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -36,6 +37,133 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class SimulacionJobTest {
+
+    @Test
+    void timestampsRealesSeRegistranUnaSolaVez() {
+        SimulacionState state = new SimulacionState("sim-reloj-real");
+
+        state.registrarInicioReal();
+        Instant inicio = state.getFechaHoraInicioReal();
+        state.registrarInicioReal();
+        state.registrarFinReal();
+        Instant fin = state.getFechaHoraFinReal();
+        state.registrarFinReal();
+
+        assertThat(state.getFechaHoraInicioReal()).isEqualTo(inicio);
+        assertThat(state.getFechaHoraFinReal()).isEqualTo(fin);
+        assertThat(fin).isAfterOrEqualTo(inicio);
+    }
+
+    @Test
+    void capacidadExactaEsValidaYExcesoMinimoSeDetectaEnCapacidadMasUno() throws Exception {
+        Aeropuerto aeropuerto = crearAeropuerto("LIM", "AMERICA");
+        aeropuerto.setCapacidadAlmacen(420);
+        SimulacionState state = new SimulacionState("sim-capacidad");
+        state.getAeropuertosSnapshot().put("LIM", aeropuerto);
+        state.getInventarioSnapshot().put("LIM", 419);
+        SimulacionJob job = crearJobPrueba(state);
+        Method sumar = SimulacionJob.class.getDeclaredMethod(
+                "sumarInventarioYDetectarColapso", String.class, int.class, Instant.class,
+                String.class, String.class, Long.class, List.class
+        );
+        sumar.setAccessible(true);
+        List<EventoBaseDTO> eventos = new ArrayList<>();
+
+        Optional<?> exacto = (Optional<?>) sumar.invoke(
+                job, "LIM", 1, Instant.parse("2026-07-20T08:30:00Z"),
+                "ENTRADA", "PED-420", null, eventos
+        );
+        assertThat(exacto).isEmpty();
+        assertThat(state.getInventarioSnapshot().get("LIM")).isEqualTo(420);
+
+        Optional<?> exceso = (Optional<?>) sumar.invoke(
+                job, "LIM", 27, Instant.parse("2026-07-20T08:31:00Z"),
+                "ENTRADA", "PED-421", null, eventos
+        );
+        assertThat(exceso).isPresent();
+        assertThat(state.getInventarioSnapshot().get("LIM")).isEqualTo(421);
+    }
+
+    @Test
+    void envioPendienteNoRegistraCheckInNiConsumeCapacidad() throws Exception {
+        SimulacionState state = new SimulacionState("sim-pendiente");
+        state.getInventarioSnapshot().put("LIM", 10);
+        SolucionRuta solucion = new SolucionRuta();
+        solucion.agregarAsignacion(crearEnvio(), null);
+        SimulacionJob job = crearJobPrueba(state);
+        Method registrar = SimulacionJob.class.getDeclaredMethod("registrarEnviosNuevos", SolucionRuta.class);
+        registrar.setAccessible(true);
+
+        List<?> checkIns = (List<?>) registrar.invoke(job, solucion);
+
+        assertThat(checkIns).isEmpty();
+        assertThat(state.getInventarioSnapshot().get("LIM")).isEqualTo(10);
+    }
+
+    @Test
+    void salidaSeProcesaAntesQueCheckInEnElMismoTimestamp() throws Exception {
+        Aeropuerto aeropuerto = crearAeropuerto("LIM", "AMERICA");
+        aeropuerto.setCapacidadAlmacen(100);
+        SimulacionState state = new SimulacionState("sim-mismo-instante");
+        state.getAeropuertosSnapshot().put("LIM", aeropuerto);
+        state.getAeropuertosSnapshot().put("BOG", crearAeropuerto("BOG", "AMERICA"));
+        state.getInventarioSnapshot().put("LIM", 100);
+        Envio existente = crearEnvio();
+        existente.setIdPedido("EXISTENTE");
+        state.getEnviosEnSeguimiento().put(
+                existente.getIdPedido(), new RutaAsignada(existente, new Itinerario(List.of(crearVuelo())), false)
+        );
+        Envio nuevo = crearEnvio();
+        nuevo.setIdPedido("NUEVO");
+        nuevo.setFechaHora(LocalDateTime.of(2026, 7, 20, 9, 0));
+        RutaAsignada checkIn = new RutaAsignada(nuevo, new Itinerario(List.of(crearVuelo())), false);
+        EventoVueloDTO salida = crearEventoVuelo(TipoEvento.VUELO_DESPEGA);
+        List<EventoBaseDTO> eventos = new ArrayList<>(List.of(salida));
+        SimulacionJob job = crearJobPrueba(state);
+        Method aplicar = SimulacionJob.class.getDeclaredMethod(
+                "aplicarFisicaHasta", List.class, Instant.class, Set.class, List.class
+        );
+        aplicar.setAccessible(true);
+
+        Optional<?> colapso = (Optional<?>) aplicar.invoke(job, eventos, null, Set.of(), List.of(checkIn));
+
+        assertThat(colapso).isEmpty();
+        assertThat(state.getInventarioSnapshot().get("LIM")).isEqualTo(100);
+    }
+
+    @Test
+    void colapsoDeCapacidadEmiteUnSoloEventoYNoFinalizaNormalmente() {
+        Aeropuerto origen = crearAeropuerto("LIM", "AMERICA");
+        origen.setCapacidadAlmacen(2);
+        Aeropuerto destino = crearAeropuerto("BOG", "AMERICA");
+        Envio envio = crearEnvio();
+        SolucionRuta solucion = new SolucionRuta();
+        solucion.agregarAsignacion(envio, new Itinerario(List.of(crearVuelo())));
+        AeropuertoRepository repo = mock(AeropuertoRepository.class);
+        when(repo.findAll()).thenReturn(List.of(origen, destino));
+        PlanificadorService planificador = mock(PlanificadorService.class);
+        when(planificador.calcularSolucion(anyString(), any(), any(), any(), any())).thenReturn(solucion);
+        when(planificador.obtenerVuelosCanceladosEnVentana(any(), any())).thenReturn(List.of());
+        WebSocketPublisher publisher = mock(WebSocketPublisher.class);
+        SimulacionState state = new SimulacionState("sim-colapso-capacidad");
+        SimulacionJob job = new SimulacionJob(
+                "sim-colapso-capacidad", LocalDateTime.of(2026, 7, 20, 8, 15),
+                LocalDateTime.of(2026, 7, 20, 12, 15), 240, "TABU", planificador, repo, publisher,
+                new SimulacionEventosFactory(new ConfiguracionColapsoDTO()), state,
+                new ConfiguracionColapsoDTO(), new SimulacionStateMutator(state, repo), "ESTANDAR", Set.of()
+        );
+
+        job.run();
+
+        ArgumentCaptor<LoteEventosDTO> captor = ArgumentCaptor.forClass(LoteEventosDTO.class);
+        verify(publisher, org.mockito.Mockito.atLeastOnce()).publicarLote(anyString(), captor.capture());
+        List<EventoBaseDTO> publicados = captor.getAllValues().stream()
+                .flatMap(lote -> lote.getEventos().stream()).toList();
+        assertThat(publicados).filteredOn(EventoColapsoDTO.class::isInstance).hasSize(1);
+        assertThat(publicados).noneMatch(evento -> evento.getTipo() == TipoEvento.SIMULACION_FINALIZADA);
+        assertThat(state.getEstado()).isEqualTo("COLAPSADA");
+        assertThat(state.getBloquesProcesados()).isEqualTo(1);
+    }
 
     @Test
     void publicaColapsoEnDeadlineExactoDentroDelBatch() {
@@ -252,6 +380,17 @@ class SimulacionJobTest {
 
     private VueloInstanciado crearVuelo() {
         return crearVuelo(1L, false);
+    }
+
+    private SimulacionJob crearJobPrueba(SimulacionState state) {
+        AeropuertoRepository repo = mock(AeropuertoRepository.class);
+        return new SimulacionJob(
+                state.getSimulacionId(), LocalDateTime.of(2026, 7, 20, 8, 15),
+                LocalDateTime.of(2026, 7, 20, 12, 15), 240, "TABU",
+                mock(PlanificadorService.class), repo, mock(WebSocketPublisher.class),
+                new SimulacionEventosFactory(new ConfiguracionColapsoDTO()), state,
+                new ConfiguracionColapsoDTO(), new SimulacionStateMutator(state, repo), "ESTANDAR", Set.of()
+        );
     }
 
     private VueloInstanciado crearVuelo(Long codigo, boolean cancelado) {

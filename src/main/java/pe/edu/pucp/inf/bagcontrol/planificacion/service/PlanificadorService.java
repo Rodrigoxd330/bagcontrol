@@ -525,9 +525,11 @@ public class PlanificadorService {
 
         // IMPORTANTE: Pasamos 'todosLosEnvios' al algoritmo en lugar de solo los de la ventana
         Map<String, Integer> inventarioInicial = new java.util.HashMap<>(inventarioActual);
-        Set<String> enviosNuevos = enviosVentana.stream()
-                .map(Envio::getIdPedido)
-                .collect(java.util.stream.Collectors.toSet());
+        Set<String> enviosNuevos = new HashSet<>();
+        enviosVentana.stream().map(Envio::getIdPedido).forEach(enviosNuevos::add);
+        if (pendientes != null) {
+            pendientes.stream().map(Envio::getIdPedido).forEach(enviosNuevos::add);
+        }
         SolucionRuta solucion = algoritmo.equalsIgnoreCase("TABU")
                 ? tabuSearch.ejecutar(todosLosEnvios, itinerariosPorRuta, aeropuertos, inventarioInicial, enviosNuevos)
                 : graspSearch.ejecutar(todosLosEnvios, itinerariosPorRuta, aeropuertos);

@@ -21,6 +21,13 @@ public class EventoColapsoDTO extends EventoBaseDTO {
     private List<String> criteriosActivados;
     private MetricasColapsoDTO metricas;
     private DetalleColapsoDTO detalle;
+    private String codigoAeropuerto;
+    private String nombreAeropuerto;
+    private Integer capacidadMaxima;
+    private Integer ocupacionActual;
+    private Integer exceso;
+    private Double porcentajeOcupacion;
+    private String motivo;
 
     public EventoColapsoDTO(
             String fechaHoraEvento,
