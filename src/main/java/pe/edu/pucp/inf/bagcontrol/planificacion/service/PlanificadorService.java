@@ -34,8 +34,8 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class PlanificadorService {
 
-    @Value("${simulacion.planificacion.timeout-ms:83000}")
-    private long planificacionTimeoutMs = 83_000L;
+    @Value("${simulacion.planificacion.timeout-ms:28000}")
+    private long planificacionTimeoutMs = 28_000L;
 
     private final EnvioDataStore envioDataStore;
     private final VueloRepository vueloRepository;
@@ -107,10 +107,6 @@ public class PlanificadorService {
                 : graspSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos);
         registrarUsoVuelosCrud(vuelosBase, solucion);
         long tiempoAlgoritmo = System.currentTimeMillis() - inicioAlgoritmo;
-
-        imprimirMetricasPlanificacion(algoritmo, fechaInicio, dias, envios, vuelosBase, vuelosInstanciados,
-                aeropuertos, itinerariosPorRuta, tiempoGeneracionVuelos, tiempoGeneracionItinerarios,
-                tiempoAlgoritmo, solucion, tiempoCargaEnvios, System.currentTimeMillis() - inicioTotal);
 
         List<AsignacionPlanDTO> plan = solucion.getAsignaciones().stream()
                 .map(asignacion -> {
@@ -193,42 +189,16 @@ public class PlanificadorService {
         SolucionRuta solucionGrasp = graspSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos);
         registrarUsoVuelosCrud(vuelosBase, solucionGrasp);
         long tiempoGrasp = System.currentTimeMillis() - inicioGrasp;
-        imprimirMetricasPlanificacion("GRASP", fechaInicio, cantidadDias, envios, vuelosBase, vuelosInstanciados,
-                aeropuertos, itinerariosPorRuta, tiempoGeneracionVuelos, tiempoGeneracionItinerarios,
-                tiempoGrasp, solucionGrasp);
-
         double entregaPromGrasp = calcularTiempoEntregaPromedio(solucionGrasp);
         double vuelosPromGrasp = calcularVuelosPromedio(solucionGrasp, envios.size());
-        solucionGrasp.getAsignaciones().stream()
-                .filter(a -> a.getItinerario() == null)
-                .forEach(a -> {
-                    Envio e = a.getEnvio();
-                    System.out.println("  [SIN_ITINERARIO GRASP] idPedido=" + e.getIdPedido()
-                            + " ruta=" + e.getOrigenIata() + "->" + e.getDestinoIata()
-                            + " maletas=" + e.getCantidadMaletas()
-                            + " fechaHora=" + e.getFechaHora());
-                });
 
         // --- TABU ---
         long inicioTabu = System.currentTimeMillis();
         SolucionRuta solucionTabu = tabuSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos);
         registrarUsoVuelosCrud(vuelosBase, solucionTabu);
         long tiempoTabu = System.currentTimeMillis() - inicioTabu;
-        imprimirMetricasPlanificacion("TABU", fechaInicio, cantidadDias, envios, vuelosBase, vuelosInstanciados,
-                aeropuertos, itinerariosPorRuta, tiempoGeneracionVuelos, tiempoGeneracionItinerarios,
-                tiempoTabu, solucionTabu);
-
         double entregaPromTabu = calcularTiempoEntregaPromedio(solucionTabu);
         double vuelosPromTabu = calcularVuelosPromedio(solucionTabu, envios.size());
-        solucionTabu.getAsignaciones().stream()
-                .filter(a -> a.getItinerario() == null)
-                .forEach(a -> {
-                    Envio e = a.getEnvio();
-                    System.out.println("  [SIN_ITINERARIO TABU]  idPedido=" + e.getIdPedido()
-                            + " ruta=" + e.getOrigenIata() + "->" + e.getDestinoIata()
-                            + " maletas=" + e.getCantidadMaletas()
-                            + " fechaHora=" + e.getFechaHora());
-                });
 
         String ganador = solucionGrasp.getFitness() < solucionTabu.getFitness() ? "GRASP" : (solucionTabu.getFitness() < solucionGrasp.getFitness() ? "TABU" : "EMPATE");
 
@@ -434,62 +404,31 @@ public class PlanificadorService {
         long inicioTotal = System.currentTimeMillis();
         long deadlinePlanificacionMs = inicioTotal + planificacionTimeoutMs;
         long inicioCargaEnvios = System.currentTimeMillis();
-        System.out.println("[BACK-SIM-TIME] carga envios inicio ventanaInicio=" + inicio
-                + " ventanaFin=" + fin
-                + " fuente=" + fuenteEnvios
-                + " ts=" + java.time.Instant.now());
         registrarEnviosEnVentana(inicio, fin, enviosVentana);
         long tiempoCargaEnvios = System.currentTimeMillis() - inicioCargaEnvios;
-        System.out.println("[BACK-SIM-TIME] carga envios fin envios=" + enviosVentana.size()
-                + " fuente=" + fuenteEnvios
-                + " elapsedMs=" + tiempoCargaEnvios);
 
         // Unimos los nuevos de la ventana con los pendientes que vienen del State
         List<Envio> todosLosEnvios = new ArrayList<>(enviosVentana);
         if (pendientes != null && !pendientes.isEmpty()) {
             todosLosEnvios.addAll(pendientes);
         }
-        System.out.println("[PLAN-PERF] simulacionId=gestionado-por-job bloque=actual"
-                + " enviosNuevos=" + enviosVentana.size()
-                + " enviosPendientes=" + (pendientes == null ? 0 : pendientes.size())
-                + " enviosTotales=" + todosLosEnvios.size()
-                + " vuelosDisponibles=" + vuelosBaseSnapshot.size()
-                + " aeropuertos=" + aeropuertosSnapshot.size()
-                + " inicioMs=" + inicioTotal);
-        System.out.println("[PLAN-PERF-PHASE] fase=CARGA_DATOS_CSV duracionMs=" + tiempoCargaEnvios);
-
         List<Vuelo> vuelosBase = new ArrayList<>(vuelosBaseSnapshot);
         registrarVuelosBase(vuelosBase);
         List<Aeropuerto> aeropuertos = new ArrayList<>(aeropuertosSnapshot);
 
         long inicioGeneracionVuelos = System.currentTimeMillis();
-        System.out.println("[BACK-SIM-TIME] generacion vuelos inicio vuelosBase=" + vuelosBase.size()
-                + " ts=" + java.time.Instant.now());
-
         int diasGeneracion = calcularDiasGeneracion(inicio, fin);
         List<VueloInstanciado> vuelosInstanciados =
                 generarVuelosInstanciados(vuelosBase, inicio.toLocalDate(), diasGeneracion, aeropuertos);
         aplicarIncidencias(vuelosInstanciados, incidenciasSnapshot);
 
         long tiempoGeneracionVuelos = System.currentTimeMillis() - inicioGeneracionVuelos;
-        System.out.println("[PLAN-PERF-PHASE] fase=GENERACION_VUELOS duracionMs=" + tiempoGeneracionVuelos);
-        System.out.println("[BACK-SIM-TIME] generacion vuelos fin vuelosInstanciados=" + vuelosInstanciados.size()
-                + " diasGeneracion=" + diasGeneracion
-                + " elapsedMs=" + tiempoGeneracionVuelos);
         long inicioGeneracionItinerarios = System.currentTimeMillis();
-        System.out.println("[BACK-SIM-TIME] generacion itinerarios inicio vuelosInstanciados=" + vuelosInstanciados.size()
-                + " ts=" + java.time.Instant.now());
 
         Map<String, List<Itinerario>> itinerariosPorRuta = itinerarioService.generarItinerariosPorRuta(vuelosInstanciados);
 
         long tiempoGeneracionItinerarios = System.currentTimeMillis() - inicioGeneracionItinerarios;
-        System.out.println("[PLAN-PERF-PHASE] fase=GENERACION_ITINERARIOS duracionMs=" + tiempoGeneracionItinerarios);
-        System.out.println("[BACK-SIM-TIME] generacion itinerarios fin rutas=" + itinerariosPorRuta.size()
-                + " itinerarios=" + contarItinerarios(itinerariosPorRuta)
-                + " elapsedMs=" + tiempoGeneracionItinerarios);
         long inicioAlgoritmo = System.currentTimeMillis();
-        System.out.println("[BACK-SIM-TIME] " + algoritmo.toUpperCase() + " inicio envios=" + todosLosEnvios.size()
-                + " ts=" + java.time.Instant.now());
 
         // IMPORTANTE: Pasamos 'todosLosEnvios' al algoritmo en lugar de solo los de la ventana
         Map<String, Integer> inventarioInicial = new java.util.HashMap<>(inventarioActual);
@@ -505,44 +444,6 @@ public class PlanificadorService {
 
         registrarUsoVuelosCrud(vuelosBase, solucion);
         long tiempoAlgoritmo = System.currentTimeMillis() - inicioAlgoritmo;
-        System.out.println("[PLAN-PERF-PHASE] fase=TABU duracionMs=" + tiempoAlgoritmo);
-        System.out.println("[BACK-SIM-TIME] " + algoritmo.toUpperCase() + " fin asignaciones="
-                + solucion.getAsignaciones().size()
-                + " elapsedMs=" + tiempoAlgoritmo);
-        imprimirMetricasPlanificacion(algoritmo, inicio.toLocalDate(), diasGeneracion, todosLosEnvios, vuelosBase, vuelosInstanciados,
-                aeropuertos, itinerariosPorRuta, tiempoGeneracionVuelos, tiempoGeneracionItinerarios,
-                tiempoAlgoritmo, solucion);
-        System.out.println("[SIM5D-BLOQUE-PERFORMANCE] ventanaInicio=" + inicio
-                + " ventanaFin=" + fin
-                + " algoritmo=" + algoritmo.toUpperCase()
-                + " fuenteEnvios=" + fuenteEnvios
-                + " enviosNuevos=" + enviosVentana.size()
-                + " enviosPendientesEntrada=" + (pendientes == null ? 0 : pendientes.size())
-                + " aeropuertosSinCapacidad=" + contarAeropuertosSinCapacidad(inventarioInicial, aeropuertos)
-                + " cargaEnviosMs=" + tiempoCargaEnvios
-                + " generacionVuelosMs=" + tiempoGeneracionVuelos
-                + " vuelosCanceladosDetectados=" + contarVuelosCancelados(vuelosInstanciados)
-                + " generacionItinerariosMs=" + tiempoGeneracionItinerarios
-                + " tabuOAlgoritmoMs=" + tiempoAlgoritmo
-                + " vuelosCanceladosUsados=" + solucion.getVuelosCanceladosUsadosCount()
-                + " totalMs=" + (System.currentTimeMillis() - inicioTotal));
-        System.out.println("[SIM5D-PERF] envios=" + todosLosEnvios.size()
-                + " maletas=" + sumarMaletas(todosLosEnvios)
-                + " vuelosBase=" + vuelosBase.size()
-                + " vuelosInstanciados=" + vuelosInstanciados.size()
-                + " itinerariosGenerados=" + contarItinerarios(itinerariosPorRuta)
-                + " rutas=" + itinerariosPorRuta.size()
-                + " tiempoCargaEnviosMs=" + tiempoCargaEnvios
-                + " tiempoGeneracionVuelosMs=" + tiempoGeneracionVuelos
-                + " tiempoGeneracionItinerariosMs=" + tiempoGeneracionItinerarios
-                + " tiempoTabuMs=" + tiempoAlgoritmo
-                + " tiempoTotalPlanificacionMs=" + (System.currentTimeMillis() - inicioTotal));
-        long totalPlanificacionMs = System.currentTimeMillis() - inicioTotal;
-        System.out.println("[PLAN-PERF-SUMMARY] planificacionMs=" + totalPlanificacionMs
-                + " postprocesamientoMs=pendiente-job totalMs=" + totalPlanificacionMs
-                + " presupuestoMs=" + planificacionTimeoutMs
-                + " excedioPresupuesto=" + (totalPlanificacionMs > planificacionTimeoutMs)
-                + " solucionFactible=true enviosPendientes=" + solucion.obtenerEnviosConConflictos().size());
 
         return solucion;
     }
@@ -590,37 +491,12 @@ public class PlanificadorService {
     }
 
     private void registrarEnviosEnVentana(LocalDateTime inicio, LocalDateTime fin, List<Envio> envios) {
-        Set<String> idsIncluidos = envios.stream()
-                .map(Envio::getIdPedido)
-                .collect(java.util.stream.Collectors.toSet());
-        System.out.println("[PLANIFICADOR] envíos en ventana=" + envios.size()
-                + " inicio=" + inicio + " fin=" + fin);
-        for (String idPedido : envioDataStore.obtenerIdsCrudActivos()) {
-            System.out.println("[PLANIFICADOR] envío creado por CRUD incluido="
-                    + idsIncluidos.contains(idPedido) + " id=" + idPedido);
-        }
     }
 
     private void registrarVuelosBase(List<Vuelo> vuelosBase) {
-        vuelosBase.stream()
-                .filter(Vuelo::isCreadoPorCrud)
-                .forEach(vuelo -> System.out.println(
-                        "[PLANIFICADOR] vueloCrudIncluido=true id=" + vuelo.getCodigo()
-                ));
     }
 
     private void registrarUsoVuelosCrud(List<Vuelo> vuelosBase, SolucionRuta solucion) {
-        Set<Long> vuelosUsados = solucion.getAsignaciones().stream()
-                .filter(asignacion -> asignacion.getItinerario() != null)
-                .flatMap(asignacion -> asignacion.getItinerario().getVuelos().stream())
-                .map(VueloInstanciado::getCodigoBase)
-                .collect(java.util.stream.Collectors.toSet());
-        vuelosBase.stream()
-                .filter(Vuelo::isCreadoPorCrud)
-                .forEach(vuelo -> System.out.println(
-                        "[ITINERARIO] vueloCrudUsado=" + vuelosUsados.contains(vuelo.getCodigo())
-                                + " id=" + vuelo.getCodigo()
-                ));
     }
 
     public SolucionRuta calcularSolucionParaEnvios(String algoritmo, LocalDate fechaInicio, int dias, List<Envio> envios) {
@@ -646,86 +522,7 @@ public class PlanificadorService {
                 : graspSearch.ejecutar(envios, itinerariosPorRuta, aeropuertos);
         long tiempoAlgoritmo = System.currentTimeMillis() - inicioAlgoritmo;
 
-        imprimirMetricasPlanificacion(algoritmo, fechaInicio, dias, envios, vuelosBase, vuelosInstanciados,
-                aeropuertos, itinerariosPorRuta, tiempoGeneracionVuelos, tiempoGeneracionItinerarios,
-                tiempoAlgoritmo, solucion);
-
         return solucion;
-    }
-
-    private void imprimirMetricasPlanificacion(
-            String algoritmo,
-            LocalDate fechaInicio,
-            int dias,
-            List<Envio> envios,
-            List<Vuelo> vuelosBase,
-            List<VueloInstanciado> vuelosInstanciados,
-            List<Aeropuerto> aeropuertos,
-            Map<String, List<Itinerario>> itinerariosPorRuta,
-            long tiempoGeneracionVuelos,
-            long tiempoGeneracionItinerarios,
-            long tiempoAlgoritmo,
-            SolucionRuta solucion,
-            long tiempoCargaEnvios,
-            long tiempoTotalPlanificacion
-    ) {
-        imprimirMetricasPlanificacion(algoritmo, fechaInicio, dias, envios, vuelosBase, vuelosInstanciados,
-                aeropuertos, itinerariosPorRuta, tiempoGeneracionVuelos, tiempoGeneracionItinerarios,
-                tiempoAlgoritmo, solucion);
-        System.out.println("[PLANIFICACION-METRICA-SALIDA] totalEnviosVentana=" + envios.size()
-                + " totalMaletasVentana=" + sumarMaletas(envios)
-                + " totalVuelosInstanciados=" + vuelosInstanciados.size()
-                + " totalItinerariosGenerados=" + contarItinerarios(itinerariosPorRuta)
-                + " totalAsignaciones=" + solucion.getAsignaciones().size()
-                + " enviosSinItinerario=" + solucion.getSinItinerarioCount()
-                + " enviosSlaIncumplido=" + solucion.getExcedeSlaCount()
-                + " vuelosCanceladosDetectados=" + contarVuelosCancelados(vuelosInstanciados)
-                + " vuelosCanceladosUsadosEnSolucion=" + solucion.getVuelosCanceladosUsadosCount()
-                + " tiempoCargaEnviosMs=" + tiempoCargaEnvios
-                + " tiempoGeneracionVuelosMs=" + tiempoGeneracionVuelos
-                + " tiempoGeneracionItinerariosMs=" + tiempoGeneracionItinerarios
-                + " tiempoAlgoritmoMs=" + tiempoAlgoritmo
-                + " tiempoTotalPlanificacionMs=" + tiempoTotalPlanificacion
-                + " fitness=" + solucion.getFitness());
-    }
-
-    private void imprimirMetricasPlanificacion(
-            String algoritmo,
-            LocalDate fechaInicio,
-            int dias,
-            List<Envio> envios,
-            List<Vuelo> vuelosBase,
-            List<VueloInstanciado> vuelosInstanciados,
-            List<Aeropuerto> aeropuertos,
-            Map<String, List<Itinerario>> itinerariosPorRuta,
-            long tiempoGeneracionVuelos,
-            long tiempoGeneracionItinerarios,
-            long tiempoAlgoritmo,
-            SolucionRuta solucion
-    ) {
-        int totalItinerarios = itinerariosPorRuta.values().stream().mapToInt(List::size).sum();
-        int rutasConItinerarios = itinerariosPorRuta.size();
-        double promedioItinerariosPorRuta = rutasConItinerarios > 0
-                ? totalItinerarios / (double) rutasConItinerarios
-                : 0.0;
-
-        System.out.println("[PLANIFICACION-MÉTRICA] algoritmo=" + algoritmo.toUpperCase()
-                + " fechaInicio=" + fechaInicio
-                + " dias=" + dias
-                + " enviosProcesados=" + envios.size()
-                + " maletasProcesadas=" + sumarMaletas(envios)
-                + " vuelosBase=" + vuelosBase.size()
-                + " vuelosInstanciados=" + vuelosInstanciados.size()
-                + " aeropuertos=" + aeropuertos.size()
-                + " rutasConItinerarios=" + rutasConItinerarios
-                + " totalItinerarios=" + totalItinerarios
-                + " promedioItinerariosPorRuta=" + promedioItinerariosPorRuta
-                + " tiempoGeneracionVuelosMs=" + tiempoGeneracionVuelos
-                + " tiempoGeneracionItinerariosMs=" + tiempoGeneracionItinerarios
-                + " tiempoAlgoritmoMs=" + tiempoAlgoritmo
-                + " fitnessFinal=" + solucion.getFitness()
-                + " sinItinerarioCount=" + solucion.getSinItinerarioCount()
-                + " excedeSlaCount=" + solucion.getExcedeSlaCount());
     }
 
     private int sumarMaletas(List<Envio> envios) {

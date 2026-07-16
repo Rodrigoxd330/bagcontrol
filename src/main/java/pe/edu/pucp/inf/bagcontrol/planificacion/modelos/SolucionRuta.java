@@ -71,7 +71,7 @@ public class SolucionRuta {
                 asignacion.setItinerario(movimiento.getItinerarioNuevo());
                 noRespeta = false;
                 if (!PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
-                        asignacion, mapaAeropuertos, inventarioInicial, enviosNuevos
+                        this, mapaAeropuertos, inventarioInicial, enviosNuevos
                 )) {
                     noRespeta = true;
                 }

@@ -179,8 +179,6 @@ public class CargaMasivaController {
                     }
                     insertados++;
                 } catch (Exception e) {
-                    System.out.println("[ENVIO-IMPORT-PARSE] linea=" + fila
-                            + " valido=false motivo=" + e.getMessage());
                     errores.add("Formato inválido en la línea " + fila + ": " + e.getMessage());
                 }
             }

@@ -143,9 +143,6 @@ public class SimulacionManager {
             Thread thread = new Thread(job, "simulacion-" + simulacionId);
             job.asignarHilo(thread);
             thread.start();
-            System.out.println("[BACK-SIM-TIME] job iniciado id=" + simulacionId
-                    + " thread=" + thread.getName()
-                    + " ts=" + java.time.Instant.now());
         }
     }
 

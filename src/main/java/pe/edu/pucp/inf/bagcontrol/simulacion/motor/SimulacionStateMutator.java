@@ -98,9 +98,6 @@ public class SimulacionStateMutator {
         Aeropuerto aeropuerto = state.getAeropuertosSnapshot().get(aeropuertoIata);
         int actual = state.getInventarioSnapshot().getOrDefault(aeropuertoIata, 0);
         if (aeropuerto == null) {
-            System.out.println("[SIMULADOR-INVENTARIO] aeropuertoDesconocido=" + aeropuertoIata
-                    + " inventarioActual=" + actual
-                    + " maletasNoRegistradas=" + cantidad);
             return false;
         }
         state.getInventarioSnapshot().put(aeropuertoIata, actual + cantidad);

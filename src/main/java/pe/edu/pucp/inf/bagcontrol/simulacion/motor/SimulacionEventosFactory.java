@@ -53,10 +53,6 @@ public class SimulacionEventosFactory {
                 Map<String, EventoVueloDTO> mapaAterrizaje = vuelo.getFechaHoraLlegadaUtc().isAfter(ventanaFin) ? futurosMap : actualesMap;
                 EventoVueloDTO evAterriza = mapaAterrizaje.computeIfAbsent(keyAterriza, k -> crearEventoVuelo(vuelo, TipoEvento.VUELO_ATERRIZA));
                 actualizarSemaforoVuelo(evAterriza, cantidadMaletas, capacidadMax, List.of(asignacion.getEnvio().getIdPedido()));
-                if (vuelo.getVueloBase() != null && vuelo.getVueloBase().isCreadoPorCrud()) {
-                    System.out.println("[SIMULACION] eventoVueloCrudEmitido=true id=" + vuelo.getCodigoBase()
-                            + " envio=" + asignacion.getEnvio().getIdPedido());
-                }
             }
         }
         return new ResultadoEventosVuelo(

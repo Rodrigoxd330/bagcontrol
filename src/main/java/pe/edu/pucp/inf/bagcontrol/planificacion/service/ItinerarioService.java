@@ -86,20 +86,6 @@ public class ItinerarioService {
             }
         }
 
-        int totalFinal = itinerariosPorRuta.values().stream().mapToInt(List::size).sum();
-        long tiempoTotal = System.currentTimeMillis() - inicio;
-        System.out.println("[PLANIFICACION-INTERARIO-METRICA] vuelosRecibidos=" + vuelos.size()
-                + " itinerariosDirectos=" + itinerariosDirectos
-                + " itinerariosConEscala=" + itinerariosConEscala
-                + " totalRutas=" + itinerariosPorRuta.size()
-                + " diasInstanciados=" + diasInstanciados
-                + " maxItinerariosPorRuta=" + maxItinerariosPorRuta
-                + " totalAntesRecorte=" + totalAntesRecorte
-                + " rutasRecortadas=" + rutasRecortadas
-                + " itinerariosEliminadosPorRecorte=" + itinerariosEliminadosPorRecorte
-                + " totalFinal=" + totalFinal
-                + " tiempoTotalMs=" + tiempoTotal);
-
         return itinerariosPorRuta;
     }
 

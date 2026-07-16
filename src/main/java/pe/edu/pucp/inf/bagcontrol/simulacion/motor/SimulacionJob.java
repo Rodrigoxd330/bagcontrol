@@ -127,7 +127,7 @@ public class SimulacionJob implements Runnable {
         // En operación día a día (modo="0"), el saMs es proporcional a K
         // para que factorAceleracion = K*60/SaS = 1 → tiempo real
         // (1s real = 1s sim, un vuelo de 2h tarda 2h reales)
-        this.saMs = (modo != null && "0".equals(modo)) ? k * 60 * 1000 : 90_000;
+        this.saMs = (modo != null && "0".equals(modo)) ? k * 60 * 1000 : 30_000;
         this.configuracionColapsoDTO = configuracionColapsoDTO;
         this.simulacionStateMutator = simulacionStateMutator;
         this.modo = modo;
@@ -184,9 +184,6 @@ public class SimulacionJob implements Runnable {
         while (state.getTiempoActual().isBefore(tiempoFin)) {
             // --- FASE 1: INICIO DE MEDICIÓN DE TA ---
             long inicioCronometroTa = System.currentTimeMillis();
-            long memoriaInicioBloque = memoriaUsada();
-            long gcCountInicio = gcCount();
-            long gcTimeInicio = gcTimeMs();
             boolean esPrimerBloque = state.getBloquesProcesados() == 0;
 
             verificarDetencion();
@@ -201,7 +198,6 @@ public class SimulacionJob implements Runnable {
             state.setCicloActual(ciclo);
 
             // --- FASE 2: EXTRACCIÓN DE CONTEXTO ---
-            long inicioContexto = System.currentTimeMillis();
             List<EventoBaseDTO> eventosBatch = new ArrayList<>();
             Set<String> clavesEventosPostergadosEnBatch = new HashSet<>();
             extraerEventosVueloPostergados(
@@ -215,8 +211,6 @@ public class SimulacionJob implements Runnable {
                 continue;
             }
             agregarEventosVuelosCancelados(ventanaInicio, ventanaFin, eventosBatch);
-            long finContexto = System.currentTimeMillis();
-
             Map<String, Integer> inventarioReservado = PlanificadorUtils.construirInventarioReservado(
                     state.getEnviosEnSeguimiento(),
                     state.getEnviosEntregados(),
@@ -233,20 +227,16 @@ public class SimulacionJob implements Runnable {
             registrarEventosReplanificacion(solucion, eventosBatch, ventanaInicio, ciclo);
 
             long planMs = finPlanificacion - inicioPlanificacion;
-            long contextoMs = finContexto - inicioContexto;
-
             // --- FASE 4: MUTACIÓN FÍSICA E INDEXACIÓN DEL ESTADO ---
-            long inicioPostProc = System.currentTimeMillis();
+            long inicioAlistamientoEventos = System.currentTimeMillis();
             List<RutaAsignada> checkInsPendientes = registrarEnviosNuevos(solucion);
 
             // --- FASE 5: GENERACIÓN Y ORDENAMIENTO DE EVENTOS EN LA VENTANA ---
-            long inicioGeneracionEventos = System.currentTimeMillis();
             SimulacionEventosFactory.ResultadoEventosVuelo eventosVuelos =
                     simulacionEventosFactory.generarEventosVuelo(solucion, ventanaFinUtc);
             eventosBatch.addAll(eventosVuelos.actuales());
             agregarEventosVueloPostergados(eventosVuelos.futuros(), eventosVueloPostergados);
             eventosBatch.sort(comparadorEventos());
-            long tiempoGeneracionEventosMs = System.currentTimeMillis() - inicioGeneracionEventos;
 
             // --- FASE 6: CÁLCULO DE SLA Y COLAPSOS ---
             IncumplimientoSla incumplimiento = encontrarPrimerIncumplimientoSla(ventanaFinUtc).orElse(null);
@@ -279,10 +269,15 @@ public class SimulacionJob implements Runnable {
             List<EnvioDTO> enviosBatch = solucion.getAsignaciones().stream().map(e -> new EnvioDTO(e.getEnvio().getIdPedido(),
                     e.getEnvio().getOrigenIata(),e.getEnvio().getDestinoIata(),e.getEnvio().getFechaHora().toString(),
                     e.getEnvio().getCantidadMaletas(),e.getEnvio().getIdCliente(), e.getEnvio().isEsOperacionDia())).toList();
+            long alistamientoEventosMs = System.currentTimeMillis() - inicioAlistamientoEventos;
 
             // --- FASE 7: COLAPSO ---
             if (incumplimiento != null || colapsoCapacidad.isPresent()) {
                 publicarLote(eventosBatch,enviosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
+                long totalProcesamientoMs = System.currentTimeMillis() - inicioCronometroTa;
+                System.out.printf("[AUDITORIA-LOTE] bloque=%d ventana=%s->%s k=%d planificacionMs=%d alistamientoEventosMs=%d totalMs=%d saMs=%d%n",
+                        state.getBloquesProcesados() + 1, ventanaInicio, ventanaFin, k, planMs,
+                        alistamientoEventosMs, totalProcesamientoMs, saMs);
                 state.guardarSnapshot();
                 state.setBloquesProcesados(state.getBloquesProcesados() + 1);
                 publicarMetricasCapacidad(solucion);
@@ -291,12 +286,6 @@ public class SimulacionJob implements Runnable {
             }
 
             actualizarPendientesParaSiguienteCiclo(solucion);
-
-            long finPostProc = System.currentTimeMillis();
-            long postProcMs = finPostProc - inicioPostProc;
-            System.out.println("[PLAN-PERF-PHASE] fase=POSTPROCESAMIENTO duracionMs=" + postProcMs);
-            System.out.println("[PLAN-PERF-PHASE] fase=SERIALIZACION_EVENTOS duracionMs="
-                    + tiempoGeneracionEventosMs);
 
             // --- FASE 8: FIN DE TA Y COMPENSACIÓN DE TIEMPO (SA - TA) ---
             long taCalculadoMs = System.currentTimeMillis() - inicioCronometroTa;
@@ -317,17 +306,9 @@ public class SimulacionJob implements Runnable {
             long inicioPublicacion = System.currentTimeMillis();
             publicarLote(eventosBatch,enviosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
             long publicacionMs = System.currentTimeMillis() - inicioPublicacion;
-            System.out.println("[PLAN-PERF-PHASE] fase=PUBLICACION duracionMs=" + publicacionMs);
-            System.out.println("[PLAN-PERF-SUMMARY] planificacionMs=" + planMs
-                    + " postprocesamientoMs=" + postProcMs
-                    + " totalMs=" + taCalculadoMs
-                    + " presupuestoMs=90000 excedioPresupuesto=" + (taCalculadoMs > 90_000L)
-                    + " solucionFactible=true enviosPendientes=" + state.getEnviosPendientes().size());
-
-            // --- RESUMEN DEL BATCH ---
-            long totalMs = taCalculadoMs;
-            System.out.printf("[TIMING] bloque=%d | planificacion=%dms | eventos=%dms | TOTAL=%dms | sa=%dms%n",
-                    state.getBloquesProcesados() + 1, planMs, tiempoGeneracionEventosMs, totalMs, saMs);
+            System.out.printf("[AUDITORIA-LOTE] bloque=%d ventana=%s->%s k=%d planificacionMs=%d alistamientoEventosMs=%d totalMs=%d saMs=%d%n",
+                    state.getBloquesProcesados() + 1, ventanaInicio, ventanaFin, k, planMs,
+                    alistamientoEventosMs, taCalculadoMs + publicacionMs, saMs);
 
             state.guardarSnapshot();
             state.setBloquesProcesados(state.getBloquesProcesados() + 1);
@@ -353,9 +334,6 @@ public class SimulacionJob implements Runnable {
             state.getEnviosRegistrados().add(envio.getIdPedido());
             state.getUltimoAeropuertoPorEnvio().putIfAbsent(envio.getIdPedido(), envio.getOrigenIata());
             if (asignacion.getItinerario() == null) {
-                System.out.println("[SIM5D-PENDING-CAPACITY-CHECK] envioId=" + envio.getIdPedido()
-                        + " pendiente=true tieneMovimientosRegistrados=false"
-                        + " cantidadMovimientosResiduales=0 consumeCapacidad=false");
                 continue;
             }
             if (enviosConCheckIn.add(envio.getIdPedido())) {
@@ -910,24 +888,6 @@ public class SimulacionJob implements Runnable {
         int despuesAplicado = supera ? aeropuerto.getCapacidadAlmacen() + 1 : despuesCompleto;
         state.getInventarioSnapshot().put(codigoIata, despuesAplicado);
         agregarEventoInventario(codigoIata, instante, eventos);
-
-        System.out.println("[SIM5D-CAPACITY-TRACE] bloque=" + (state.getBloquesProcesados() + 1)
-                + " aeropuerto=" + codigoIata
-                + " instante=" + instante
-                + " capacidadMaxima=" + aeropuerto.getCapacidadAlmacen()
-                + " ocupacionAntes=" + antes
-                + " movimiento=" + tipoMovimiento
-                + " cantidadMaletasMovimiento=" + cantidad
-                + " ocupacionDespues=" + despuesAplicado
-                + " envioId=" + envioId
-                + " vueloId=" + vueloId
-                + " superaCapacidad=" + supera);
-        System.out.println("[SIM5D-CAPACITY-COMPARE] aeropuerto=" + codigoIata
-                + " instante=" + instante
-                + " ocupacionSegunTabu=" + despuesCompleto
-                + " ocupacionSegunSimulador=" + despuesAplicado
-                + " ocupacionSegunFrontendDTO=" + despuesAplicado
-                + " coincide=" + (despuesCompleto == despuesAplicado));
 
         if (!supera) return Optional.empty();
         return Optional.of(new ColapsoCapacidad(

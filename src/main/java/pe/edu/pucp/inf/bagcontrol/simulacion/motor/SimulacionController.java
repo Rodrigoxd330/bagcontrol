@@ -45,16 +45,13 @@ public class SimulacionController {
     public RespuestaInicioSimulacionDTO preparaSimulacion(
             @RequestParam("fechaInicio") String fechaInicio,
             @RequestParam(value = "fechaFin", required = false) String fechaFin,
-            @RequestParam(value = "k", defaultValue = "30") int k,
+            @RequestParam(value = "k", defaultValue = "120") int k,
             @RequestParam(value = "algoritmo", defaultValue = "TABU") String algoritmo,
             @RequestParam(value = "modo", required = false) String modo,
             @RequestHeader(value = "Authorization", required = false) String authorization
     ) {
         long t0 = System.currentTimeMillis();
-        System.out.println("[BACK-SIM-TIME] preparar recibido ts=" + java.time.Instant.now()
-                + " fechaInicio=" + fechaInicio + " fechaFin=" + fechaFin + " k=" + k
-                + " algoritmo=" + algoritmo + " modo=" + modo);
-        System.out.println("FRONTEND MANDÓ FECHA Inicio: " + fechaInicio);
+
 
         // El helper ahora devuelve el LocalDateTime correcto interpretando el estándar internacional
         LocalDateTime inicio = parseFechaHoraFlexible(fechaInicio);

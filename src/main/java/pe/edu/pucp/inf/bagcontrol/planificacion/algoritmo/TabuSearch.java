@@ -83,7 +83,7 @@ public class TabuSearch {
             int tenure,
             int maxVecinos
     ) {
-        long budgetMs = 83_000L;
+        long budgetMs = 28_000L;
         return ejecutarConParametros(envios, itinerariosPorRuta, aeropuertos, inventarioInicial,
                 enviosNuevos, iteraciones, tenure, maxVecinos,
                 System.currentTimeMillis() + budgetMs, budgetMs);
@@ -103,7 +103,6 @@ public class TabuSearch {
     ) {
         long inicio = System.currentTimeMillis();
         PlanificadorUtils.reiniciarMetricasRendimiento();
-        long memoriaAntes = memoriaUsada();
         Set<String> listaTabu = new LinkedHashSet<>();
         int iteracionesEjecutadas = 0;
         int vecinosGenerados = 0;
@@ -121,8 +120,6 @@ public class TabuSearch {
         ResultadoSolucionInicial resultadoInicial =
                 generarSolucionInicial(envios, itinerariosPorRuta, mapaAeropuertos, inventarioInicial,
                         enviosNuevos, deadlineMs);
-        long finSolucionInicial = System.currentTimeMillis();
-        System.out.println("[PLAN-PERF-PHASE] fase=SOLUCION_INICIAL duracionMs=" + (finSolucionInicial - inicio));
         SolucionRuta actual = resultadoInicial.solucion();
         rutasDescartadasPorCapacidadAeropuerto += resultadoInicial.rutasDescartadasPorCapacidadAeropuerto();
         double actualFitness = fitnessEvaluator.evaluar(actual, mapaAeropuertos, inventarioInicial);
@@ -225,52 +222,7 @@ public class TabuSearch {
             }
         }
 
-        long tiempoTotal = System.currentTimeMillis() - inicio;
-        PlanificadorUtils.MetricasRendimiento metricasUtils = PlanificadorUtils.snapshotMetricasRendimiento();
-        long memoriaDespues = memoriaUsada();
-        System.out.println("[METRICA TABU] enviosRecibidos=" + envios.size()
-                + " iteracionesConfiguradas=" + iteraciones
-                + " tenure=" + tenure
-                + " maxVecinos=" + maxVecinos
-                + " iteracionesEjecutadas=" + iteracionesEjecutadas
-                + " vecinosGenerados=" + vecinosGenerados
-                + " vecinosEvaluados=" + vecinosEvaluados
-                + " movimientosAceptados=" + movimientosAceptados
-                + " mejorasGlobales=" + mejorasGlobales
-                + " rutasDescartadasPorCapacidadAeropuerto=" + rutasDescartadasPorCapacidadAeropuerto
-                + " enviosPendientesPorCapacidad=" + resultadoInicial.enviosPendientesPorCapacidad()
-                + " enviosReplanificadosPorCapacidad=" + movimientosAceptados
-                + " mejorFitnessFinal=" + mejorFitnessGlobal
-                + " tiempoTotalMs=" + tiempoTotal);
-        System.out.println("[PLAN-PERF-PHASE] fase=VALIDACION_CAPACIDAD duracionMs="
-                + metricasUtils.tiempoValidacionCapacidadMs());
-        System.out.println("[PLAN-PERF-PHASE] fase=TABU duracionMs=" + tiempoTotal
-                + " iteracionesEjecutadas=" + iteracionesEjecutadas
-                + " vecinosEvaluados=" + vecinosEvaluados
-                + " movimientosAceptados=" + movimientosAceptados);
-        System.out.println("[TABU-STOP] motivo=" + motivoParada
-                + " elapsedMs=" + tiempoTotal + " budgetMs=" + budgetMs
-                + " iteraciones=" + iteracionesEjecutadas
-                + " mejorFitness=" + mejorFitnessGlobal + " solucionFactible=true");
-        System.out.println("[SIM5D-PERF] llamadasRegistrarMovimientosAeropuertos="
-                + metricasUtils.llamadasRegistrarMovimientosAeropuertos()
-                + " movimientosAeropuertoGenerados=" + metricasUtils.movimientosAeropuertoGenerados()
-                + " tiempoRegistrarMovimientosAeropuertosMs=" + metricasUtils.tiempoRegistrarMovimientosAeropuertosMs()
-                + " llamadasValidacionCapacidad=" + metricasUtils.llamadasValidacionCapacidad()
-                + " tiempoValidacionCapacidadMs=" + metricasUtils.tiempoValidacionCapacidadMs()
-                + " vecinosGenerados=" + vecinosGenerados
-                + " vecinosEvaluados=" + vecinosEvaluados
-                + " copiasSolucion=" + copiasSolucion
-                + " tiempoCopiasSolucionMs=" + (tiempoCopiasSolucionNanos / 1_000_000)
-                + " memoriaAntesBytes=" + memoriaAntes
-                + " memoriaDespuesBytes=" + memoriaDespues
-                + " memoriaDeltaBytes=" + (memoriaDespues - memoriaAntes));
         return mejor;
-    }
-
-    private long memoriaUsada() {
-        Runtime runtime = Runtime.getRuntime();
-        return runtime.totalMemory() - runtime.freeMemory();
     }
 
     private ResultadoSolucionInicial generarSolucionInicial(
@@ -317,11 +269,6 @@ public class TabuSearch {
             List<Itinerario> viablesPorAeropuerto = new ArrayList<>();
             for (Itinerario posible : posibles) {
                 boolean capacidadDisponible = evaluadorCapacidad.respetaCapacidadAlAgregar(envio, posible);
-                RutaAsignada asignacion = solucion.agregarAsignacion(envio, posible);
-                boolean capacidadDisponible = PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
-                        asignacion, mapaAeropuertos, inventarioAcumulado, enviosNuevos
-                );
-                solucion.getAsignaciones().remove(solucion.getAsignaciones().size() - 1);
                 if (capacidadDisponible) {
                     viablesPorAeropuerto.add(posible);
                 } else {
