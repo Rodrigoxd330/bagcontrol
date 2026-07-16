@@ -78,10 +78,10 @@ class PlanificadorUtilsTest {
                 crearVuelo("BOG", "MAD", "2026-07-20T11:00:00Z", "2026-07-20T13:00:00Z")
         ));
         SolucionRuta solucion = new SolucionRuta();
-        solucion.agregarAsignacion(envio, itinerario);
+        RutaAsignada asignacion = solucion.agregarAsignacion(envio, itinerario);
 
         assertThat(PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
-                solucion, aeropuertos, Map.of("LIM", 3)
+                asignacion, aeropuertos, Map.of("LIM", 3)
         )).isFalse();
     }
 
@@ -99,10 +99,10 @@ class PlanificadorUtilsTest {
                 crearVuelo("BOG", "MAD", "2026-07-20T11:00:00Z", "2026-07-20T13:00:00Z")
         ));
         SolucionRuta solucion = new SolucionRuta();
-        solucion.agregarAsignacion(envio, itinerario);
+        RutaAsignada asignacion = solucion.agregarAsignacion(envio, itinerario);
 
         assertThat(PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
-                solucion, aeropuertos, Map.of("LIM", 3)
+                asignacion, aeropuertos, Map.of("LIM", 3)
         )).isTrue();
     }
 

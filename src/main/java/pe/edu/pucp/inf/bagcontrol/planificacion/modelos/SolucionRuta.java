@@ -1,10 +1,14 @@
 package pe.edu.pucp.inf.bagcontrol.planificacion.modelos;
 
 import lombok.Data;
+import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
+import pe.edu.pucp.inf.bagcontrol.planificacion.utils.PlanificadorUtils;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 @Data
 public class SolucionRuta {
@@ -17,8 +21,10 @@ public class SolucionRuta {
     private int vuelosSobrecargadosCount;
     private int aeropuertosSaturadosCount;
 
-    public void agregarAsignacion(Envio envio, Itinerario itinerario) {
+    public RutaAsignada agregarAsignacion(Envio envio, Itinerario itinerario) {
+        RutaAsignada asignacion = new RutaAsignada(envio, itinerario, false);
         asignaciones.add(new RutaAsignada(envio, itinerario, false)); //El excedeSLA se evalua después
+        return asignacion;
     }
 
     public Itinerario obtenerItinerarioAsignado(Envio envio) {
@@ -55,13 +61,24 @@ public class SolucionRuta {
         return copia;
     }
 
-    public void aplicarMovimientoDefinitivo(Movimiento movimiento) {
+    public boolean aplicarMovimientoDefinitivo(Movimiento movimiento,
+                                               Map<String, Aeropuerto> mapaAeropuertos,
+                                               Map<String,Integer> inventarioInicial,
+                                               Set<String> enviosNuevos) {
+        boolean noRespeta = true;
         for (RutaAsignada asignacion : asignaciones) {
             if (asignacion.getEnvio().getIdPedido().equals(movimiento.getEnvio().getIdPedido())) {
                 asignacion.setItinerario(movimiento.getItinerarioNuevo());
+                noRespeta = false;
+                if (!PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
+                        asignacion, mapaAeropuertos, inventarioInicial, enviosNuevos
+                )) {
+                    noRespeta = true;
+                }
                 break;
             }
         }
+        return noRespeta;
     }
 
     public void deshacerMovimiento(Movimiento movimiento) {

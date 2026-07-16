@@ -8,6 +8,7 @@ import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.evaluacion.FitnessEvaluator;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.Itinerario;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.Movimiento;
+import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.utils.PlanificadorUtils;
 
@@ -159,15 +160,27 @@ public class TabuSearch {
                 vecinosEvaluados++;
                 String id = mov.getIdMovimientoTabu();
 
-                actual.aplicarMovimientoDefinitivo(mov);
-                if (!PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
-                        actual, mapaAeropuertos, inventarioInicial, enviosNuevos
-                )) {
+                boolean noRespeta = actual.aplicarMovimientoDefinitivo(mov,mapaAeropuertos,inventarioInicial,enviosNuevos);
+
+                /*
+                for(RutaAsignada asignacion : actual.getAsignaciones()){
+                    if (!PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
+                            asignacion, mapaAeropuertos, inventarioInicial, enviosNuevos
+                    )) {
+                        rutasDescartadasPorCapacidadAeropuerto++;
+                        actual.deshacerMovimiento(mov);
+                        actual.setFitness(actualFitness);
+                        noRespeta = true;
+                        break;
+                    }
+                }*/
+                if(noRespeta) {
                     rutasDescartadasPorCapacidadAeropuerto++;
                     actual.deshacerMovimiento(mov);
                     actual.setFitness(actualFitness);
                     continue;
                 }
+
                 double fitnessCandidato = fitnessEvaluator.evaluar(actual, mapaAeropuertos, inventarioInicial);
 
                 boolean esMejorGlobal = fitnessCandidato < mejorFitnessGlobal;
@@ -188,7 +201,9 @@ public class TabuSearch {
                 break;
             }
 
-            actual.aplicarMovimientoDefinitivo(mejorMovimiento);
+            boolean noRespeta = actual.aplicarMovimientoDefinitivo(mejorMovimiento,mapaAeropuertos,inventarioInicial,enviosNuevos);
+            if(noRespeta){actual.deshacerMovimiento(mejorMovimiento);break;}
+
             movimientosAceptados++;
             actualFitness = fitnessEvaluator.evaluar(actual, mapaAeropuertos, inventarioInicial);
 
@@ -302,6 +317,11 @@ public class TabuSearch {
             List<Itinerario> viablesPorAeropuerto = new ArrayList<>();
             for (Itinerario posible : posibles) {
                 boolean capacidadDisponible = evaluadorCapacidad.respetaCapacidadAlAgregar(envio, posible);
+                RutaAsignada asignacion = solucion.agregarAsignacion(envio, posible);
+                boolean capacidadDisponible = PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
+                        asignacion, mapaAeropuertos, inventarioAcumulado, enviosNuevos
+                );
+                solucion.getAsignaciones().remove(solucion.getAsignaciones().size() - 1);
                 if (capacidadDisponible) {
                     viablesPorAeropuerto.add(posible);
                 } else {

@@ -19,4 +19,5 @@ public class Envio {
     private String idCliente;
     private boolean activo = true;
     private boolean esOperacionDia;
+    private boolean fromOperaciones = false;
 }
