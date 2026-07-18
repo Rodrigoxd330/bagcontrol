@@ -82,7 +82,7 @@ public class SimulacionJob implements Runnable {
     private final Set<String> enviosForzadosAReplanificar = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final Set<String> enviosConCheckIn = new HashSet<>();
     private long tiempoUltimoLoteMs = 0L;
-    private long proximaPublicacionMs = 0L;
+    private final CalendarioPublicaciones calendarioPublicaciones = new CalendarioPublicaciones();
     private int bloquesConsecutivosCercaLimite = 0;
     public static final int SA_INICIAL_MS = 35_000;
     public static final int SA_MAXIMO_MS = 40_000;
@@ -198,18 +198,19 @@ public class SimulacionJob implements Runnable {
 
         while (state.getTiempoActual().isBefore(tiempoFin)) {
             // --- FASE 1: INICIO DE MEDICIÓN DE TA ---
-            long inicioCronometroTa = System.currentTimeMillis();
+            Instant inicioRealCalculo = Instant.now();
+            long inicioCronometroTa = inicioRealCalculo.toEpochMilli();
             int frecuenciaBloqueMs = saMs;
-            DeadlinePlanificacion.iniciar(inicioCronometroTa + frecuenciaBloqueMs - MARGEN_SEGURIDAD_MS);
+            long fronteraProgramadaMs = calendarioPublicaciones.tieneOrigen()
+                    ? calendarioPublicaciones.getFronteraProgramadaMs()
+                    : inicioCronometroTa + frecuenciaBloqueMs;
+            DeadlinePlanificacion.iniciar(fronteraProgramadaMs - MARGEN_SEGURIDAD_MS);
             MetricasPlanificacionBloque metricasBloque = PlanificacionInstrumentacion.iniciar();
             metricasBloque.setK(k);
             metricasBloque.setSaMs(frecuenciaBloqueMs);
-            metricasBloque.setInicioRealCalculo(Instant.ofEpochMilli(inicioCronometroTa));
-            metricasBloque.setDeadlinePublicacion(proximaPublicacionMs > 0
-                    ? Instant.ofEpochMilli(proximaPublicacionMs)
-                    : Instant.ofEpochMilli(inicioCronometroTa));
+            metricasBloque.setInicioRealCalculo(inicioRealCalculo);
             metricasBloque.setDeadlinePublicacion(Instant.ofEpochMilli(
-                    inicioCronometroTa + frecuenciaBloqueMs - MARGEN_SEGURIDAD_MS));
+                    calendarioPublicaciones.tieneOrigen() ? fronteraProgramadaMs : inicioCronometroTa));
             boolean esPrimerBloque = state.getBloquesProcesados() == 0;
 
             verificarDetencion();
@@ -354,7 +355,7 @@ public class SimulacionJob implements Runnable {
                 // Benchmark no espera y el primer lote 5D se publica apenas termina de prepararse.
             } else if (esSimulacionCincoDias()) {
                 metricasBloque.setInicioEspera(Instant.now());
-                esperarHasta(proximaPublicacionMs);
+                esperarHastaFronteraProgramada();
             } else if (state.getTiempoActual().isBefore(tiempoFin)) {
                 metricasBloque.setInicioEspera(Instant.now());
                 esperarConControl();
@@ -378,7 +379,7 @@ public class SimulacionJob implements Runnable {
 
             state.registrarTiempoBloque(planMs, taCalculadoMs + publicacionMs, frecuenciaBloqueMs);
             state.setBloquesProcesados(state.getBloquesProcesados() + 1);
-            proximaPublicacionMs = System.currentTimeMillis() + saMs;
+            registrarPublicacionFisica(inicioPublicacion, metricasBloque.getFinRealCalculo(), saMs);
             publicarMetricasCapacidad(solucion);
         }
 
@@ -1745,11 +1746,11 @@ public class SimulacionJob implements Runnable {
         }
     }
 
-    private void esperarHasta(long instanteObjetivoMs) {
-        while (System.currentTimeMillis() < instanteObjetivoMs) {
+    private void esperarHastaFronteraProgramada() {
+        while (System.currentTimeMillis() < calendarioPublicaciones.getFronteraProgramadaMs()) {
             verificarDetencion();
             esperarSiPausadaODetenida();
-            long restante = instanteObjetivoMs - System.currentTimeMillis();
+            long restante = calendarioPublicaciones.getFronteraProgramadaMs() - System.currentTimeMillis();
             if (restante <= 0) return;
             try {
                 Thread.sleep(Math.min(restante, 250L));
@@ -1759,6 +1760,21 @@ public class SimulacionJob implements Runnable {
                 throw new SimulacionDetenidaException();
             }
         }
+    }
+
+    private void registrarPublicacionFisica(long publicacionRealMs, Instant finCalculo, int frecuenciaSiguienteMs) {
+        long finCalculoMs = finCalculo != null ? finCalculo.toEpochMilli() : publicacionRealMs;
+        RegistroPublicacion registro = calendarioPublicaciones.registrarPublicacion(
+                publicacionRealMs, finCalculoMs, frecuenciaSiguienteMs);
+        System.out.printf(
+                "[CALENDARIO-PUBLICACION] bloqueFisico=%d origen=%s frontera=%s publicacionReal=%s "
+                        + "fIntervaloMs=%d atrasoMs=%d adelantoAntesEsperaMs=%d derivaAcumuladaMs=%d "
+                        + "tiempoPausadoMs=%d fronterasIncumplidas=%d%n",
+                registro.indiceBloqueFisico(), Instant.ofEpochMilli(registro.origenPublicacionesMs()),
+                Instant.ofEpochMilli(registro.fronteraProgramadaMs()),
+                Instant.ofEpochMilli(registro.publicacionRealMs()), registro.frecuenciaIntervaloMs(),
+                registro.atrasoMs(), registro.adelantoAntesEsperaMs(), registro.derivaAcumuladaMs(),
+                registro.tiempoPausadoAcumuladoMs(), registro.fronterasIncumplidas());
     }
 
     private boolean esSimulacionCincoDias() {
@@ -1815,6 +1831,7 @@ public class SimulacionJob implements Runnable {
 
     public void pausar() {
         if (esTerminal()) return;
+        calendarioPublicaciones.iniciarPausa(System.currentTimeMillis());
         pausada.set(true);
         state.setEstado("PAUSADA");
         publicarControl(TipoEvento.SIMULACION_PAUSADA);
@@ -1822,8 +1839,17 @@ public class SimulacionJob implements Runnable {
 
     public void reanudar() {
         if (esTerminal()) return;
+        long duracionPausaMs = calendarioPublicaciones.finalizarPausa(System.currentTimeMillis());
         pausada.set(false);
         state.setEstado("EN_PROCESO");
+        if (duracionPausaMs > 0) {
+            System.out.printf("[CALENDARIO-PAUSA] inicio=%s fin=%s duracionMs=%d ajusteAcumuladoMs=%d origenAjustado=%s%n",
+                    Instant.ofEpochMilli(calendarioPublicaciones.getUltimoInicioPausaMs()),
+                    Instant.ofEpochMilli(calendarioPublicaciones.getUltimoFinPausaMs()), duracionPausaMs,
+                    calendarioPublicaciones.getTiempoPausadoAcumuladoMs(),
+                    calendarioPublicaciones.tieneOrigen()
+                            ? Instant.ofEpochMilli(calendarioPublicaciones.getOrigenPublicacionesMs()) : null);
+        }
         publicarControl(TipoEvento.SIMULACION_REANUDADA);
     }
 
@@ -1872,6 +1898,86 @@ public class SimulacionJob implements Runnable {
             int cantidadMovimiento,
             String envioId,
             Long vueloId
+    ) {
+    }
+
+    static final class CalendarioPublicaciones {
+        private long origenPublicacionesMs;
+        private long fronteraProgramadaMs;
+        private long indiceBloqueFisico;
+        private long tiempoPausadoAcumuladoMs;
+        private long inicioPausaMs = -1L;
+        private long ultimoInicioPausaMs = -1L;
+        private long ultimoFinPausaMs = -1L;
+        private long fronterasIncumplidas;
+        private int frecuenciaIntervaloProgramadoMs;
+
+        synchronized RegistroPublicacion registrarPublicacion(
+                long publicacionRealMs, long finCalculoMs, int frecuenciaSiguienteMs) {
+            if (indiceBloqueFisico == 0) {
+                origenPublicacionesMs = publicacionRealMs;
+                fronteraProgramadaMs = publicacionRealMs;
+                indiceBloqueFisico = 1;
+                frecuenciaIntervaloProgramadoMs = frecuenciaSiguienteMs;
+            } else {
+                indiceBloqueFisico++;
+            }
+            long fronteraDelBloqueMs = fronteraProgramadaMs;
+            long atrasoMs = Math.max(0L, publicacionRealMs - fronteraDelBloqueMs);
+            long adelantoMs = Math.max(0L, fronteraDelBloqueMs - finCalculoMs);
+            if (atrasoMs > 0L && indiceBloqueFisico > 1) fronterasIncumplidas++;
+            fronteraProgramadaMs = fronteraDelBloqueMs + frecuenciaSiguienteMs;
+            int frecuenciaUsadaMs = indiceBloqueFisico == 1
+                    ? frecuenciaSiguienteMs : frecuenciaIntervaloProgramadoMs;
+            frecuenciaIntervaloProgramadoMs = frecuenciaSiguienteMs;
+            return new RegistroPublicacion(
+                    indiceBloqueFisico, origenPublicacionesMs, fronteraDelBloqueMs, publicacionRealMs,
+                    frecuenciaUsadaMs, atrasoMs, adelantoMs,
+                    publicacionRealMs - fronteraDelBloqueMs, tiempoPausadoAcumuladoMs,
+                    fronterasIncumplidas);
+        }
+
+        synchronized void iniciarPausa(long ahoraMs) {
+            if (inicioPausaMs < 0L) {
+                inicioPausaMs = ahoraMs;
+                ultimoInicioPausaMs = ahoraMs;
+            }
+        }
+
+        synchronized long finalizarPausa(long ahoraMs) {
+            if (inicioPausaMs < 0L) return 0L;
+            long duracionMs = Math.max(0L, ahoraMs - inicioPausaMs);
+            tiempoPausadoAcumuladoMs += duracionMs;
+            if (indiceBloqueFisico > 0) {
+                origenPublicacionesMs += duracionMs;
+                fronteraProgramadaMs += duracionMs;
+            }
+            ultimoFinPausaMs = ahoraMs;
+            inicioPausaMs = -1L;
+            return duracionMs;
+        }
+
+        synchronized boolean tieneOrigen() { return indiceBloqueFisico > 0; }
+        synchronized long getOrigenPublicacionesMs() { return origenPublicacionesMs; }
+        synchronized long getFronteraProgramadaMs() { return fronteraProgramadaMs; }
+        synchronized long getIndiceBloqueFisico() { return indiceBloqueFisico; }
+        synchronized long getTiempoPausadoAcumuladoMs() { return tiempoPausadoAcumuladoMs; }
+        synchronized long getUltimoInicioPausaMs() { return ultimoInicioPausaMs; }
+        synchronized long getUltimoFinPausaMs() { return ultimoFinPausaMs; }
+        synchronized long getFronterasIncumplidas() { return fronterasIncumplidas; }
+    }
+
+    record RegistroPublicacion(
+            long indiceBloqueFisico,
+            long origenPublicacionesMs,
+            long fronteraProgramadaMs,
+            long publicacionRealMs,
+            int frecuenciaIntervaloMs,
+            long atrasoMs,
+            long adelantoAntesEsperaMs,
+            long derivaAcumuladaMs,
+            long tiempoPausadoAcumuladoMs,
+            long fronterasIncumplidas
     ) {
     }
 
