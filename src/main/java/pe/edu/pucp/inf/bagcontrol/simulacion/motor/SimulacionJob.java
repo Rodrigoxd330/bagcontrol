@@ -47,6 +47,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class SimulacionJob implements Runnable {
 
@@ -83,6 +85,10 @@ public class SimulacionJob implements Runnable {
     private final Set<String> enviosConCheckIn = new HashSet<>();
     private long tiempoUltimoLoteMs = 0L;
     private final CalendarioPublicaciones calendarioPublicaciones = new CalendarioPublicaciones();
+    private final AtomicBoolean planificacionActiva = new AtomicBoolean(false);
+    private final AtomicReference<BloquePreparado> bloquePreparado = new AtomicReference<>();
+    private final AtomicLong versionPlan = new AtomicLong(1L);
+    private final AtomicBoolean cancelacionCooperativaSolicitada = new AtomicBoolean(false);
     private int bloquesConsecutivosCercaLimite = 0;
     public static final int SA_INICIAL_MS = 35_000;
     public static final int SA_MAXIMO_MS = 40_000;
@@ -215,6 +221,22 @@ public class SimulacionJob implements Runnable {
 
             verificarDetencion();
             esperarSiPausadaODetenida();
+            long taEstimadoMs = estimarTaConservadorMs();
+            long hundimientoMs = esPrimerBloque || esBenchmark() || !esSimulacionCincoDias()
+                    ? 0L : calcularHundimientoMs(frecuenciaBloqueMs, taEstimadoMs);
+            if (!esPrimerBloque && esSimulacionCincoDias() && !esBenchmark()) {
+                long inicioCalculoProgramadoMs = fronteraProgramadaMs - frecuenciaBloqueMs + hundimientoMs;
+                esperarHastaInstanteConCalendario(inicioCalculoProgramadoMs);
+            }
+            // H es coordinación previa, no forma parte de ta: el cronómetro comienza al calcular.
+            inicioRealCalculo = Instant.now();
+            inicioCronometroTa = inicioRealCalculo.toEpochMilli();
+            metricasBloque.setInicioRealCalculo(inicioRealCalculo);
+            if (!planificacionActiva.compareAndSet(false, true)) {
+                throw new IllegalStateException("Ya existe una planificacion activa para " + simulacionId);
+            }
+            long versionCalculo = versionPlan.get();
+            cancelacionCooperativaSolicitada.set(false);
 
             LocalDateTime ventanaInicio = state.getTiempoActual();
             LocalDateTime ventanaFin = ventanaInicio.plusMinutes(k); // K determina el salto simulado
@@ -319,6 +341,27 @@ public class SimulacionJob implements Runnable {
             metricasBloque.sumarPostprocesamientoMs(System.currentTimeMillis() - inicioPostprocesamientoFinal);
             long alistamientoEventosMs = System.currentTimeMillis() - inicioAlistamientoEventos;
 
+            BloquePreparado preparado = new BloquePreparado(
+                    state.getBloquesProcesados() + 1L, ventanaInicio, ventanaFin, versionCalculo,
+                    Instant.ofEpochMilli(inicioCronometroTa), Instant.now(),
+                    Instant.ofEpochMilli(esPrimerBloque ? System.currentTimeMillis() : fronteraProgramadaMs),
+                    eventosBatch, enviosBatch, solucion, metricasBloque, planMs, alistamientoEventosMs,
+                    taCalculadoDesde(inicioCronometroTa), hundimientoMs, taEstimadoMs,
+                    clavesVuelosDe(solucion), new AtomicBoolean(false), new AtomicReference<>());
+            if (!bloquePreparado.compareAndSet(null, preparado)) {
+                planificacionActiva.set(false);
+                throw new IllegalStateException("Ya existe un bloque preparado para " + simulacionId);
+            }
+            planificacionActiva.set(false);
+
+            if (cancelacionCooperativaSolicitada.get() || versionCalculo != versionPlan.get()) {
+                invalidarYDescartarPreparado(preparado, "VERSION_PLAN_CAMBIO_DURANTE_CALCULO");
+                state.setTiempoActual(ventanaInicio);
+                PlanificacionInstrumentacion.limpiar();
+                DeadlinePlanificacion.limpiar();
+                continue;
+            }
+
             // --- FASE 7: COLAPSO ---
             if (incumplimiento != null || colapsoCapacidad.isPresent()) {
                 state.setTiempoActual(LocalDateTime.ofInstant(instanteColapso, ZoneOffset.UTC));
@@ -336,6 +379,7 @@ public class SimulacionJob implements Runnable {
                         alistamientoEventosMs, totalProcesamientoMs, frecuenciaBloqueMs);
                 state.registrarTiempoBloque(planMs, totalProcesamientoMs, frecuenciaBloqueMs);
                 state.setBloquesProcesados(state.getBloquesProcesados() + 1);
+                bloquePreparado.compareAndSet(preparado, null);
                 publicarMetricasCapacidad(solucion);
                 break;
             }
@@ -361,13 +405,23 @@ public class SimulacionJob implements Runnable {
                 esperarConControl();
             }
 
+            preparado = bloquePreparado.get();
+            if (!esPublicable(preparado, versionPlan.get())) {
+                if (preparado != null) invalidarYDescartarPreparado(preparado, "VERSION_PLAN_OBSOLETA_ANTES_PUBLICACION");
+                state.setTiempoActual(ventanaInicio);
+                PlanificacionInstrumentacion.limpiar();
+                DeadlinePlanificacion.limpiar();
+                continue;
+            }
+
             // --- FASE 9: ENVÍO DE DATOS A FRONTEND ---
             // El snapshot debe estar disponible antes que el lote para que las consultas de detalle
             // nunca observen el bloque siguiente que ya se está preparando.
             state.guardarSnapshot();
             long inicioPublicacion = System.currentTimeMillis();
             long numeroLotePublicado = publicarLote(
-                    eventosBatch, enviosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
+                    preparado.eventos(), preparado.envios(), ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
+            bloquePreparado.compareAndSet(preparado, null);
             metricasBloque.setNumeroLote(numeroLotePublicado);
             long publicacionMs = System.currentTimeMillis() - inicioPublicacion;
             metricasBloque.sumarPublicacionWebSocketMs(publicacionMs);
@@ -380,6 +434,7 @@ public class SimulacionJob implements Runnable {
             state.registrarTiempoBloque(planMs, taCalculadoMs + publicacionMs, frecuenciaBloqueMs);
             state.setBloquesProcesados(state.getBloquesProcesados() + 1);
             registrarPublicacionFisica(inicioPublicacion, metricasBloque.getFinRealCalculo(), saMs);
+            registrarMetricasPreparacion(preparado, inicioPublicacion);
             publicarMetricasCapacidad(solucion);
         }
 
@@ -491,6 +546,7 @@ public class SimulacionJob implements Runnable {
                     });
         }
         marcarEnviosParaReplanificar(new LinkedHashSet<>(idsAfectados), "VUELO_CANCELADO");
+        invalidarPreparacionSiCorresponde(clave, idsAfectados);
 
         EventoVueloDTO evento = simulacionEventosFactory.crearEventoVuelo(instancia, TipoEvento.VUELO_CANCELADO);
         evento.setFechaHoraEvento(instanteRegistro.toString());
@@ -1762,6 +1818,94 @@ public class SimulacionJob implements Runnable {
         }
     }
 
+    private void esperarHastaInstanteConCalendario(long instanteObjetivoMs) {
+        while (System.currentTimeMillis() < instanteObjetivoMs) {
+            verificarDetencion();
+            esperarSiPausadaODetenida();
+            long restante = instanteObjetivoMs - System.currentTimeMillis();
+            if (restante <= 0) return;
+            dormir(Math.min(restante, 250L));
+        }
+    }
+
+    static long calcularHundimientoMs(long frecuenciaMs, long taEstimadoMs) {
+        long maximo = Math.max(0L, frecuenciaMs / 2L);
+        return Math.max(0L, Math.min(maximo,
+                frecuenciaMs - Math.max(0L, taEstimadoMs) - MARGEN_SEGURIDAD_MS));
+    }
+
+    private long estimarTaConservadorMs() {
+        List<MetricasPlanificacionBloque> historial = state.getMetricasPlanificacionPorBloque();
+        if (historial.isEmpty()) return Math.max(1L, saMs / 2L);
+        List<Long> muestras = historial.stream()
+                .skip(Math.max(0, historial.size() - 10L))
+                .map(MetricasPlanificacionBloque::getTaTotalMs)
+                .sorted()
+                .toList();
+        int indiceP90 = Math.min(muestras.size() - 1, (int) Math.ceil(muestras.size() * 0.90) - 1);
+        return Math.max(1L, muestras.get(Math.max(0, indiceP90)));
+    }
+
+    private long taCalculadoDesde(long inicioMs) {
+        return Math.max(0L, System.currentTimeMillis() - inicioMs);
+    }
+
+    private Set<String> clavesVuelosDe(SolucionRuta solucion) {
+        Set<String> claves = new HashSet<>();
+        for (RutaAsignada asignacion : solucion.getAsignaciones()) {
+            if (asignacion.getItinerario() == null) continue;
+            asignacion.getItinerario().getVuelos().forEach(vuelo -> claves.add(claveInstanciaVuelo(
+                    vuelo.getCodigoBase(), vuelo.getFechaHoraSalidaUtc().toString())));
+        }
+        return Set.copyOf(claves);
+    }
+
+    private void invalidarPreparacionSiCorresponde(String claveVuelo, List<String> idsAfectados) {
+        BloquePreparado preparado = bloquePreparado.get();
+        boolean relevantePreparado = cancelacionAfecta(preparado, claveVuelo, idsAfectados);
+        boolean relevanteEnCalculo = preparado == null && planificacionActiva.get() && !idsAfectados.isEmpty();
+        if (!relevantePreparado && !relevanteEnCalculo) return;
+
+        long nuevaVersion = versionPlan.incrementAndGet();
+        cancelacionCooperativaSolicitada.set(true);
+        if (preparado != null) {
+            preparado.invalidado().set(true);
+            preparado.causaInvalidacion().compareAndSet(null, "CANCELACION_RELEVANTE");
+        }
+        System.out.printf("[BLOQUE-INVALIDADO] versionNueva=%d preparado=%s calculoActivo=%s causa=CANCELACION_RELEVANTE%n",
+                nuevaVersion, preparado != null, planificacionActiva.get());
+    }
+
+    static boolean cancelacionAfecta(
+            BloquePreparado preparado, String claveVuelo, List<String> idsAfectados) {
+        return preparado != null && (preparado.clavesVuelos().contains(claveVuelo)
+                || preparado.envios().stream().anyMatch(envio -> idsAfectados.contains(envio.getIdPedido())));
+    }
+
+    static boolean esPublicable(BloquePreparado preparado, long versionActual) {
+        return preparado != null && !preparado.invalidado().get() && preparado.versionPlan() == versionActual;
+    }
+
+    private void invalidarYDescartarPreparado(BloquePreparado preparado, String causa) {
+        preparado.invalidado().set(true);
+        preparado.causaInvalidacion().compareAndSet(null, causa);
+        bloquePreparado.compareAndSet(preparado, null);
+        System.out.printf("[BLOQUE-DESCARTADO] bloqueFisico=%d versionPlan=%d causa=%s%n",
+                preparado.indiceFisico(), preparado.versionPlan(), preparado.causaInvalidacion().get());
+    }
+
+    private void registrarMetricasPreparacion(BloquePreparado preparado, long publicacionRealMs) {
+        long preparadoMs = Math.max(0L, publicacionRealMs - preparado.finCalculo().toEpochMilli());
+        long atrasoMs = Math.max(0L, publicacionRealMs - preparado.fronteraPublicacion().toEpochMilli());
+        System.out.printf("[BLOQUE-PREPARADO] bloqueFisico=%d versionPlan=%d hMs=%d taEstimadoMs=%d "
+                        + "calculoInicio=%s calculoFin=%s frontera=%s preparadoMs=%d publicacion=%s atrasoMs=%d "
+                        + "invalidado=%s causaInvalidacion=%s%n",
+                preparado.indiceFisico(), preparado.versionPlan(), preparado.hundimientoMs(),
+                preparado.taEstimadoMs(), preparado.inicioCalculo(), preparado.finCalculo(),
+                preparado.fronteraPublicacion(), preparadoMs, Instant.ofEpochMilli(publicacionRealMs), atrasoMs,
+                preparado.invalidado().get(), preparado.causaInvalidacion().get());
+    }
+
     private void registrarPublicacionFisica(long publicacionRealMs, Instant finCalculo, int frecuenciaSiguienteMs) {
         long finCalculoMs = finCalculo != null ? finCalculo.toEpochMilli() : publicacionRealMs;
         RegistroPublicacion registro = calendarioPublicaciones.registrarPublicacion(
@@ -1979,6 +2123,34 @@ public class SimulacionJob implements Runnable {
             long tiempoPausadoAcumuladoMs,
             long fronterasIncumplidas
     ) {
+    }
+
+    record BloquePreparado(
+            long indiceFisico,
+            LocalDateTime ventanaInicio,
+            LocalDateTime ventanaFin,
+            long versionPlan,
+            Instant inicioCalculo,
+            Instant finCalculo,
+            Instant fronteraPublicacion,
+            List<EventoBaseDTO> eventos,
+            List<EnvioDTO> envios,
+            SolucionRuta solucion,
+            MetricasPlanificacionBloque metricas,
+            long planificacionMs,
+            long alistamientoMs,
+            long taMs,
+            long hundimientoMs,
+            long taEstimadoMs,
+            Set<String> clavesVuelos,
+            AtomicBoolean invalidado,
+            AtomicReference<String> causaInvalidacion
+    ) {
+        BloquePreparado {
+            eventos = List.copyOf(eventos);
+            envios = List.copyOf(envios);
+            clavesVuelos = Set.copyOf(clavesVuelos);
+        }
     }
 
     private static class SimulacionDetenidaException extends RuntimeException {
