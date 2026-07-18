@@ -59,6 +59,22 @@ public class TabuSearch {
                 enviosNuevos, 120, 12, 50, deadlineMs, budgetMs);
     }
 
+    public SolucionRuta ejecutar(
+            List<Envio> envios,
+            Map<String, List<Itinerario>> itinerariosPorRuta,
+            List<Aeropuerto> aeropuertos,
+            Map<String, Integer> inventarioInicial,
+            Set<String> enviosNuevos,
+            int iteraciones,
+            int tenure,
+            int maxVecinos,
+            long deadlineMs,
+            long budgetMs
+    ) {
+        return ejecutarConParametros(envios, itinerariosPorRuta, aeropuertos, inventarioInicial,
+                enviosNuevos, iteraciones, tenure, maxVecinos, deadlineMs, budgetMs);
+    }
+
     public SolucionRuta ejecutarConParametros(
             List<Envio> envios,
             Map<String, List<Itinerario>> itinerariosPorRuta,
@@ -142,6 +158,7 @@ public class TabuSearch {
                     actual,
                     itinerariosPorRuta,
                     mapaAeropuertos,
+                    inventarioInicial,
                     vecinosPermitidos
             );
             vecinosGenerados += vecinos.size();
@@ -157,35 +174,26 @@ public class TabuSearch {
                 vecinosEvaluados++;
                 String id = mov.getIdMovimientoTabu();
 
-                boolean noRespeta = actual.aplicarMovimientoDefinitivo(mov,mapaAeropuertos,inventarioInicial,enviosNuevos);
-
-                /*
-                for(RutaAsignada asignacion : actual.getAsignaciones()){
-                    if (!PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
-                            asignacion, mapaAeropuertos, inventarioInicial, enviosNuevos
-                    )) {
-                        rutasDescartadasPorCapacidadAeropuerto++;
-                        actual.deshacerMovimiento(mov);
-                        actual.setFitness(actualFitness);
-                        noRespeta = true;
-                        break;
-                    }
-                }*/
-                if(noRespeta) {
-                    rutasDescartadasPorCapacidadAeropuerto++;
-                    actual.deshacerMovimiento(mov);
-                    actual.setFitness(actualFitness);
-                    continue;
-                }
-
+                actual.getAsignaciones().stream()
+                        .filter(asignacion -> asignacion.getEnvio().getIdPedido().equals(mov.getEnvio().getIdPedido()))
+                        .findFirst()
+                        .orElseThrow()
+                        .setItinerario(mov.getItinerarioNuevo());
                 double fitnessCandidato = fitnessEvaluator.evaluar(actual, mapaAeropuertos, inventarioInicial);
 
                 boolean esMejorGlobal = fitnessCandidato < mejorFitnessGlobal;
 
-                if (!listaTabu.contains(id) || esMejorGlobal) {
-                    if (fitnessCandidato < mejorFitnessVecino) {
+                if ((!listaTabu.contains(id) || esMejorGlobal) && fitnessCandidato < mejorFitnessVecino) {
+                    // La evaluación completa del fitness ya descarta la mayoría de candidatos.
+                    // Validamos la capacidad solo para un candidato que podría ser seleccionado.
+                    boolean respetaCapacidad = PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
+                            actual, mapaAeropuertos, inventarioInicial, enviosNuevos
+                    );
+                    if (respetaCapacidad) {
                         mejorFitnessVecino = fitnessCandidato;
                         mejorMovimiento = mov;
+                    } else {
+                        rutasDescartadasPorCapacidadAeropuerto++;
                     }
                 }
 

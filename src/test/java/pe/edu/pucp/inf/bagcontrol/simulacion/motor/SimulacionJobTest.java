@@ -85,7 +85,7 @@ class SimulacionJobTest {
     }
 
     @Test
-    void envioPendienteNoRegistraCheckInNiConsumeCapacidad() throws Exception {
+    void envioPendienteRegistraCheckInParaValidarCapacidadFisica() throws Exception {
         SimulacionState state = new SimulacionState("sim-pendiente");
         state.getInventarioSnapshot().put("LIM", 10);
         SolucionRuta solucion = new SolucionRuta();
@@ -96,8 +96,55 @@ class SimulacionJobTest {
 
         List<?> checkIns = (List<?>) registrar.invoke(job, solucion);
 
-        assertThat(checkIns).isEmpty();
+        assertThat(checkIns).hasSize(1);
         assertThat(state.getInventarioSnapshot().get("LIM")).isEqualTo(10);
+    }
+
+    @Test
+    void saAumentaTrasDosBloquesConsecutivosEnElUmbral() throws Exception {
+        SimulacionJob job = crearJobPrueba(new SimulacionState("sim-sa-adaptativo"));
+        Method ajustar = SimulacionJob.class.getDeclaredMethod("ajustarSa", long.class, long.class);
+        ajustar.setAccessible(true);
+
+        ajustar.invoke(job, 14_000L, 1L);
+        assertThat(job.getSaMs()).isEqualTo(15_000);
+        ajustar.invoke(job, 14_000L, 2L);
+        assertThat(job.getSaMs()).isEqualTo(16_000);
+
+        ajustar.invoke(job, 15_000L, 3L);
+        ajustar.invoke(job, 8_000L, 4L);
+        ajustar.invoke(job, 15_000L, 5L);
+        assertThat(job.getSaMs()).isEqualTo(16_000);
+        ajustar.invoke(job, 15_000L, 6L);
+        assertThat(job.getSaMs()).isEqualTo(17_000);
+    }
+
+    @Test
+    void acumulaSaYDiferenciaContraTaPorBloque() {
+        SimulacionState state = new SimulacionState("sim-auditoria-sa");
+
+        state.registrarTiempoBloque(4_000, 9_000, 10_000);
+        state.registrarTiempoBloque(5_000, 10_000, 11_000);
+        state.registrarTiempoBloque(6_000, 12_000, 11_000);
+
+        assertThat(state.getSumaSaBloquesMs()).isEqualTo(32_000);
+        assertThat(state.getSumaDiferenciaSaTaMs()).isEqualTo(1_000);
+        assertThat(state.getBloquesTaMayorSa()).isEqualTo(1);
+    }
+
+    @Test
+    void conservaSoloLosCuatroSnapshotsMasRecientes() {
+        SimulacionState state = new SimulacionState("sim-snapshots");
+
+        for (int i = 0; i < 6; i++) {
+            state.guardarSnapshot();
+        }
+
+        assertThat(state.getHistEnviosEnSeguimiento()).hasSize(4);
+        assertThat(state.getHistEnviosEnSeguimiento().keySet()).containsExactlyInAnyOrder(3L, 4L, 5L, 6L);
+        assertThat(state.getHistEnviosPorVuelo()).hasSize(4);
+        assertThat(state.getHistEnviosEntregados()).hasSize(4);
+        assertThat(state.getHistUltimoAeropuertoPorEnvio()).hasSize(4);
     }
 
     @Test

@@ -40,6 +40,7 @@ public class SimulacionManager {
     private static final String MODO_OPERACION_DIA = "0";
     private static final String MODO_SIM5D = "1";
     private static final String MODO_COLAPSO_OPERATIVO = "2";
+    private static final String MODO_BENCHMARK = "BENCHMARK";
     private static final long MAX_HORIZONTE_OPERACION_HORAS = 48;
 
     private final PlanificadorService planificadorService;
@@ -289,7 +290,8 @@ public class SimulacionManager {
     }
 
     private String normalizarModo(String modo, LocalDateTime fechaFin) {
-        if (MODO_OPERACION_DIA.equals(modo) || MODO_SIM5D.equals(modo) || MODO_COLAPSO_OPERATIVO.equals(modo)) {
+        if (MODO_OPERACION_DIA.equals(modo) || MODO_SIM5D.equals(modo) || MODO_COLAPSO_OPERATIVO.equals(modo)
+                || MODO_BENCHMARK.equalsIgnoreCase(modo)) {
             return modo;
         }
         return fechaFin == null ? MODO_COLAPSO_OPERATIVO : MODO_SIM5D;
@@ -360,8 +362,27 @@ public class SimulacionManager {
                 job.getFechaCreacion().toString(),
                 state.getTiempoActual() != null ? state.getTiempoActual().toString() : null,
                 state.getFechaHoraInicioReal() != null ? state.getFechaHoraInicioReal().toString() : null,
-                state.getFechaHoraFinReal() != null ? state.getFechaHoraFinReal().toString() : null
+                state.getFechaHoraFinReal() != null ? state.getFechaHoraFinReal().toString() : null,
+                state.getMinutosEntregaPlanificadaPorEnvio().size(),
+                state.getMinutosEntregaPlanificadaPorEnvio().values().stream()
+                        .mapToLong(Long::longValue)
+                        .average()
+                        .orElse(0.0),
+                state.getEnviosPendientes().size(),
+                state.getEnviosEntregados().size(),
+                promedioBloques(state.getTiempoPlanificacionBloquesMs(), state.getBloquesProcesados()),
+                promedioBloques(state.getTiempoTotalBloquesMs(), state.getBloquesProcesados()),
+                state.getMaxTiempoPlanificacionBloqueMs(),
+                state.getMaxTiempoTotalBloqueMs(),
+                state.getSumaSaBloquesMs(),
+                state.getSumaDiferenciaSaTaMs(),
+                state.getBloquesTaMayorSa(),
+                List.copyOf(state.getHistorialAjustesSa())
         );
+    }
+
+    private double promedioBloques(long totalMs, long bloques) {
+        return bloques == 0 ? 0.0 : totalMs / (double) bloques;
     }
 
     public LoteEventosDTO obtenerSnapshotActual(String simulacionId) {
@@ -379,17 +400,7 @@ public class SimulacionManager {
     public List<EnvioDTO> extraerEnviosPorVuelo(String simulacionId, EventoVueloDTO vuelo, String timestamp) {
         SimulacionState state = obtenerState(simulacionId);
         long lote = calcularLoteSnapshot(state, timestamp);
-        //Map<Long, List<EnvioDTO>> enviosEnLote = state.getHistEnviosPorVuelo().get(lote);
-        Map<String, List<EnvioDTO>> enviosEnLote = new LinkedHashMap<>(state.getEnviosPorVuelo());
-        //NOTA: Si solo se consiguen los vuelos del ultimo lote, los vuelos planificados el lote anterior
-        // que aun no salen, no se veran bien representados
-        //state.getHistEnviosPorVuelo().entrySet().forEach(entry -> {
-        //   entry.getValue().entrySet().forEach(_entry -> {
-        //       List<EnvioDTO> envios = new ArrayList<>(enviosEnLote.computeIfAbsent(_entry.getKey(),k ->List.of()));
-        //       envios.addAll(_entry.getValue());
-        //       enviosEnLote.put(_entry.getKey(),envios);
-        //   });
-        //});
+        Map<String, List<EnvioDTO>> enviosEnLote = state.getHistEnviosPorVuelo().get(lote);
         if (enviosEnLote == null) return List.of();
         String key = vuelo.claveInstanciaVuelo();
         if (!enviosEnLote.containsKey(key) && vuelo.getCantidadMaletas() > 0) {
@@ -545,7 +556,9 @@ public class SimulacionManager {
                 state.getFechaInicioSimulacion().toInstant(ZoneOffset.UTC), ts
         ).toMinutes();
         if (minutos < 0) return 1;
-        return (minutos / state.getKMinutos()) + 1;
+        long loteCalculado = (minutos / state.getKMinutos()) + 1;
+        long ultimoPublicado = state.getUltimoLoteSnapshot();
+        return ultimoPublicado > 0 ? Math.min(loteCalculado, ultimoPublicado) : 1;
     }
 
     private SimulacionJob obtenerJob(String simulacionId) {

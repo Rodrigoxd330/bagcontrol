@@ -109,17 +109,39 @@ public class PlanificadorUtils {
             Map<String, Aeropuerto> mapaAeropuertos,
             int maxVecinos
     ) {
-        List<Movimiento> movimientos = new ArrayList<>();
+        return generarVecindario(solucion, itinerariosPorRuta, mapaAeropuertos, Map.of(), maxVecinos);
+    }
+
+    public static List<Movimiento> generarVecindario(
+            SolucionRuta solucion,
+            Map<String, List<Itinerario>> itinerariosPorRuta,
+            Map<String, Aeropuerto> mapaAeropuertos,
+            Map<String, Integer> inventarioInicial,
+            int maxVecinos
+    ) {
+        if (maxVecinos <= 0) {
+            return List.of();
+        }
+
+        Map<String, Double> presionAeropuertos = calcularPresionAeropuertos(
+                solucion, mapaAeropuertos, inventarioInicial
+        );
 
         List<RutaAsignada> asignaciones = new ArrayList<>(solucion.getAsignaciones());
         asignaciones.sort(Comparator
                 .comparing((RutaAsignada asignacion) -> asignacion.getItinerario() != null)
+                .thenComparing(Comparator.comparingDouble(
+                        (RutaAsignada asignacion) -> presionRuta(asignacion.getItinerario(), presionAeropuertos)
+                ).reversed())
                 .thenComparing(asignacion -> calcularDeadlineSla(asignacion.getEnvio(), mapaAeropuertos))
                 .thenComparing(Comparator.comparingInt(
                         (RutaAsignada asignacion) -> asignacion.getEnvio().getCantidadMaletas()
                 ).reversed()));
 
-        for (RutaAsignada asignacion : asignaciones) {
+        int maxEnviosEvaluados = Math.min(asignaciones.size(), Math.max(20, maxVecinos * 2));
+        int cuotaPorEnvio = 3;
+        List<CandidatoMovimiento> candidatos = new ArrayList<>();
+        for (RutaAsignada asignacion : asignaciones.subList(0, maxEnviosEvaluados)) {
             var envio = asignacion.getEnvio();
             var itinerarioActual = asignacion.getItinerario();
 
@@ -127,22 +149,98 @@ public class PlanificadorUtils {
                     envio,
                     itinerariosPorRuta,
                     mapaAeropuertos
-            );
+            ).stream()
+                    .filter(itinerarioNuevo -> itinerarioActual == null
+                            || !itinerarioActual.getIdItinerario().equals(itinerarioNuevo.getIdItinerario()))
+                    .sorted(Comparator
+                            .comparingDouble((Itinerario itinerario) -> presionRuta(itinerario, presionAeropuertos))
+                            .thenComparing(Itinerario::getFechaHoraLlegadaUtc)
+                            .thenComparingInt(Itinerario::getCantidadVuelos))
+                    .limit(cuotaPorEnvio)
+                    .toList();
 
             for (Itinerario itinerarioNuevo : alternativas) {
-                if (itinerarioActual == null ||
-                        !itinerarioActual.getIdItinerario().equals(itinerarioNuevo.getIdItinerario())) {
-
-                    movimientos.add(new Movimiento(envio, itinerarioActual, itinerarioNuevo));
-
-                    if (movimientos.size() >= maxVecinos) {
-                        return movimientos;
-                    }
-                }
+                Movimiento movimiento = new Movimiento(envio, itinerarioActual, itinerarioNuevo);
+                double alivio = presionRuta(itinerarioActual, presionAeropuertos)
+                        - presionRuta(itinerarioNuevo, presionAeropuertos);
+                candidatos.add(new CandidatoMovimiento(
+                        movimiento, itinerarioActual == null, alivio,
+                        presionRuta(itinerarioNuevo, presionAeropuertos)
+                ));
             }
         }
 
+        candidatos.sort(Comparator
+                .comparing(CandidatoMovimiento::pendiente).reversed()
+                .thenComparing(Comparator.comparingDouble(CandidatoMovimiento::alivio).reversed())
+                .thenComparingDouble(CandidatoMovimiento::presionNueva)
+                .thenComparing(candidato -> candidato.movimiento().getItinerarioNuevo().getFechaHoraLlegadaUtc()));
+
+        int dirigidos = Math.min(candidatos.size(), (int) Math.ceil(maxVecinos * 0.8));
+        List<Movimiento> movimientos = new ArrayList<>(maxVecinos);
+        Set<String> usados = new HashSet<>();
+        for (int i = 0; i < dirigidos; i++) {
+            Movimiento movimiento = candidatos.get(i).movimiento();
+            movimientos.add(movimiento);
+            usados.add(movimiento.getIdMovimientoTabu());
+        }
+
+        candidatos.stream()
+                .map(CandidatoMovimiento::movimiento)
+                .filter(movimiento -> !usados.contains(movimiento.getIdMovimientoTabu()))
+                .sorted(Comparator.comparingInt(movimiento -> movimiento.getIdMovimientoTabu().hashCode()))
+                .limit(maxVecinos - movimientos.size())
+                .forEach(movimientos::add);
         return movimientos;
+    }
+
+    private static Map<String, Double> calcularPresionAeropuertos(
+            SolucionRuta solucion,
+            Map<String, Aeropuerto> aeropuertos,
+            Map<String, Integer> inventarioInicial
+    ) {
+        Map<String, Integer> cargaEscalas = new HashMap<>(inventarioInicial);
+        for (RutaAsignada asignacion : solucion.getAsignaciones()) {
+            if (asignacion.getItinerario() == null) {
+                continue;
+            }
+            List<VueloInstanciado> vuelos = asignacion.getItinerario().getVuelos();
+            for (int i = 0; i < vuelos.size() - 1; i++) {
+                cargaEscalas.merge(
+                        vuelos.get(i).getDestinoIata(), asignacion.getEnvio().getCantidadMaletas(), Integer::sum
+                );
+            }
+        }
+
+        Map<String, Double> presion = new HashMap<>();
+        cargaEscalas.forEach((iata, carga) -> {
+            Aeropuerto aeropuerto = aeropuertos.get(iata);
+            if (aeropuerto != null && aeropuerto.getCapacidadAlmacen() > 0) {
+                presion.put(iata, carga / (double) aeropuerto.getCapacidadAlmacen());
+            }
+        });
+        return presion;
+    }
+
+    private static double presionRuta(Itinerario itinerario, Map<String, Double> presionAeropuertos) {
+        if (itinerario == null) {
+            return 0.0;
+        }
+        List<VueloInstanciado> vuelos = itinerario.getVuelos();
+        double presion = 0.0;
+        for (int i = 0; i < vuelos.size() - 1; i++) {
+            double ocupacion = presionAeropuertos.getOrDefault(vuelos.get(i).getDestinoIata(), 0.0);
+            presion += ocupacion * ocupacion;
+        }
+        return presion;
+    }
+
+    private record CandidatoMovimiento(
+            Movimiento movimiento,
+            boolean pendiente,
+            double alivio,
+            double presionNueva
+    ) {
     }
 
     public static boolean itinerarioTieneCapacidad(
@@ -423,6 +521,44 @@ public class PlanificadorUtils {
         inventarioReservado.replaceAll((codigoIata, reservado) ->
                 Math.min(reservado, inventarioSnapshot.getOrDefault(codigoIata, 0)));
         return inventarioReservado;
+    }
+
+    public static Map<String, Integer> construirInventarioProyectado(
+            Map<String, RutaAsignada> enviosEnSeguimiento,
+            Set<String> enviosEntregados,
+            Map<String, Integer> inventarioSnapshot,
+            Instant referencia
+    ) {
+        Map<String, Integer> variacionAcumulada = new HashMap<>();
+        Map<String, Integer> reservaPico = new HashMap<>();
+        List<MovimientoInventario> movimientos = new ArrayList<>();
+
+        for (RutaAsignada asignacion : enviosEnSeguimiento.values()) {
+            if (asignacion.getItinerario() == null
+                    || enviosEntregados.contains(asignacion.getEnvio().getIdPedido())) {
+                continue;
+            }
+            List<VueloInstanciado> vuelos = asignacion.getItinerario().getVuelos();
+            int cantidad = asignacion.getEnvio().getCantidadMaletas();
+            for (int i = 0; i < vuelos.size(); i++) {
+                VueloInstanciado vuelo = vuelos.get(i);
+                if (!vuelo.getFechaHoraSalidaUtc().isBefore(referencia)) {
+                    movimientos.add(new MovimientoInventario(
+                            vuelo.getFechaHoraSalidaUtc(), vuelo.getOrigenIata(), -cantidad
+                    ));
+                }
+                if (i < vuelos.size() - 1 && !vuelo.getFechaHoraLlegadaUtc().isBefore(referencia)) {
+                    movimientos.add(new MovimientoInventario(
+                            vuelo.getFechaHoraLlegadaUtc(), vuelo.getDestinoIata(), cantidad
+                    ));
+                }
+            }
+        }
+
+        acumularReservaPico(movimientos, variacionAcumulada, reservaPico);
+        Map<String, Integer> inventarioProyectado = new HashMap<>(inventarioSnapshot);
+        reservaPico.forEach((codigoIata, reserva) -> inventarioProyectado.merge(codigoIata, reserva, Integer::sum));
+        return inventarioProyectado;
     }
 
     private static void registrarMovimientosAeropuertos(

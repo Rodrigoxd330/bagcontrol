@@ -25,6 +25,7 @@ import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EstadoCapacidad;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.TipoEvento;
 
 import java.time.Instant;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -43,7 +44,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SimulacionJob implements Runnable {
 
     @Getter
-    private final int saMs;
+    private volatile int saMs;
 
     private final String simulacionId;
     private final LocalDateTime horaInicio;
@@ -70,7 +71,10 @@ public class SimulacionJob implements Runnable {
     private final Map<String, Set<String>> enviosDespachadosPorVuelo = new LinkedHashMap<>();
     private final Set<String> enviosConCheckIn = new HashSet<>();
     private long tiempoUltimoLoteMs = 0L;
-    private long inicioJobMs = 0L;
+    private long proximaPublicacionMs = 0L;
+    private int bloquesConsecutivosCercaLimite = 0;
+    private static final int SA_INICIAL_MS = 15_000;
+    private static final int SA_MAXIMO_MS = 30_000;
     private static final int MAX_EVENTOS_REPLANIFICACION_POR_BLOQUE = 50;
     private static final String MODO_OPERACION_DIA = "0";
     @Getter
@@ -127,7 +131,7 @@ public class SimulacionJob implements Runnable {
         // En operación día a día (modo="0"), el saMs es proporcional a K
         // para que factorAceleracion = K*60/SaS = 1 → tiempo real
         // (1s real = 1s sim, un vuelo de 2h tarda 2h reales)
-        this.saMs = (modo != null && "0".equals(modo)) ? k * 60 * 1000 : 30_000;
+        this.saMs = (modo != null && "0".equals(modo)) ? k * 60 * 1000 : SA_INICIAL_MS;
         this.configuracionColapsoDTO = configuracionColapsoDTO;
         this.simulacionStateMutator = simulacionStateMutator;
         this.modo = modo;
@@ -144,7 +148,6 @@ public class SimulacionJob implements Runnable {
         state.registrarInicioReal();
         state.setEstado("EN_PROCESO");
         long inicioProceso = System.currentTimeMillis();
-        inicioJobMs = inicioProceso;
         try {
             ejecutarSimulacion();
         } catch (SimulacionDetenidaException e) {
@@ -211,7 +214,7 @@ public class SimulacionJob implements Runnable {
                 continue;
             }
             agregarEventosVuelosCancelados(ventanaInicio, ventanaFin, eventosBatch);
-            Map<String, Integer> inventarioReservado = PlanificadorUtils.construirInventarioReservado(
+            Map<String, Integer> inventarioReservado = PlanificadorUtils.construirInventarioProyectado(
                     state.getEnviosEnSeguimiento(),
                     state.getEnviosEntregados(),
                     state.getInventarioSnapshot(),
@@ -224,6 +227,7 @@ public class SimulacionJob implements Runnable {
             long finPlanificacion = System.currentTimeMillis();
             preservarAsignacionesVigentes(solucion);
             state.setSolucionActual(solucion);
+            actualizarMetricasEntregaPlanificada(solucion);
             registrarEventosReplanificacion(solucion, eventosBatch, ventanaInicio, ciclo);
 
             long planMs = finPlanificacion - inicioPlanificacion;
@@ -273,15 +277,16 @@ public class SimulacionJob implements Runnable {
 
             // --- FASE 7: COLAPSO ---
             if (incumplimiento != null || colapsoCapacidad.isPresent()) {
+                state.setTiempoActual(LocalDateTime.ofInstant(instanteColapso, ZoneOffset.UTC));
+                state.guardarSnapshot();
                 publicarLote(eventosBatch,enviosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
                 long totalProcesamientoMs = System.currentTimeMillis() - inicioCronometroTa;
                 System.out.printf("[AUDITORIA-LOTE] bloque=%d ventana=%s->%s k=%d planificacionMs=%d alistamientoEventosMs=%d totalMs=%d saMs=%d%n",
                         state.getBloquesProcesados() + 1, ventanaInicio, ventanaFin, k, planMs,
                         alistamientoEventosMs, totalProcesamientoMs, saMs);
-                state.guardarSnapshot();
+                state.registrarTiempoBloque(planMs, totalProcesamientoMs, saMs);
                 state.setBloquesProcesados(state.getBloquesProcesados() + 1);
                 publicarMetricasCapacidad(solucion);
-                state.setTiempoActual(LocalDateTime.ofInstant(instanteColapso, ZoneOffset.UTC));
                 break;
             }
 
@@ -290,19 +295,23 @@ public class SimulacionJob implements Runnable {
             // --- FASE 8: FIN DE TA Y COMPENSACIÓN DE TIEMPO (SA - TA) ---
             long taCalculadoMs = System.currentTimeMillis() - inicioCronometroTa;
             this.tiempoUltimoLoteMs = taCalculadoMs;
+            ajustarSa(taCalculadoMs, state.getBloquesProcesados() + 1);
 
             state.setTiempoActual(ventanaFin);
 
             boolean esPrimerLote = state.getBloquesProcesados() == 0;
-            long publicacionProgramadaMs = inicioJobMs
-                    + ((long) state.getBloquesProcesados() + 1L) * saMs;
-            if (esSimulacionCincoDias()) {
-                esperarHasta(publicacionProgramadaMs);
-            } else if (!esPrimerLote && state.getTiempoActual().isBefore(tiempoFin)) {
+            if (esBenchmark() || esPrimerLote) {
+                // Benchmark no espera y el primer lote 5D se publica apenas termina de prepararse.
+            } else if (esSimulacionCincoDias()) {
+                esperarHasta(proximaPublicacionMs);
+            } else if (state.getTiempoActual().isBefore(tiempoFin)) {
                 esperarConControl();
             }
 
             // --- FASE 9: ENVÍO DE DATOS A FRONTEND ---
+            // El snapshot debe estar disponible antes que el lote para que las consultas de detalle
+            // nunca observen el bloque siguiente que ya se está preparando.
+            state.guardarSnapshot();
             long inicioPublicacion = System.currentTimeMillis();
             publicarLote(eventosBatch,enviosBatch, ventanaInicio.toInstant(ZoneOffset.UTC), ventanaFinUtc);
             long publicacionMs = System.currentTimeMillis() - inicioPublicacion;
@@ -310,8 +319,9 @@ public class SimulacionJob implements Runnable {
                     state.getBloquesProcesados() + 1, ventanaInicio, ventanaFin, k, planMs,
                     alistamientoEventosMs, taCalculadoMs + publicacionMs, saMs);
 
-            state.guardarSnapshot();
+            state.registrarTiempoBloque(planMs, taCalculadoMs + publicacionMs, saMs);
             state.setBloquesProcesados(state.getBloquesProcesados() + 1);
+            proximaPublicacionMs = System.currentTimeMillis() + saMs;
             publicarMetricasCapacidad(solucion);
         }
 
@@ -329,15 +339,15 @@ public class SimulacionJob implements Runnable {
             state.getEnviosEnSeguimiento().merge(
                     envio.getIdPedido(),
                     asignacion,
-                    (anterior, nueva) -> nueva.getItinerario() != null ? nueva : anterior
+                    (anterior, nueva) -> nueva
             );
             state.getEnviosRegistrados().add(envio.getIdPedido());
             state.getUltimoAeropuertoPorEnvio().putIfAbsent(envio.getIdPedido(), envio.getOrigenIata());
-            if (asignacion.getItinerario() == null) {
-                continue;
-            }
             if (enviosConCheckIn.add(envio.getIdPedido())) {
                 checkIns.add(asignacion);
+            }
+            if (asignacion.getItinerario() == null) {
+                continue;
             }
         }
         return checkIns;
@@ -403,6 +413,11 @@ public class SimulacionJob implements Runnable {
             RutaAsignada nueva = solucion.getAsignaciones().get(i);
             RutaAsignada anterior = state.getEnviosEnSeguimiento().get(nueva.getEnvio().getIdPedido());
             if (anterior == null || anterior.getItinerario() == null) {
+                continue;
+            }
+            // Antes del despacho la ruta es una reserva, no un compromiso físico.
+            // Conservarla impedía reemplazar itinerarios vencidos y provocaba colapsos SLA evitables.
+            if (!envioFueDespachadoEnPrimerVuelo(anterior)) {
                 continue;
             }
             if (anterior.getItinerario().contieneVueloCancelado()) {
@@ -806,7 +821,6 @@ public class SimulacionJob implements Runnable {
                         eventos,
                         clavesEventosPostergadosEnBatch.contains(claveEventoVuelo(evento))
                 );
-                marcarEnviosEntregadosHasta(movimiento.instante(), eventos);
             }
             if (colapso.isPresent()) {
                 return colapso;
@@ -960,12 +974,13 @@ public class SimulacionJob implements Runnable {
     private int registrarEntregasDirectas(EventoVueloDTO evento, Instant horaEvento) {
         int entregadas = 0;
         Set<String> enviosDespachados = enviosDespachadosPorVuelo.get(claveInstanciaVuelo(evento));
-        for (RutaAsignada asignacion : state.getEnviosEnSeguimiento().values()) {
-            String idPedido = asignacion.getEnvio().getIdPedido();
-            if (asignacion.getItinerario() == null || state.getEnviosEntregados().contains(idPedido)) {
-                continue;
-            }
-            if (enviosDespachados != null && !enviosDespachados.contains(idPedido)) {
+        if (enviosDespachados == null || enviosDespachados.isEmpty()) {
+            return 0;
+        }
+        for (String idPedido : enviosDespachados) {
+            RutaAsignada asignacion = state.getEnviosEnSeguimiento().get(idPedido);
+            if (asignacion == null || asignacion.getItinerario() == null
+                    || state.getEnviosEntregados().contains(idPedido)) {
                 continue;
             }
             var ultimoVuelo = asignacion.getItinerario().getVuelos()
@@ -1092,6 +1107,57 @@ public class SimulacionJob implements Runnable {
         }
     }
 
+    private void ajustarSa(long taMs, long bloque) {
+        if (esOperacionDia() || saMs >= SA_MAXIMO_MS) {
+            return;
+        }
+        int umbralMs = saMs - 1_000;
+        if (taMs < umbralMs) {
+            bloquesConsecutivosCercaLimite = 0;
+            return;
+        }
+        bloquesConsecutivosCercaLimite++;
+        if (bloquesConsecutivosCercaLimite < 2) {
+            return;
+        }
+
+        int anterior = saMs;
+        saMs = Math.min(SA_MAXIMO_MS, saMs + 1_000);
+        bloquesConsecutivosCercaLimite = 0;
+        state.getHistorialAjustesSa().add(
+                "bloque=" + bloque + " taMs=" + taMs + " saAnteriorMs=" + anterior + " saNuevoMs=" + saMs
+        );
+        System.out.printf("[SA-ADAPTATIVO] bloque=%d taMs=%d umbralMs=%d saAnteriorMs=%d saNuevoMs=%d%n",
+                bloque, taMs, umbralMs, anterior, saMs);
+    }
+
+    private boolean envioFueDespachadoEnPrimerVuelo(RutaAsignada asignacion) {
+        var vuelos = asignacion.getItinerario().getVuelos();
+        if (vuelos.isEmpty()) {
+            return false;
+        }
+        var primerVuelo = vuelos.get(0);
+        Set<String> enviosDespachados = enviosDespachadosPorVuelo.get(claveInstanciaVuelo(
+                primerVuelo.getCodigoBase(), primerVuelo.getFechaHoraSalidaUtc().toString()
+        ));
+        return enviosDespachados != null && enviosDespachados.contains(asignacion.getEnvio().getIdPedido());
+    }
+
+    private void actualizarMetricasEntregaPlanificada(SolucionRuta solucion) {
+        for (RutaAsignada asignacion : solucion.getAsignaciones()) {
+            if (asignacion.getItinerario() == null) {
+                continue;
+            }
+            long minutos = Duration.between(
+                    PlanificadorUtils.obtenerFechaIngresoUtc(asignacion.getEnvio()),
+                    asignacion.getItinerario().getFechaHoraLlegadaUtc()
+            ).toMinutes();
+            if (minutos >= 0) {
+                state.getMinutosEntregaPlanificadaPorEnvio().put(asignacion.getEnvio().getIdPedido(), minutos);
+            }
+        }
+    }
+
     private boolean debeSaltarPlanificacionOperacionDia(
             List<Envio> enviosNuevos,
             List<EventoBaseDTO> eventosBatch,
@@ -1160,6 +1226,10 @@ public class SimulacionJob implements Runnable {
         return MODO_OPERACION_DIA.equals(modo);
     }
 
+    private boolean esBenchmark() {
+        return "BENCHMARK".equalsIgnoreCase(modo);
+    }
+
     private Comparator<EventoBaseDTO> comparadorEventos() {
         return Comparator.comparing(evento -> Instant.parse(evento.getFechaHoraEvento()));
     }
@@ -1210,7 +1280,6 @@ public class SimulacionJob implements Runnable {
     }
 
     private void publicarLote(List<EventoBaseDTO> eventos, List<EnvioDTO> envios, Instant ventanaInicio, Instant ventanaFin) {
-        if (eventos.isEmpty()) return;
         LoteEventosDTO lote = new LoteEventosDTO(
                 simulacionId,
                 state.siguienteLote(),
@@ -1218,7 +1287,8 @@ public class SimulacionJob implements Runnable {
                 ventanaFin != null ? ventanaFin.toString() : null,
                 eventos.size(),
                 eventos,
-                envios
+                envios,
+                saMs
         );
         state.setUltimoLoteEmitido(lote);
         webSocketPublisher.publicarLote(simulacionId, lote);

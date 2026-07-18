@@ -18,4 +18,5 @@ public class LoteEventosDTO {
     private int cantidadEventos;
     private List<EventoBaseDTO> eventos;
     private List<EnvioDTO> envios;
+    private int saMs;
 }

@@ -37,6 +37,18 @@ public class PlanificadorService {
     @Value("${simulacion.planificacion.timeout-ms:28000}")
     private long planificacionTimeoutMs = 28_000L;
 
+    @Value("${simulacion.planificacion.tabu.iteraciones:120}")
+    private int tabuIteraciones = 120;
+
+    @Value("${simulacion.planificacion.tabu.tenure:12}")
+    private int tabuTenure = 12;
+
+    @Value("${simulacion.planificacion.tabu.max-vecinos:50}")
+    private int tabuMaxVecinos = 50;
+
+    @Value("${simulacion.planificacion.margen-capacidad:0.05}")
+    private double margenCapacidad = 0.05;
+
     private final EnvioDataStore envioDataStore;
     private final VueloRepository vueloRepository;
     private final IncidenciaRepository incidenciaRepository;
@@ -374,6 +386,22 @@ public class PlanificadorService {
             String fuenteEnvios
     ) {
         return calcularSolucionDesdeFuente(
+                algoritmo, inicio, fin, pendientes, inventarioActual, enviosVentana, fuenteEnvios,
+                planificacionTimeoutMs
+        );
+    }
+
+    private SolucionRuta calcularSolucionDesdeFuente(
+            String algoritmo,
+            LocalDateTime inicio,
+            LocalDateTime fin,
+            List<Envio> pendientes,
+            Map<String, Integer> inventarioActual,
+            List<Envio> enviosVentana,
+            String fuenteEnvios,
+            long presupuestoMs
+    ) {
+        return calcularSolucionDesdeFuente(
                 algoritmo,
                 inicio,
                 fin,
@@ -383,7 +411,8 @@ public class PlanificadorService {
                 fuenteEnvios,
                 vueloRepository.findAll(),
                 aeropuertoRepository.findAll(),
-                incidenciaRepository.findAll()
+                incidenciaRepository.findAll(),
+                presupuestoMs
         );
     }
 
@@ -399,10 +428,30 @@ public class PlanificadorService {
             List<Aeropuerto> aeropuertosSnapshot,
             List<Incidencia> incidenciasSnapshot
     ) {
+        return calcularSolucionDesdeFuente(
+                algoritmo, inicio, fin, pendientes, inventarioActual, enviosVentana, fuenteEnvios,
+                vuelosBaseSnapshot, aeropuertosSnapshot, incidenciasSnapshot, planificacionTimeoutMs
+        );
+    }
+
+    private SolucionRuta calcularSolucionDesdeFuente(
+            String algoritmo,
+            LocalDateTime inicio,
+            LocalDateTime fin,
+            List<Envio> pendientes,
+            Map<String, Integer> inventarioActual,
+            List<Envio> enviosVentana,
+            String fuenteEnvios,
+            List<Vuelo> vuelosBaseSnapshot,
+            List<Aeropuerto> aeropuertosSnapshot,
+            List<Incidencia> incidenciasSnapshot,
+            long presupuestoMs
+    ) {
         if (!fin.isAfter(inicio)) throw new IllegalArgumentException("La fecha fin debe ser mayor a la inicio.");
 
         long inicioTotal = System.currentTimeMillis();
-        long deadlinePlanificacionMs = inicioTotal + planificacionTimeoutMs;
+        long presupuestoEfectivoMs = Math.max(1_000L, Math.min(planificacionTimeoutMs, presupuestoMs));
+        long deadlinePlanificacionMs = inicioTotal + presupuestoEfectivoMs;
         long inicioCargaEnvios = System.currentTimeMillis();
         registrarEnviosEnVentana(inicio, fin, enviosVentana);
         long tiempoCargaEnvios = System.currentTimeMillis() - inicioCargaEnvios;
@@ -432,6 +481,7 @@ public class PlanificadorService {
 
         // IMPORTANTE: Pasamos 'todosLosEnvios' al algoritmo en lugar de solo los de la ventana
         Map<String, Integer> inventarioInicial = new java.util.HashMap<>(inventarioActual);
+        reservarMargenCapacidad(inventarioInicial, aeropuertos);
         Set<String> enviosNuevos = new HashSet<>();
         enviosVentana.stream().map(Envio::getIdPedido).forEach(enviosNuevos::add);
         if (pendientes != null) {
@@ -439,7 +489,8 @@ public class PlanificadorService {
         }
         SolucionRuta solucion = algoritmo.equalsIgnoreCase("TABU")
                 ? tabuSearch.ejecutar(todosLosEnvios, itinerariosPorRuta, aeropuertos, inventarioInicial,
-                        enviosNuevos, deadlinePlanificacionMs, planificacionTimeoutMs)
+                        enviosNuevos, tabuIteraciones, tabuTenure, tabuMaxVecinos,
+                        deadlinePlanificacionMs, presupuestoEfectivoMs)
                 : graspSearch.ejecutar(todosLosEnvios, itinerariosPorRuta, aeropuertos);
 
         registrarUsoVuelosCrud(vuelosBase, solucion);
@@ -523,6 +574,16 @@ public class PlanificadorService {
         long tiempoAlgoritmo = System.currentTimeMillis() - inicioAlgoritmo;
 
         return solucion;
+    }
+
+    private void reservarMargenCapacidad(Map<String, Integer> inventario, List<Aeropuerto> aeropuertos) {
+        if (margenCapacidad <= 0.0) {
+            return;
+        }
+        for (Aeropuerto aeropuerto : aeropuertos) {
+            int reserva = (int) Math.ceil(aeropuerto.getCapacidadAlmacen() * margenCapacidad);
+            inventario.merge(aeropuerto.getCodigoIata(), reserva, Integer::sum);
+        }
     }
 
     private int sumarMaletas(List<Envio> envios) {

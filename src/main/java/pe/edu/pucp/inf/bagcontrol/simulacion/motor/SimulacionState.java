@@ -38,9 +38,19 @@ public class SimulacionState {
     private Map<String, RutaAsignada> enviosEnSeguimiento = new ConcurrentHashMap<>();
     private Set<String> enviosRegistrados = ConcurrentHashMap.newKeySet();
     private Set<String> enviosEntregados = ConcurrentHashMap.newKeySet();
+    // ETA de la última ruta vigente por envío; permite comparar calidad entre tamaños de bloque.
+    private Map<String, Long> minutosEntregaPlanificadaPorEnvio = new ConcurrentHashMap<>();
     private Map<String, String> ultimoAeropuertoPorEnvio = new ConcurrentHashMap<>();
     private Map<String, AsignacionResumen> ultimaAsignacionPorEnvio = new ConcurrentHashMap<>();
     private long bloquesProcesados;
+    private long tiempoPlanificacionBloquesMs;
+    private long tiempoTotalBloquesMs;
+    private long maxTiempoPlanificacionBloqueMs;
+    private long maxTiempoTotalBloqueMs;
+    private long sumaSaBloquesMs;
+    private long sumaDiferenciaSaTaMs;
+    private long bloquesTaMayorSa;
+    private List<String> historialAjustesSa = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     //Simulacion-metadatos
     private final String simulacionId;
@@ -102,14 +112,26 @@ public class SimulacionState {
         histUltimoAeropuertoPorEnvio.put(loteNum, new HashMap<>(ultimoAeropuertoPorEnvio));
         histEnviosEnSeguimiento.put(loteNum, new HashMap<>(enviosEnSeguimiento));
 
-        // Pruning: mantener últimos 5 lotes (buffer de 2 + margen)
-        long umbral = loteNum - 5;
+        // Mantener el lote visible, el preparado y dos lotes de margen para reconexión.
+        long umbral = loteNum - 4;
         if (umbral > 0) {
             histEnviosPorVuelo.keySet().removeIf(k -> k <= umbral);
             histEnviosEntregados.keySet().removeIf(k -> k <= umbral);
             histUltimoAeropuertoPorEnvio.keySet().removeIf(k -> k <= umbral);
             histEnviosEnSeguimiento.keySet().removeIf(k -> k <= umbral);
         }
+    }
+
+    public void registrarTiempoBloque(long planificacionMs, long totalMs, long saMs) {
+        tiempoPlanificacionBloquesMs += planificacionMs;
+        tiempoTotalBloquesMs += totalMs;
+        sumaSaBloquesMs += saMs;
+        sumaDiferenciaSaTaMs += saMs - totalMs;
+        if (totalMs > saMs) {
+            bloquesTaMayorSa++;
+        }
+        maxTiempoPlanificacionBloqueMs = Math.max(maxTiempoPlanificacionBloqueMs, planificacionMs);
+        maxTiempoTotalBloqueMs = Math.max(maxTiempoTotalBloqueMs, totalMs);
     }
 
 }

@@ -21,4 +21,16 @@ public class SimulacionEstadoDTO {
     private String tiempoSimuladoActual;
     private String fechaHoraInicioReal;
     private String fechaHoraFinReal;
+    private int enviosConEntregaPlanificada;
+    private double tiempoPromedioEntregaPlanificadaMinutos;
+    private int enviosPendientes;
+    private int enviosEntregados;
+    private double tiempoPromedioPlanificacionBloqueMs;
+    private double tiempoPromedioTotalBloqueMs;
+    private long tiempoMaximoPlanificacionBloqueMs;
+    private long tiempoMaximoTotalBloqueMs;
+    private long sumaSaBloquesMs;
+    private long sumaDiferenciaSaTaMs;
+    private long bloquesTaMayorSa;
+    private java.util.List<String> historialAjustesSa;
 }

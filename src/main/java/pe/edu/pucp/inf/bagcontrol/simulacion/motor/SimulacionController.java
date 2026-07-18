@@ -35,6 +35,7 @@ public class SimulacionController {
     private static final String MODO_COLAPSO = "COLAPSO";
     private static final String MODO_NORMAL = "NORMAL";
     private static final String MODO_OPERACION_DIA = "OPERACION_DIA";
+    private static final String MODO_BENCHMARK = "BENCHMARK";
     private final WebSocketPublisher publisher;
 
     private final SimulacionManager simulacionManager;
@@ -48,7 +49,7 @@ public class SimulacionController {
     public RespuestaInicioSimulacionDTO preparaSimulacion(
             @RequestParam("fechaInicio") String fechaInicio,
             @RequestParam(value = "fechaFin", required = false) String fechaFin,
-            @RequestParam(value = "k", defaultValue = "120") int k,
+            @RequestParam(value = "k", defaultValue = "60") int k,
             @RequestParam(value = "algoritmo", defaultValue = "TABU") String algoritmo,
             @RequestParam(value = "modo", required = false) String modo,
             @RequestHeader(value = "Authorization", required = false) String authorization
@@ -64,7 +65,9 @@ public class SimulacionController {
         String simulacionId = simulacionManager.crearJob(inicio, fin, k, algoritmo, modo, propietario);
         System.out.println("[BACK-SIM-TIME] simulacion creada id=" + simulacionId
                 + " elapsedMs=" + (System.currentTimeMillis() - t0));
-        String modo_final = "0".equals(modo) ? MODO_OPERACION_DIA : (fin == null) ? MODO_COLAPSO : MODO_NORMAL;
+        String modo_final = "0".equals(modo) ? MODO_OPERACION_DIA
+                : MODO_BENCHMARK.equalsIgnoreCase(modo) ? MODO_BENCHMARK
+                : (fin == null) ? MODO_COLAPSO : MODO_NORMAL;
         String topic = "/topic/simulacion/" + simulacionId + "/eventos";
 
         return new RespuestaInicioSimulacionDTO(simulacionId, topic, modo_final);
@@ -186,47 +189,58 @@ public class SimulacionController {
             @PathVariable String simulacionId,
             @RequestBody EnvioPorVueloRequestDTO request
     ){
-        //NOTA: Vuelo cancelado ya se envio a front
         SimulacionState state = simulacionManager.obtenerState(simulacionId);
-
         List<EnvioDTO> envios = simulacionManager.extraerEnviosPorVuelo(simulacionId, request.getFlight(), request.getTimestamp());
-        //Encontrar vuelo y cancelarlo en historial de lotes (para otros clientes)
-        List<EventoBaseDTO> eventos = state.getUltimoLoteEmitido().getEventos();
-        for(EventoBaseDTO ev : eventos){
-            if(ev.getTipo() != TipoEvento.VUELO_DESPEGA && ev.getTipo() != TipoEvento.VUELO_ATERRIZA)continue;
-            EventoVueloDTO evVuelo = (EventoVueloDTO)ev;
-            boolean found = (Objects.equals(evVuelo.claveInstanciaVuelo(), request.getFlight().claveInstanciaVuelo()));
-            EventoVueloDTO cancelado = (new SimulacionEventosFactory(null))
-                    .crearEventoVuelo(evVuelo.toVueloInstanciado(),TipoEvento.VUELO_CANCELADO);
-            if(found) {
-                eventos.remove(ev);
-                System.out.println("Evento a cancelar encontrado: "+evVuelo.getCodigoVuelo());
-                eventos.add(cancelado);
-                publisher.publicarLote(simulacionId,new LoteEventosDTO(
-                        simulacionId,
-                        state.siguienteLote(),
-                        Instant.now().toString(),
-                        Instant.now().toString(),
-                        1,
-                        List.of(cancelado),
-                        List.of()
-                ));
-                break;
-            }
+        LoteEventosDTO ultimoLote = state.getUltimoLoteEmitido();
+        if (ultimoLote == null || request.getFlight() == null) {
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.NOT_FOUND, "Vuelo no encontrado");
         }
-        //Tomar envios de vuelo, reprogramarlos para inicio de siguiente ventana y reinsertarlos
+
+        List<EventoBaseDTO> eventos = ultimoLote.getEventos();
+        EventoVueloDTO cancelado = null;
+        for (int i = 0; i < eventos.size(); i++) {
+            EventoBaseDTO evento = eventos.get(i);
+            if (!(evento instanceof EventoVueloDTO vuelo)
+                    || (vuelo.getTipo() != TipoEvento.VUELO_DESPEGA && vuelo.getTipo() != TipoEvento.VUELO_ATERRIZA)
+                    || !Objects.equals(vuelo.claveInstanciaVuelo(), request.getFlight().claveInstanciaVuelo())) {
+                continue;
+            }
+            cancelado = new SimulacionEventosFactory(null)
+                    .crearEventoVuelo(vuelo.toVueloInstanciado(), TipoEvento.VUELO_CANCELADO);
+            cancelado.setCodigoEnvios(vuelo.getCodigoEnvios() == null ? List.of() : List.copyOf(vuelo.getCodigoEnvios()));
+            cancelado.setCantidadMaletas(vuelo.getCantidadMaletas());
+            cancelado.setCapacidadMax(vuelo.getCapacidadMax());
+            cancelado.setPorcentajeOcupacion(vuelo.getPorcentajeOcupacion());
+            eventos.set(i, cancelado);
+            break;
+        }
+        if (cancelado == null) {
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.NOT_FOUND, "Vuelo no encontrado");
+        }
+
+        publisher.publicarLote(simulacionId, new LoteEventosDTO(
+                simulacionId,
+                state.siguienteLote(),
+                Instant.now().toString(),
+                Instant.now().toString(),
+                1,
+                List.of(cancelado),
+                List.of(),
+                0
+        ));
+
         List<Envio> enviosPendientes = new ArrayList<>(state.getEnviosPendientes());
-        enviosPendientes.addAll(envios.stream().map((dto)-> new Envio(
-                dto.getIdPedido(),
-                dto.getOrigenIata(),
-                dto.getDestinoIata(),
-                LocalDateTime.parse(dto.getFechaHora()),
-                dto.getCantidadMaletas(),
-                dto.getIdCliente(),
-                true,
-                dto.isEsOperacionDia()
-        )
-        ).toList());
+        java.util.Set<String> idsPendientes = enviosPendientes.stream()
+                .map(Envio::getIdPedido)
+                .collect(java.util.stream.Collectors.toSet());
+        envios.stream()
+                .filter(dto -> idsPendientes.add(dto.getIdPedido()))
+                .map(dto -> new Envio(
+                        dto.getIdPedido(), dto.getOrigenIata(), dto.getDestinoIata(),
+                        LocalDateTime.parse(dto.getFechaHora()), dto.getCantidadMaletas(), dto.getIdCliente(),
+                        true, dto.isEsOperacionDia(), false
+                ))
+                .forEach(enviosPendientes::add);
         state.setEnviosPendientes(enviosPendientes);
         return Map.of("mensaje", "Vuelo cancelado");
     }
