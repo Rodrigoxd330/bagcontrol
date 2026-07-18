@@ -12,6 +12,7 @@ import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.metricas.MetricasPlanificacionBloque;
 import pe.edu.pucp.inf.bagcontrol.planificacion.metricas.PlanificacionInstrumentacion;
+import pe.edu.pucp.inf.bagcontrol.planificacion.deadline.DeadlinePlanificacion;
 import pe.edu.pucp.inf.bagcontrol.planificacion.service.PlanificadorService;
 import pe.edu.pucp.inf.bagcontrol.planificacion.utils.PlanificadorUtils;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
@@ -83,8 +84,9 @@ public class SimulacionJob implements Runnable {
     private long tiempoUltimoLoteMs = 0L;
     private long proximaPublicacionMs = 0L;
     private int bloquesConsecutivosCercaLimite = 0;
-    private static final int SA_INICIAL_MS = 28_000;
-    private static final int SA_MAXIMO_MS = 45_000;
+    public static final int SA_INICIAL_MS = 35_000;
+    public static final int SA_MAXIMO_MS = 40_000;
+    public static final int MARGEN_SEGURIDAD_MS = 4_000;
     private static final int MAX_EVENTOS_REPLANIFICACION_POR_BLOQUE = 50;
     private static final String MODO_OPERACION_DIA = "0";
     @Getter
@@ -197,13 +199,17 @@ public class SimulacionJob implements Runnable {
         while (state.getTiempoActual().isBefore(tiempoFin)) {
             // --- FASE 1: INICIO DE MEDICIÓN DE TA ---
             long inicioCronometroTa = System.currentTimeMillis();
+            int frecuenciaBloqueMs = saMs;
+            DeadlinePlanificacion.iniciar(inicioCronometroTa + frecuenciaBloqueMs - MARGEN_SEGURIDAD_MS);
             MetricasPlanificacionBloque metricasBloque = PlanificacionInstrumentacion.iniciar();
             metricasBloque.setK(k);
-            metricasBloque.setSaMs(saMs);
+            metricasBloque.setSaMs(frecuenciaBloqueMs);
             metricasBloque.setInicioRealCalculo(Instant.ofEpochMilli(inicioCronometroTa));
             metricasBloque.setDeadlinePublicacion(proximaPublicacionMs > 0
                     ? Instant.ofEpochMilli(proximaPublicacionMs)
                     : Instant.ofEpochMilli(inicioCronometroTa));
+            metricasBloque.setDeadlinePublicacion(Instant.ofEpochMilli(
+                    inicioCronometroTa + frecuenciaBloqueMs - MARGEN_SEGURIDAD_MS));
             boolean esPrimerBloque = state.getBloquesProcesados() == 0;
 
             verificarDetencion();
@@ -326,8 +332,8 @@ public class SimulacionJob implements Runnable {
                         Instant.ofEpochMilli(inicioPublicacionColapso));
                 System.out.printf("[AUDITORIA-LOTE] bloque=%d ventana=%s->%s k=%d planificacionMs=%d alistamientoEventosMs=%d totalMs=%d saMs=%d%n",
                         state.getBloquesProcesados() + 1, ventanaInicio, ventanaFin, k, planMs,
-                        alistamientoEventosMs, totalProcesamientoMs, saMs);
-                state.registrarTiempoBloque(planMs, totalProcesamientoMs, saMs);
+                        alistamientoEventosMs, totalProcesamientoMs, frecuenciaBloqueMs);
+                state.registrarTiempoBloque(planMs, totalProcesamientoMs, frecuenciaBloqueMs);
                 state.setBloquesProcesados(state.getBloquesProcesados() + 1);
                 publicarMetricasCapacidad(solucion);
                 break;
@@ -368,9 +374,9 @@ public class SimulacionJob implements Runnable {
                     Instant.ofEpochMilli(inicioPublicacion));
             System.out.printf("[AUDITORIA-LOTE] bloque=%d ventana=%s->%s k=%d planificacionMs=%d alistamientoEventosMs=%d totalMs=%d saMs=%d%n",
                     state.getBloquesProcesados() + 1, ventanaInicio, ventanaFin, k, planMs,
-                    alistamientoEventosMs, taCalculadoMs + publicacionMs, saMs);
+                    alistamientoEventosMs, taCalculadoMs + publicacionMs, frecuenciaBloqueMs);
 
-            state.registrarTiempoBloque(planMs, taCalculadoMs + publicacionMs, saMs);
+            state.registrarTiempoBloque(planMs, taCalculadoMs + publicacionMs, frecuenciaBloqueMs);
             state.setBloquesProcesados(state.getBloquesProcesados() + 1);
             proximaPublicacionMs = System.currentTimeMillis() + saMs;
             publicarMetricasCapacidad(solucion);
@@ -1698,7 +1704,8 @@ public class SimulacionJob implements Runnable {
                         + "candidatosDirectos=%d candidatosEscala=%d proporcionEscala=%.4f "
                         + "directosAntesRecorte=%d escalasAntesRecorte=%d directosDescartados=%d "
                         + "escalasDescartadas=%d conDirectaUsaronEscala=%d sinDirectaResueltosEscala=%d "
-                        + "generacionEscalasMs=%d timeout=%s%n",
+                        + "generacionEscalasMs=%d timeout=%s deadlineAlcanzado=%s faseDeadline=%s "
+                        + "enviosNoProcesados=%d mejorFitness=%.4f%n",
                 metricas.getNumeroLote(), metricas.getK(), metricas.getSaMs(),
                 metricas.getTiempoSimuladoInicio(), metricas.getTiempoSimuladoFin(),
                 metricas.getInicioRealCalculo(), metricas.getFinRealCalculo(), metricas.getInicioEspera(),
@@ -1715,9 +1722,11 @@ public class SimulacionJob implements Runnable {
                 metricas.getCandidatosDirectosDescartados(), metricas.getCandidatosConEscalaDescartados(),
                 metricas.getEnviosConDirectaQueUsaronEscala(), metricas.getEnviosSinDirectaResueltosConEscala(),
                 metricas.getGeneracionEscalasMs(),
-                metricas.isTimeoutAlcanzado()
+                metricas.isTimeoutAlcanzado(), metricas.isDeadlineAlcanzado(), metricas.getFaseDeadline(),
+                metricas.getEnviosNoProcesados(), metricas.getMejorFitnessConocido()
         );
-        PlanificacionInstrumentacion.limpiar();
+            PlanificacionInstrumentacion.limpiar();
+            DeadlinePlanificacion.limpiar();
     }
 
     private void esperarConControl() {

@@ -66,8 +66,9 @@ public class SimulacionManager {
         if (fechaInicio == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La fecha inicio es obligatoria.");
         }
-        if (k <= 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El salto k debe ser mayor que cero.");
+        if (k != 60 && k != 120 && k != 180) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "K debe ser uno de los valores permitidos: 60, 120 o 180 minutos.");
         }
         String modoNormalizado = normalizarModo(modo, fechaFin);
         if (MODO_OPERACION_DIA.equals(modoNormalizado)) {

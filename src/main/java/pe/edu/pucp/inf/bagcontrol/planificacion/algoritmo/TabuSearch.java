@@ -20,6 +20,7 @@ import java.util.stream.Collectors;
 @Component
 @RequiredArgsConstructor
 public class TabuSearch {
+    public static final int MAX_ITERACIONES_SIN_MEJORA = 15;
 
     private final FitnessEvaluator fitnessEvaluator;
     public SolucionRuta ejecutar(List<Envio> envios, Map<String, List<Itinerario>> itinerariosPorRuta, List<Aeropuerto> aeropuertos) {
@@ -129,6 +130,7 @@ public class TabuSearch {
         int rutasDescartadasPorCapacidadAeropuerto = 0;
         int movimientosAceptados = 0;
         int mejorasGlobales = 0;
+        int iteracionesSinMejora = 0;
         int copiasSolucion = 0;
         long tiempoCopiasSolucionNanos = 0L;
         String motivoParada = "ITERACIONES_COMPLETADAS";
@@ -227,6 +229,9 @@ public class TabuSearch {
                 copiasSolucion++;
                 mejorFitnessGlobal = actualFitness;
                 mejorasGlobales++;
+                iteracionesSinMejora = 0;
+            } else {
+                iteracionesSinMejora++;
             }
 
             listaTabu.add(mejorMovimiento.getIdMovimientoInversoTabu());
@@ -235,6 +240,10 @@ public class TabuSearch {
                 Iterator<String> it = listaTabu.iterator();
                 it.next();
                 it.remove();
+            }
+            if (iteracionesSinMejora >= MAX_ITERACIONES_SIN_MEJORA) {
+                motivoParada = "SIN_MEJORA_15";
+                break;
             }
         }
 

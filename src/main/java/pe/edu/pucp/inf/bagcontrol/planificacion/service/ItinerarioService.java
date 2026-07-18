@@ -5,6 +5,7 @@ import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.Itinerario;
 import pe.edu.pucp.inf.bagcontrol.planificacion.metricas.MetricasPlanificacionBloque;
 import pe.edu.pucp.inf.bagcontrol.planificacion.metricas.PlanificacionInstrumentacion;
+import pe.edu.pucp.inf.bagcontrol.planificacion.deadline.DeadlinePlanificacion;
 import pe.edu.pucp.inf.bagcontrol.planificacion.utils.PlanificadorUtils;
 
 import java.time.Duration;
@@ -30,6 +31,7 @@ public class ItinerarioService {
         int itinerariosEliminadosPorRecorte = 0;
 
         for (VueloInstanciado vuelo : vuelos) {
+            if (DeadlinePlanificacion.alcanzado("CANDIDATOS_DIRECTOS")) break;
             if (vuelo.isEstaCancelado()) continue;
 
             vuelosPorOrigen
@@ -45,12 +47,14 @@ public class ItinerarioService {
 
         long inicioGeneracionEscalas = System.currentTimeMillis();
         for (VueloInstanciado primerVuelo : vuelos) {
+            if (DeadlinePlanificacion.alcanzado("CANDIDATOS_ESCALA")) break;
             if (primerVuelo.isEstaCancelado()) continue;
 
             List<VueloInstanciado> segundosVuelos =
                     vuelosPorOrigen.getOrDefault(primerVuelo.getDestinoIata(), Collections.emptyList());
 
             for (VueloInstanciado segundoVuelo : segundosVuelos) {
+                if (DeadlinePlanificacion.alcanzado("CANDIDATOS_ESCALA")) break;
                 if (segundoVuelo.isEstaCancelado()) continue;
 
                 if (primerVuelo.getOrigenIata().equalsIgnoreCase(segundoVuelo.getDestinoIata())) {

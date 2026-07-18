@@ -52,6 +52,10 @@ public class MetricasPlanificacionBloque {
     private int enviosSinDirectaResueltosConEscala;
     private long generacionEscalasMs;
     private boolean timeoutAlcanzado;
+    private boolean deadlineAlcanzado;
+    private String faseDeadline;
+    private int enviosNoProcesados;
+    private double mejorFitnessConocido;
 
     public void sumarCargaEnviosMs(long valor) { cargaEnviosMs += Math.max(0, valor); }
     public void sumarGeneracionVuelosMs(long valor) { generacionVuelosMs += Math.max(0, valor); }
@@ -84,4 +88,9 @@ public class MetricasPlanificacionBloque {
     }
 
     public void sumarGeneracionEscalasMs(long valor) { generacionEscalasMs += Math.max(0, valor); }
+    public void registrarDeadlineAlcanzado(String fase) {
+        deadlineAlcanzado = true;
+        timeoutAlcanzado = true;
+        if (faseDeadline == null) faseDeadline = fase;
+    }
 }

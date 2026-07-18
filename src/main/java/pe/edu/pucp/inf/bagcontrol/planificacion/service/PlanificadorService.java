@@ -32,22 +32,26 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import pe.edu.pucp.inf.bagcontrol.planificacion.deadline.DeadlinePlanificacion;
 
 @Service
 @RequiredArgsConstructor
 public class PlanificadorService {
+    public static final int TABU_ITERACIONES_DEFAULT = 120;
+    public static final int TABU_TENURE_DEFAULT = 12;
+    public static final int TABU_MAX_VECINOS_DEFAULT = 50;
 
-    @Value("${simulacion.planificacion.timeout-ms:30000}")
-    private long planificacionTimeoutMs = 30_000L;
+    @Value("${simulacion.planificacion.timeout-ms:40000}")
+    private long planificacionTimeoutMs = 40_000L;
 
     @Value("${simulacion.planificacion.tabu.iteraciones:120}")
-    private int tabuIteraciones = 120;
+    private int tabuIteraciones = TABU_ITERACIONES_DEFAULT;
 
     @Value("${simulacion.planificacion.tabu.tenure:12}")
-    private int tabuTenure = 12;
+    private int tabuTenure = TABU_TENURE_DEFAULT;
 
     @Value("${simulacion.planificacion.tabu.max-vecinos:50}")
-    private int tabuMaxVecinos = 50;
+    private int tabuMaxVecinos = TABU_MAX_VECINOS_DEFAULT;
 
     @Value("${simulacion.planificacion.margen-capacidad:0.05}")
     private double margenCapacidad = 0.05;
@@ -253,6 +257,7 @@ public class PlanificadorService {
     ) {
         List<VueloInstanciado> vuelosInstanciados = new ArrayList<>();
         for (int i = 0; i < cantidadDias; i++) {
+            if (DeadlinePlanificacion.alcanzado("GENERACION_VUELOS")) break;
             vuelosInstanciados.addAll(vueloFactory.crearInstanciasDelDia(vuelosBase, fechaInicio.plusDays(i), aeropuertos));
         }
         return vuelosInstanciados;
@@ -516,7 +521,7 @@ public class PlanificadorService {
         long inicioTotal = System.currentTimeMillis();
         MetricasPlanificacionBloque metricas = PlanificacionInstrumentacion.actualOIniciar();
         long presupuestoEfectivoMs = Math.max(1_000L, Math.min(planificacionTimeoutMs, presupuestoMs));
-        long deadlinePlanificacionMs = inicioTotal + presupuestoEfectivoMs;
+        long deadlinePlanificacionMs = DeadlinePlanificacion.instanteO(inicioTotal + presupuestoEfectivoMs);
         long inicioCargaEnvios = System.currentTimeMillis();
         registrarEnviosEnVentana(inicio, fin, enviosVentana);
         long tiempoCargaEnvios = System.currentTimeMillis() - inicioCargaEnvios;
@@ -575,7 +580,11 @@ public class PlanificadorService {
                 ? tabuSearch.ejecutar(todosLosEnvios, itinerariosPorRuta, aeropuertos, inventarioInicial,
                         enviosNuevos, tabuIteraciones, tabuTenure, tabuMaxVecinos,
                         deadlinePlanificacionMs, presupuestoEfectivoMs)
-                : graspSearch.ejecutar(todosLosEnvios, itinerariosPorRuta, aeropuertos);
+                : graspSearch.ejecutar(todosLosEnvios, itinerariosPorRuta, aeropuertos,
+                        deadlinePlanificacionMs);
+        metricas.setEnviosNoProcesados((int) solucion.getAsignaciones().stream()
+                .filter(asignacion -> asignacion.getItinerario() == null).count());
+        metricas.setMejorFitnessConocido(solucion.getFitness());
         PlanificadorUtils.MetricasRendimiento validacionDespues = PlanificadorUtils.snapshotMetricasRendimiento();
         metricas.sumarValidacionMs(validacionDespues.tiempoValidacionCapacidadMs());
         registrarUsoEscalas(metricas, solucion, itinerariosPorRuta);

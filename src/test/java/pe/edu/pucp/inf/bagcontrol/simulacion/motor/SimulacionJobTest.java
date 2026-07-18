@@ -76,7 +76,7 @@ class SimulacionJobTest {
                 .isLessThan(100L);
         assertThat(primero.getTaTotalMs()).isPositive();
         assertThat(primero.getK()).isEqualTo(60);
-        assertThat(primero.getSaMs()).isEqualTo(28_000);
+        assertThat(primero.getSaMs()).isEqualTo(35_000);
     }
 
     @Test
@@ -175,17 +175,17 @@ class SimulacionJobTest {
         Method ajustar = SimulacionJob.class.getDeclaredMethod("ajustarSa", long.class, long.class);
         ajustar.setAccessible(true);
 
-        ajustar.invoke(job, 27_000L, 1L);
-        assertThat(job.getSaMs()).isEqualTo(28_000);
-        ajustar.invoke(job, 27_000L, 2L);
-        assertThat(job.getSaMs()).isEqualTo(29_000);
+        ajustar.invoke(job, 34_000L, 1L);
+        assertThat(job.getSaMs()).isEqualTo(35_000);
+        ajustar.invoke(job, 34_000L, 2L);
+        assertThat(job.getSaMs()).isEqualTo(36_000);
 
-        ajustar.invoke(job, 28_000L, 3L);
+        ajustar.invoke(job, 35_000L, 3L);
         ajustar.invoke(job, 8_000L, 4L);
-        ajustar.invoke(job, 28_000L, 5L);
-        assertThat(job.getSaMs()).isEqualTo(29_000);
-        ajustar.invoke(job, 28_000L, 6L);
-        assertThat(job.getSaMs()).isEqualTo(30_000);
+        ajustar.invoke(job, 35_000L, 5L);
+        assertThat(job.getSaMs()).isEqualTo(36_000);
+        ajustar.invoke(job, 35_000L, 6L);
+        assertThat(job.getSaMs()).isEqualTo(37_000);
     }
 
     @Test

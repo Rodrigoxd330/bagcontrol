@@ -23,11 +23,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 class DiagnosticoFase1Test {
 
     @Test
-    void timeoutConfiguradoNoFormaParteDelContratoDeGraspNiDeGeneracionDeCandidatos() {
+    void deadlineGlobalAhoraFormaParteDelContratoDeGraspYDeCandidatos() {
         assertThat(GRASPSearch.class.getDeclaredMethods())
                 .filteredOn(metodo -> metodo.getName().equals("ejecutarConParametros"))
-                .allMatch(metodo -> java.util.Arrays.stream(metodo.getParameterTypes())
-                        .noneMatch(tipo -> tipo == long.class));
+                .anyMatch(metodo -> java.util.Arrays.stream(metodo.getParameterTypes())
+                        .anyMatch(tipo -> tipo == long.class));
         assertThat(ItinerarioService.class.getDeclaredMethods())
                 .filteredOn(metodo -> metodo.getName().equals("generarItinerariosPorRuta"))
                 .allMatch(metodo -> java.util.Arrays.stream(metodo.getParameterTypes())

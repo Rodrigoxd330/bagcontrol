@@ -8,6 +8,7 @@ import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.evaluacion.FitnessEvaluator;
 import pe.edu.pucp.inf.bagcontrol.planificacion.metricas.MetricasPlanificacionBloque;
 import pe.edu.pucp.inf.bagcontrol.planificacion.metricas.PlanificacionInstrumentacion;
+import pe.edu.pucp.inf.bagcontrol.planificacion.deadline.DeadlinePlanificacion;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.Itinerario;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.utils.PlanificadorUtils;
@@ -26,6 +27,11 @@ public class GRASPSearch {
         return ejecutarConParametros(envios, itinerariosPorRuta, aeropuertos, 30, 50, 0.4);
     }
 
+    public SolucionRuta ejecutar(List<Envio> envios, Map<String, List<Itinerario>> itinerariosPorRuta,
+                                 List<Aeropuerto> aeropuertos, long deadlineMs) {
+        return ejecutarConParametros(envios, itinerariosPorRuta, aeropuertos, 30, 50, 0.4, deadlineMs);
+    }
+
     public SolucionRuta ejecutarConParametros(
             List<Envio> envios,
             Map<String, List<Itinerario>> itinerariosPorRuta,
@@ -33,6 +39,14 @@ public class GRASPSearch {
             int iteraciones,
             int maxVecinos,
             double alpha
+    ) {
+        return ejecutarConParametros(envios, itinerariosPorRuta, aeropuertos, iteraciones, maxVecinos,
+                alpha, Long.MAX_VALUE);
+    }
+
+    private SolucionRuta ejecutarConParametros(
+            List<Envio> envios, Map<String, List<Itinerario>> itinerariosPorRuta,
+            List<Aeropuerto> aeropuertos, int iteraciones, int maxVecinos, double alpha, long deadlineMs
     ) {
         long inicio = System.currentTimeMillis();
         MetricasPlanificacionBloque metricasBloque = PlanificacionInstrumentacion.actualOIniciar();
@@ -47,11 +61,13 @@ public class GRASPSearch {
                 .collect(Collectors.toMap(Aeropuerto::getCodigoIata, a -> a));
 
         for (int i = 0; i < iteraciones; i++) {
+            if (System.currentTimeMillis() >= deadlineMs || DeadlinePlanificacion.alcanzado("GRASP")) break;
             iteracionesEjecutadas++;
             long inicioConstruccion = System.currentTimeMillis();
             SolucionRuta solucion = construirSolucion(envios, itinerariosPorRuta, mapaAeropuertos, alpha);
             metricasBloque.sumarConstruccionInicialMs(System.currentTimeMillis() - inicioConstruccion);
-            ResultadoBusquedaLocal resultadoLocal = busquedaLocal(solucion, itinerariosPorRuta, mapaAeropuertos, maxVecinos);
+            ResultadoBusquedaLocal resultadoLocal = busquedaLocal(
+                    solucion, itinerariosPorRuta, mapaAeropuertos, maxVecinos, deadlineMs);
             solucion = resultadoLocal.solucion();
             mejorasAceptadasLocal += resultadoLocal.mejorasAceptadas();
             vecinosGenerados += resultadoLocal.vecinosGenerados();
@@ -64,7 +80,10 @@ public class GRASPSearch {
             }
         }
         metricasBloque.sumarGraspMs(System.currentTimeMillis() - inicio);
-        return mejorSolucion;
+        if (mejorSolucion != null) return mejorSolucion;
+        SolucionRuta pendientes = new SolucionRuta();
+        envios.forEach(envio -> pendientes.agregarAsignacion(envio, null));
+        return pendientes;
     }
 
     private SolucionRuta construirSolucion(
@@ -108,6 +127,13 @@ public class GRASPSearch {
             Map<String, Aeropuerto> mapaAeropuertos,
             int maxVecinos
     ) {
+        return busquedaLocal(solucion, itinerariosPorRuta, mapaAeropuertos, maxVecinos, Long.MAX_VALUE);
+    }
+
+    private ResultadoBusquedaLocal busquedaLocal(
+            SolucionRuta solucion, Map<String, List<Itinerario>> itinerariosPorRuta,
+            Map<String, Aeropuerto> mapaAeropuertos, int maxVecinos, long deadlineMs
+    ) {
         SolucionRuta mejor = solucion.clonar();
         double mejorFitness = fitnessEvaluator.evaluar(mejor, mapaAeropuertos);
         Map<String, Integer> inventarioInicial = PlanificadorUtils.construirInventarioInicial(
@@ -121,6 +147,7 @@ public class GRASPSearch {
         int iter = 0;
 
         while (mejora && iter < maxIterLocal) {
+            if (System.currentTimeMillis() >= deadlineMs || DeadlinePlanificacion.alcanzado("GRASP_LOCAL")) break;
             iter++;
             mejora = false;
 
@@ -133,6 +160,7 @@ public class GRASPSearch {
             vecinosGenerados += vecinos.size();
 
             for (var movimiento : vecinos) {
+                if (System.currentTimeMillis() >= deadlineMs || DeadlinePlanificacion.alcanzado("GRASP_LOCAL")) break;
                 vecinosEvaluados++;
                 SolucionRuta candidato = mejor.clonar();
                 boolean movimientoInvalido = candidato.aplicarMovimientoDefinitivo(
