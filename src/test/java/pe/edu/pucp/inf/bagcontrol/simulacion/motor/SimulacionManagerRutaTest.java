@@ -23,7 +23,7 @@ import static org.mockito.Mockito.when;
 class SimulacionManagerRutaTest {
 
     @Test
-    void muestraRutaVigenteCuandoSnapshotAunConservaEnvioSinItinerario() throws Exception {
+    void muestraRutaVigenteCuandoSnapshotConservaRutaAnterior() throws Exception {
         SimulacionManager manager = new SimulacionManager(
                 mock(PlanificadorService.class),
                 mock(AeropuertoRepository.class),
@@ -33,12 +33,14 @@ class SimulacionManagerRutaTest {
         state.setFechaInicioSimulacion(LocalDateTime.of(2026, 7, 20, 8, 0));
         state.setKMinutos(120);
         Envio envio = crearEnvio();
-        state.getEnviosEnSeguimiento().put(envio.getIdPedido(), new RutaAsignada(envio, null, false));
+        state.getEnviosEnSeguimiento().put(
+                envio.getIdPedido(), new RutaAsignada(envio, new Itinerario(List.of(crearVuelo(10L))), false)
+        );
         state.getUltimoAeropuertoPorEnvio().put(envio.getIdPedido(), "LIM");
         state.guardarSnapshot();
         state.getEnviosEnSeguimiento().put(
                 envio.getIdPedido(),
-                new RutaAsignada(envio, new Itinerario(List.of(crearVuelo())), false)
+                new RutaAsignada(envio, new Itinerario(List.of(crearVuelo(20L))), false)
         );
         SimulacionJob job = mock(SimulacionJob.class);
         when(job.getState()).thenReturn(state);
@@ -50,6 +52,7 @@ class SimulacionManagerRutaTest {
 
         assertThat(ruta.getIdItinerario()).isNotBlank();
         assertThat(ruta.getEscalas()).hasSize(1);
+        assertThat(ruta.getEscalas().get(0).getCodigoVuelo()).isEqualTo(20L);
         assertThat(ruta.getAeropuertoActual()).isEqualTo("LIM");
     }
 
@@ -72,9 +75,9 @@ class SimulacionManagerRutaTest {
         return envio;
     }
 
-    private VueloInstanciado crearVuelo() {
+    private VueloInstanciado crearVuelo(Long codigo) {
         Vuelo vuelo = new Vuelo("LIM", "BOG", LocalTime.of(10, 0), LocalTime.of(11, 0), 100);
-        vuelo.setCodigo(10L);
+        vuelo.setCodigo(codigo);
         return new VueloInstanciado(
                 vuelo,
                 LocalDateTime.of(2026, 7, 20, 10, 0),

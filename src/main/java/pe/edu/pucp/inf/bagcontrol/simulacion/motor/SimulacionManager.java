@@ -453,9 +453,9 @@ public class SimulacionManager {
 
         RutaAsignada asignacion = histSeguimiento.get(idPedido);
         RutaAsignada asignacionVigente = state.getEnviosEnSeguimiento().get(idPedido);
-        boolean usarAsignacionVigente = asignacionVigente != null
-                && asignacionVigente.getItinerario() != null
-                && (asignacion == null || asignacion.getItinerario() == null);
+        // Una cancelación puede sustituir una ruta ya presente en el snapshot. La
+        // consulta de seguimiento debe mostrar siempre el itinerario vigente.
+        boolean usarAsignacionVigente = asignacionVigente != null;
         if (usarAsignacionVigente) {
             asignacion = asignacionVigente;
         }
