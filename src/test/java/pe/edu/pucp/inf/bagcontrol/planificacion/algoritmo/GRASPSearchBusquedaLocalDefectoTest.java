@@ -1,7 +1,6 @@
 package pe.edu.pucp.inf.bagcontrol.planificacion.algoritmo;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Disabled;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.Vuelo;
@@ -23,12 +22,10 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * Prueba demostrativa intencionalmente roja: documenta que busquedaLocal evalua
- * el estado actual sin aplicar antes el movimiento candidato.
+ * Regresion del defecto que evaluaba el estado actual sin aplicar el movimiento candidato.
  */
 class GRASPSearchBusquedaLocalDefectoTest {
 
-    @Disabled("Defecto confirmado: busquedaLocal no aplica el movimiento candidato; se habilita al corregirlo")
     @Test
     void deberiaAplicarMovimientoCandidatoAntesDeEvaluarlo() throws Exception {
         FitnessEvaluator evaluator = mock(FitnessEvaluator.class);

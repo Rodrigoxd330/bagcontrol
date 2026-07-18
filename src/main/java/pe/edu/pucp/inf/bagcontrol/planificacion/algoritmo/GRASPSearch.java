@@ -110,6 +110,8 @@ public class GRASPSearch {
     ) {
         SolucionRuta mejor = solucion.clonar();
         double mejorFitness = fitnessEvaluator.evaluar(mejor, mapaAeropuertos);
+        Map<String, Integer> inventarioInicial = PlanificadorUtils.construirInventarioInicial(
+                mejor.getAsignaciones().stream().map(asignacion -> asignacion.getEnvio()).toList(), Map.of());
         int mejorasAceptadas = 0;
         int vecinosGenerados = 0;
         int vecinosEvaluados = 0;
@@ -132,21 +134,52 @@ public class GRASPSearch {
 
             for (var movimiento : vecinos) {
                 vecinosEvaluados++;
-                //mejor.aplicarMovimientoDefinitivo,(movimiento,mapaAeropuertos);
-                double fitnessCandidato = fitnessEvaluator.evaluar(mejor, mapaAeropuertos);
+                SolucionRuta candidato = mejor.clonar();
+                boolean movimientoInvalido = candidato.aplicarMovimientoDefinitivo(
+                        movimiento, mapaAeropuertos, inventarioInicial, Set.of());
+                if (movimientoInvalido || !solucionValida(candidato, mapaAeropuertos)) {
+                    continue;
+                }
+                double fitnessCandidato = fitnessEvaluator.evaluar(candidato, mapaAeropuertos);
 
                 if (fitnessCandidato < mejorFitness) {
+                    mejor = candidato;
                     mejorFitness = fitnessCandidato;
                     mejora = true;
                     mejorasAceptadas++;
                     break;
-                } else {
-                    mejor.deshacerMovimiento(movimiento);
-                    mejor.setFitness(mejorFitness);
                 }
             }
         }
         return new ResultadoBusquedaLocal(mejor, mejorasAceptadas, vecinosGenerados, vecinosEvaluados);
+    }
+
+    private boolean solucionValida(SolucionRuta solucion, Map<String, Aeropuerto> mapaAeropuertos) {
+        if (!PlanificadorUtils.solucionRespetaCapacidadVuelos(solucion)) return false;
+        for (var asignacion : solucion.getAsignaciones()) {
+            Itinerario itinerario = asignacion.getItinerario();
+            if (itinerario == null) continue;
+            List<VueloInstanciado> vuelos = itinerario.getVuelos();
+            if (vuelos == null || vuelos.isEmpty()
+                    || !asignacion.getEnvio().getOrigenIata().equals(itinerario.getOrigenIata())
+                    || !asignacion.getEnvio().getDestinoIata().equals(itinerario.getDestinoIata())
+                    || itinerario.contieneVueloCancelado()
+                    || itinerario.getFechaHoraSalidaUtc().isBefore(
+                            PlanificadorUtils.obtenerFechaIngresoUtc(asignacion.getEnvio()))
+                    || itinerario.getFechaHoraLlegadaUtc().isAfter(
+                            PlanificadorUtils.calcularDeadlineSla(asignacion.getEnvio(), mapaAeropuertos))) {
+                return false;
+            }
+            for (int i = 1; i < vuelos.size(); i++) {
+                VueloInstanciado anterior = vuelos.get(i - 1);
+                VueloInstanciado siguiente = vuelos.get(i);
+                long esperaMinutos = java.time.Duration.between(
+                        anterior.getFechaHoraLlegadaUtc(), siguiente.getFechaHoraSalidaUtc()).toMinutes();
+                if (!anterior.getDestinoIata().equals(siguiente.getOrigenIata())
+                        || esperaMinutos < 30 || esperaMinutos > 12 * 60) return false;
+            }
+        }
+        return true;
     }
 
     private record ResultadoBusquedaLocal(
