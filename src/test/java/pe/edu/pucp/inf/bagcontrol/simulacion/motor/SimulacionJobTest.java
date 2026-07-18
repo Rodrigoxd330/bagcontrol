@@ -39,6 +39,47 @@ import static org.mockito.Mockito.when;
 class SimulacionJobTest {
 
     @Test
+    void implementacionActualAceptaKFueraDe60_120_180() {
+        SimulacionJob job = crearJobPrueba(new SimulacionState("sim-k-actual"));
+
+        assertThat(job.getK()).isEqualTo(240);
+    }
+
+    @Test
+    void instrumentacionConfirmaPrimerLoteInmediatoYSegundoCalculoInmediato() {
+        AeropuertoRepository repo = mock(AeropuertoRepository.class);
+        when(repo.findAll()).thenReturn(List.of());
+        PlanificadorService planificador = mock(PlanificadorService.class);
+        when(planificador.calcularSolucion(anyString(), any(), any(), any(), any()))
+                .thenAnswer(invocacion -> {
+                    Thread.sleep(5L);
+                    return new SolucionRuta();
+                });
+        SimulacionState state = new SimulacionState("sim-instrumentada");
+        SimulacionJob job = new SimulacionJob(
+                state.getSimulacionId(), LocalDateTime.of(2026, 7, 20, 8, 0),
+                LocalDateTime.of(2026, 7, 20, 10, 0), 60, "TABU",
+                planificador, repo, mock(WebSocketPublisher.class),
+                new SimulacionEventosFactory(new ConfiguracionColapsoDTO()), state,
+                new ConfiguracionColapsoDTO(), new SimulacionStateMutator(state, repo), "BENCHMARK"
+        );
+
+        job.run();
+
+        assertThat(state.getMetricasPlanificacionPorBloque()).hasSize(2);
+        var primero = state.getMetricasPlanificacionPorBloque().get(0);
+        var segundo = state.getMetricasPlanificacionPorBloque().get(1);
+        assertThat(primero.getInicioEspera()).isNull();
+        assertThat(primero.getPublicacion()).isAfterOrEqualTo(primero.getFinRealCalculo());
+        assertThat(segundo.getInicioRealCalculo()).isAfterOrEqualTo(primero.getPublicacion());
+        assertThat(segundo.getInicioRealCalculo().toEpochMilli() - primero.getPublicacion().toEpochMilli())
+                .isLessThan(100L);
+        assertThat(primero.getTaTotalMs()).isPositive();
+        assertThat(primero.getK()).isEqualTo(60);
+        assertThat(primero.getSaMs()).isEqualTo(28_000);
+    }
+
+    @Test
     void timestampsRealesSeRegistranUnaSolaVez() {
         SimulacionState state = new SimulacionState("sim-reloj-real");
 
@@ -204,6 +245,37 @@ class SimulacionJobTest {
 
         assertThat(colapso).isEmpty();
         assertThat(state.getInventarioSnapshot().get("LIM")).isEqualTo(100);
+    }
+
+    @Test
+    void mismoTimestampEsEstableCuandoElEnvioExistenteTieneUbicacionFisicaRegistrada() throws Exception {
+        Aeropuerto aeropuerto = crearAeropuerto("LIM", "AMERICA");
+        aeropuerto.setCapacidadAlmacen(100);
+        SimulacionState state = new SimulacionState("sim-mismo-instante-diagnostico");
+        state.getAeropuertosSnapshot().put("LIM", aeropuerto);
+        state.getAeropuertosSnapshot().put("BOG", crearAeropuerto("BOG", "AMERICA"));
+        state.getInventarioSnapshot().put("LIM", 100);
+        Envio existente = crearEnvio();
+        existente.setIdPedido("EXISTENTE");
+        state.getEnviosEnSeguimiento().put(
+                existente.getIdPedido(), new RutaAsignada(existente, new Itinerario(List.of(crearVuelo())), false));
+        state.getUltimoAeropuertoPorEnvio().put(existente.getIdPedido(), "LIM");
+        Envio nuevo = crearEnvio();
+        nuevo.setIdPedido("NUEVO");
+        nuevo.setFechaHora(LocalDateTime.of(2026, 7, 20, 9, 0));
+        RutaAsignada checkIn = new RutaAsignada(nuevo, new Itinerario(List.of(crearVuelo())), false);
+        EventoVueloDTO salida = crearEventoVuelo(TipoEvento.VUELO_DESPEGA);
+        SimulacionJob job = crearJobPrueba(state);
+        Method aplicar = SimulacionJob.class.getDeclaredMethod(
+                "aplicarFisicaHasta", List.class, Instant.class, Set.class, List.class);
+        aplicar.setAccessible(true);
+
+        Optional<?> colapso = (Optional<?>) aplicar.invoke(
+                job, new ArrayList<>(List.of(salida)), null, Set.of(), List.of(checkIn));
+
+        assertThat(colapso).isEmpty();
+        assertThat(state.getInventarioSnapshot().get("LIM")).isEqualTo(100);
+        assertThat(salida.getCodigoEnvios()).containsExactly("EXISTENTE");
     }
 
     @Test

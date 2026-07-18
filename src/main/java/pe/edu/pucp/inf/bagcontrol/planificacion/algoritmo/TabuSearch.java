@@ -6,6 +6,8 @@ import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.evaluacion.FitnessEvaluator;
+import pe.edu.pucp.inf.bagcontrol.planificacion.metricas.MetricasPlanificacionBloque;
+import pe.edu.pucp.inf.bagcontrol.planificacion.metricas.PlanificacionInstrumentacion;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.Itinerario;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.Movimiento;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
@@ -118,6 +120,7 @@ public class TabuSearch {
             long budgetMs
     ) {
         long inicio = System.currentTimeMillis();
+        MetricasPlanificacionBloque metricasBloque = PlanificacionInstrumentacion.actualOIniciar();
         PlanificadorUtils.reiniciarMetricasRendimiento();
         Set<String> listaTabu = new LinkedHashSet<>();
         int iteracionesEjecutadas = 0;
@@ -133,9 +136,11 @@ public class TabuSearch {
         Map<String, Aeropuerto> mapaAeropuertos = aeropuertos.stream()
                 .collect(Collectors.toMap(Aeropuerto::getCodigoIata, a -> a));
 
+        long inicioConstruccion = System.currentTimeMillis();
         ResultadoSolucionInicial resultadoInicial =
                 generarSolucionInicial(envios, itinerariosPorRuta, mapaAeropuertos, inventarioInicial,
                         enviosNuevos, deadlineMs);
+        metricasBloque.sumarConstruccionInicialMs(System.currentTimeMillis() - inicioConstruccion);
         SolucionRuta actual = resultadoInicial.solucion();
         rutasDescartadasPorCapacidadAeropuerto += resultadoInicial.rutasDescartadasPorCapacidadAeropuerto();
         double actualFitness = fitnessEvaluator.evaluar(actual, mapaAeropuertos, inventarioInicial, enviosNuevos);
@@ -233,6 +238,8 @@ public class TabuSearch {
             }
         }
 
+        metricasBloque.sumarTabuMs(System.currentTimeMillis() - inicio);
+        metricasBloque.setTimeoutAlcanzado("TIME_BUDGET_REACHED".equals(motivoParada));
         return mejor;
     }
 

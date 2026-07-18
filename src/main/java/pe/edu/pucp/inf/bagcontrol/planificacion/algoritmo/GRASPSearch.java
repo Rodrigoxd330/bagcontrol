@@ -6,6 +6,8 @@ import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.evaluacion.FitnessEvaluator;
+import pe.edu.pucp.inf.bagcontrol.planificacion.metricas.MetricasPlanificacionBloque;
+import pe.edu.pucp.inf.bagcontrol.planificacion.metricas.PlanificacionInstrumentacion;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.Itinerario;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.utils.PlanificadorUtils;
@@ -33,6 +35,8 @@ public class GRASPSearch {
             double alpha
     ) {
         long inicio = System.currentTimeMillis();
+        MetricasPlanificacionBloque metricasBloque = PlanificacionInstrumentacion.actualOIniciar();
+        PlanificadorUtils.reiniciarMetricasRendimiento();
         SolucionRuta mejorSolucion = null;
         int iteracionesEjecutadas = 0;
         int mejorasAceptadasLocal = 0;
@@ -44,7 +48,9 @@ public class GRASPSearch {
 
         for (int i = 0; i < iteraciones; i++) {
             iteracionesEjecutadas++;
+            long inicioConstruccion = System.currentTimeMillis();
             SolucionRuta solucion = construirSolucion(envios, itinerariosPorRuta, mapaAeropuertos, alpha);
+            metricasBloque.sumarConstruccionInicialMs(System.currentTimeMillis() - inicioConstruccion);
             ResultadoBusquedaLocal resultadoLocal = busquedaLocal(solucion, itinerariosPorRuta, mapaAeropuertos, maxVecinos);
             solucion = resultadoLocal.solucion();
             mejorasAceptadasLocal += resultadoLocal.mejorasAceptadas();
@@ -57,6 +63,7 @@ public class GRASPSearch {
                 mejorSolucion = solucion.clonar();
             }
         }
+        metricasBloque.sumarGraspMs(System.currentTimeMillis() - inicio);
         return mejorSolucion;
     }
 

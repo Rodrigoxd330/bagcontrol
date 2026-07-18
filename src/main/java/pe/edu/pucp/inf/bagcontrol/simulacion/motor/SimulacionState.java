@@ -6,6 +6,7 @@ import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
+import pe.edu.pucp.inf.bagcontrol.planificacion.metricas.MetricasPlanificacionBloque;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.DetalleColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.LoteEventosDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MetricasColapsoDTO;
@@ -51,6 +52,8 @@ public class SimulacionState {
     private long sumaDiferenciaSaTaMs;
     private long bloquesTaMayorSa;
     private List<String> historialAjustesSa = new java.util.concurrent.CopyOnWriteArrayList<>();
+    private List<MetricasPlanificacionBloque> metricasPlanificacionPorBloque =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
 
     //Simulacion-metadatos
     private final String simulacionId;

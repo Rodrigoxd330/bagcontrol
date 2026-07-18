@@ -3,6 +3,8 @@ package pe.edu.pucp.inf.bagcontrol.planificacion.service;
 import org.springframework.stereotype.Service;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.Itinerario;
+import pe.edu.pucp.inf.bagcontrol.planificacion.metricas.MetricasPlanificacionBloque;
+import pe.edu.pucp.inf.bagcontrol.planificacion.metricas.PlanificacionInstrumentacion;
 import pe.edu.pucp.inf.bagcontrol.planificacion.utils.PlanificadorUtils;
 
 import java.time.Duration;
@@ -41,6 +43,7 @@ public class ItinerarioService {
             itinerariosDirectos++;
         }
 
+        long inicioGeneracionEscalas = System.currentTimeMillis();
         for (VueloInstanciado primerVuelo : vuelos) {
             if (primerVuelo.isEstaCancelado()) continue;
 
@@ -66,6 +69,7 @@ public class ItinerarioService {
                 itinerariosConEscala++;
             }
         }
+        long tiempoGeneracionEscalasMs = System.currentTimeMillis() - inicioGeneracionEscalas;
 
         int totalAntesRecorte = itinerariosPorRuta.values().stream().mapToInt(List::size).sum();
         int diasInstanciados = Math.max(1, (int) vuelos.stream()
@@ -91,6 +95,22 @@ public class ItinerarioService {
             }
         }
 
+        MetricasPlanificacionBloque metricas = PlanificacionInstrumentacion.actual();
+        if (metricas != null) {
+            metricas.sumarGeneracionItinerariosMs(System.currentTimeMillis() - inicio);
+            int directosRetenidos = itinerariosPorRuta.values().stream()
+                    .flatMap(Collection::stream)
+                    .mapToInt(itinerario -> itinerario.getCantidadVuelos() == 1 ? 1 : 0)
+                    .sum();
+            int escalasRetenidas = itinerariosPorRuta.values().stream()
+                    .flatMap(Collection::stream)
+                    .mapToInt(itinerario -> itinerario.getCantidadVuelos() > 1 ? 1 : 0)
+                    .sum();
+            metricas.sumarCandidatos(directosRetenidos, escalasRetenidas);
+            metricas.registrarRecorteCandidatos(
+                    itinerariosDirectos, itinerariosConEscala, directosRetenidos, escalasRetenidas);
+            metricas.sumarGeneracionEscalasMs(tiempoGeneracionEscalasMs);
+        }
         return itinerariosPorRuta;
     }
 

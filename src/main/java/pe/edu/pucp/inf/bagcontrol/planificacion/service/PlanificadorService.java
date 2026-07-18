@@ -15,6 +15,8 @@ import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloRepository;
 import pe.edu.pucp.inf.bagcontrol.planificacion.algoritmo.GRASPSearch;
 import pe.edu.pucp.inf.bagcontrol.planificacion.algoritmo.TabuSearch;
+import pe.edu.pucp.inf.bagcontrol.planificacion.metricas.MetricasPlanificacionBloque;
+import pe.edu.pucp.inf.bagcontrol.planificacion.metricas.PlanificacionInstrumentacion;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.AsignacionPlanDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.Itinerario;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.PlanResultadoDTO;
@@ -296,7 +298,7 @@ public class PlanificadorService {
                 fin,
                 pendientes,
                 inventarioActual,
-                envioDataStore.obtenerEnviosEnVentana(inicio, fin),
+                obtenerEnviosEnVentanaInstrumentado(inicio, fin),
                 "ZIP"
         );
     }
@@ -381,7 +383,7 @@ public class PlanificadorService {
             Set<String> vuelosCancelados,
             Map<String, Integer> cargaReservadaPorVuelo
     ) {
-        List<Envio> enviosVentana = envioDataStore.obtenerEnviosEnVentana(inicio, fin);
+        List<Envio> enviosVentana = obtenerEnviosEnVentanaInstrumentado(inicio, fin);
         return calcularSolucionDesdeFuente(
                 algoritmo, inicio, fin, pendientes, inventarioActual, enviosVentana, "ZIP",
                 vuelosBaseSnapshot, aeropuertosSnapshot, incidenciasSnapshot,
@@ -399,7 +401,7 @@ public class PlanificadorService {
             List<Aeropuerto> aeropuertosSnapshot,
             List<Incidencia> incidenciasSnapshot
     ) {
-        List<Envio> enviosVentana = envioDataStore.obtenerEnviosEnVentana(inicio, fin);
+        List<Envio> enviosVentana = obtenerEnviosEnVentanaInstrumentado(inicio, fin);
         return calcularSolucionDesdeFuente(
                 algoritmo,
                 inicio,
@@ -512,6 +514,7 @@ public class PlanificadorService {
         if (!fin.isAfter(inicio)) throw new IllegalArgumentException("La fecha fin debe ser mayor a la inicio.");
 
         long inicioTotal = System.currentTimeMillis();
+        MetricasPlanificacionBloque metricas = PlanificacionInstrumentacion.actualOIniciar();
         long presupuestoEfectivoMs = Math.max(1_000L, Math.min(planificacionTimeoutMs, presupuestoMs));
         long deadlinePlanificacionMs = inicioTotal + presupuestoEfectivoMs;
         long inicioCargaEnvios = System.currentTimeMillis();
@@ -524,6 +527,8 @@ public class PlanificadorService {
             pendientes.forEach(envio -> enviosPorId.put(envio.getIdPedido(), envio));
         }
         List<Envio> todosLosEnvios = new ArrayList<>(enviosPorId.values());
+        metricas.setEnviosNuevos(enviosVentana.size());
+        metricas.setPendientes(pendientes == null ? 0 : pendientes.size());
         List<Vuelo> vuelosBase = new ArrayList<>(vuelosBaseSnapshot);
         registrarVuelosBase(vuelosBase);
         List<Aeropuerto> aeropuertos = new ArrayList<>(aeropuertosSnapshot);
@@ -551,6 +556,7 @@ public class PlanificadorService {
         ));
 
         long tiempoGeneracionVuelos = System.currentTimeMillis() - inicioGeneracionVuelos;
+        metricas.sumarGeneracionVuelosMs(tiempoGeneracionVuelos);
         long inicioGeneracionItinerarios = System.currentTimeMillis();
 
         Map<String, List<Itinerario>> itinerariosPorRuta = itinerarioService.generarItinerariosPorRuta(vuelosInstanciados);
@@ -570,11 +576,42 @@ public class PlanificadorService {
                         enviosNuevos, tabuIteraciones, tabuTenure, tabuMaxVecinos,
                         deadlinePlanificacionMs, presupuestoEfectivoMs)
                 : graspSearch.ejecutar(todosLosEnvios, itinerariosPorRuta, aeropuertos);
+        PlanificadorUtils.MetricasRendimiento validacionDespues = PlanificadorUtils.snapshotMetricasRendimiento();
+        metricas.sumarValidacionMs(validacionDespues.tiempoValidacionCapacidadMs());
+        registrarUsoEscalas(metricas, solucion, itinerariosPorRuta);
 
         registrarUsoVuelosCrud(vuelosBase, solucion);
         long tiempoAlgoritmo = System.currentTimeMillis() - inicioAlgoritmo;
 
         return solucion;
+    }
+
+    private List<Envio> obtenerEnviosEnVentanaInstrumentado(LocalDateTime inicio, LocalDateTime fin) {
+        long t0 = System.currentTimeMillis();
+        List<Envio> envios = envioDataStore.obtenerEnviosEnVentana(inicio, fin);
+        PlanificacionInstrumentacion.actualOIniciar().sumarCargaEnviosMs(System.currentTimeMillis() - t0);
+        return envios;
+    }
+
+    private void registrarUsoEscalas(
+            MetricasPlanificacionBloque metricas,
+            SolucionRuta solucion,
+            Map<String, List<Itinerario>> itinerariosPorRuta
+    ) {
+        int conDirectaQueUsaronEscala = 0;
+        int sinDirectaResueltosConEscala = 0;
+        for (var asignacion : solucion.getAsignaciones()) {
+            if (asignacion.getItinerario() == null || asignacion.getItinerario().getCantidadVuelos() < 2) {
+                continue;
+            }
+            String clave = asignacion.getEnvio().getOrigenIata() + "-" + asignacion.getEnvio().getDestinoIata();
+            boolean teniaDirecta = itinerariosPorRuta.getOrDefault(clave, List.of()).stream()
+                    .anyMatch(itinerario -> itinerario.getCantidadVuelos() == 1);
+            if (teniaDirecta) conDirectaQueUsaronEscala++;
+            else sinDirectaResueltosConEscala++;
+        }
+        metricas.setEnviosConDirectaQueUsaronEscala(conDirectaQueUsaronEscala);
+        metricas.setEnviosSinDirectaResueltosConEscala(sinDirectaResueltosConEscala);
     }
 
     public List<VueloInstanciado> obtenerVuelosCanceladosEnVentana(LocalDateTime inicio, LocalDateTime fin) {
