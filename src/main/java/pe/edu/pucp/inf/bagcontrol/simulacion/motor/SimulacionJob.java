@@ -518,7 +518,10 @@ public class SimulacionJob implements Runnable {
         if (!vuelosCanceladosManualmente.add(clave)) {
             throw new IllegalStateException("La ocurrencia ya fue cancelada");
         }
-        if (enviosDespachadosPorVuelo.containsKey(clave)) {
+        if (vueloYaDespachadoAlInstante(
+                enviosDespachadosPorVuelo.containsKey(clave),
+                instancia.getFechaHoraSalidaUtc(),
+                instanteRegistro)) {
             vuelosCanceladosManualmente.remove(clave);
             throw new IllegalStateException("La ocurrencia ya fue despachada");
         }
@@ -1334,7 +1337,7 @@ public class SimulacionJob implements Runnable {
         );
     }
 
-    private String claveInstanciaVuelo(EventoVueloDTO evento) {
+    private static String claveInstanciaVuelo(EventoVueloDTO evento) {
         return claveInstanciaVuelo(evento.getCodigoVuelo(), evento.getHoraSalidaUtc());
     }
 
@@ -1375,7 +1378,7 @@ public class SimulacionJob implements Runnable {
         return enviosDespachados != null && enviosDespachados.contains(idPedido);
     }
 
-    private String claveInstanciaVuelo(Long codigoVuelo, String horaSalidaUtc) {
+    private static String claveInstanciaVuelo(Long codigoVuelo, String horaSalidaUtc) {
         return codigoVuelo + "|" + horaSalidaUtc;
     }
 
@@ -1882,7 +1885,20 @@ public class SimulacionJob implements Runnable {
     static boolean cancelacionAfecta(
             BloquePreparado preparado, String claveVuelo, List<String> idsAfectados) {
         return preparado != null && (preparado.clavesVuelos().contains(claveVuelo)
+                || preparado.eventos().stream()
+                .filter(EventoVueloDTO.class::isInstance)
+                .map(EventoVueloDTO.class::cast)
+                .anyMatch(evento -> claveVuelo.equals(claveInstanciaVuelo(evento)))
                 || preparado.envios().stream().anyMatch(envio -> idsAfectados.contains(envio.getIdPedido())));
+    }
+
+    /**
+     * La generación anticipada aplica la física para construir el bloque preparado. Ese registro
+     * no equivale a que el vuelo ya haya despegado respecto del reloj visible de la solicitud.
+     */
+    static boolean vueloYaDespachadoAlInstante(
+            boolean registradoComoDespachado, Instant salidaUtc, Instant instanteSolicitud) {
+        return registradoComoDespachado && !salidaUtc.isAfter(instanteSolicitud);
     }
 
     static boolean esPublicable(BloquePreparado preparado, long versionActual) {

@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoVueloDTO;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -64,10 +65,51 @@ class SimulacionJobCoordinacionAnticipadaTest {
     }
 
     @Test
+    void cancelacionDetectaVueloEnEventosFisicosAunqueNoEsteEnSolucionNueva() {
+        EventoVueloDTO salida = new EventoVueloDTO();
+        salida.setCodigoVuelo(661L);
+        salida.setHoraSalidaUtc("2026-07-20T10:30:00Z");
+        var base = preparado(2, 3, 35_000, Set.of());
+        var preparado = new SimulacionJob.BloquePreparado(
+                base.indiceFisico(), base.ventanaInicio(), base.ventanaFin(), base.versionPlan(),
+                base.inicioCalculo(), base.finCalculo(), base.fronteraPublicacion(), List.of(salida),
+                base.envios(), base.solucion(), base.metricas(), base.planificacionMs(), base.alistamientoMs(),
+                base.taMs(), base.hundimientoMs(), base.taEstimadoMs(), base.clavesVuelos(),
+                base.invalidado(), base.causaInvalidacion());
+
+        assertThat(SimulacionJob.cancelacionAfecta(
+                preparado, "661|2026-07-20T10:30:00Z", List.of())).isTrue();
+    }
+
+    @Test
     void cancelacionIrrelevanteNoInvalidaElPreparado() {
         var preparado = preparado(2, 3, 35_000, Set.of("OTRO@INSTANTE"));
         assertThat(SimulacionJob.cancelacionAfecta(
                 preparado, "VUELO@INSTANTE", List.of())).isFalse();
+    }
+
+    @Test
+    void cancelacionDespuesDeHPermiteDespachoRegistradoSoloPorBloquePreparado() {
+        Instant solicitud = Instant.parse("2026-07-20T09:00:00Z");
+        Instant salidaFutura = Instant.parse("2026-07-20T09:30:00Z");
+
+        assertThat(SimulacionJob.vueloYaDespachadoAlInstante(true, salidaFutura, solicitud)).isFalse();
+    }
+
+    @Test
+    void vueloQueYaDespegoMantieneElConflicto() {
+        Instant solicitud = Instant.parse("2026-07-20T09:00:00Z");
+
+        assertThat(SimulacionJob.vueloYaDespachadoAlInstante(
+                true, Instant.parse("2026-07-20T08:59:59Z"), solicitud)).isTrue();
+        assertThat(SimulacionJob.vueloYaDespachadoAlInstante(true, solicitud, solicitud)).isTrue();
+    }
+
+    @Test
+    void vueloNoDespachadoEsCancelableAntesDeH() {
+        assertThat(SimulacionJob.vueloYaDespachadoAlInstante(
+                false, Instant.parse("2026-07-20T09:30:00Z"),
+                Instant.parse("2026-07-20T09:00:00Z"))).isFalse();
     }
 
     @Test
