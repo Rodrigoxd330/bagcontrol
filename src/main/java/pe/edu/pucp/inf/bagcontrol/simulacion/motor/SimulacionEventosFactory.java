@@ -80,7 +80,13 @@ public class SimulacionEventosFactory {
     }
 
     public void fusionarEventoVuelo(EventoVueloDTO existente, EventoVueloDTO nuevo) {
-        actualizarSemaforoVuelo(existente, nuevo.getCantidadMaletas(), existente.getCapacidadMax(),nuevo.getCodigoEnvios());
+        // Ambos eventos representan fotografias completas del mismo vuelo fisico. El evento
+        // futuro se regenera en cada bloque; sumarlo como delta duplicaba carga y envios.
+        existente.setCantidadMaletas(nuevo.getCantidadMaletas());
+        existente.setCapacidadMax(nuevo.getCapacidadMax());
+        existente.setPorcentajeOcupacion(nuevo.getPorcentajeOcupacion());
+        existente.setEstado(nuevo.getEstado());
+        existente.setCodigoEnvios(new ArrayList<>(nuevo.getCodigoEnvios()));
     }
 
     public EventoVueloDTO crearEventoVuelo(VueloInstanciado vuelo, TipoEvento tipoEvento) {

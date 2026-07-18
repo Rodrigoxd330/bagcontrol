@@ -5,8 +5,11 @@ import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.TipoEvento;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EstadoCapacidad;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoVueloDTO;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -47,5 +50,52 @@ class SimulacionEventosFactoryTest {
 
         assertThat(alerta.getTipo()).isEqualTo(TipoEvento.ALERTA_AEROPUERTO_SATURADO);
         assertThat(alerta.getPorcentajeOcupacion()).isEqualTo(100.0);
+    }
+
+    @Test
+    void regenerarMismoVueloNoDuplicaEnvioNiCapacidad() {
+        SimulacionEventosFactory factory = new SimulacionEventosFactory(null);
+        EventoVueloDTO existente = vuelo(TipoEvento.VUELO_DESPEGA, 7, List.of("ENV-ANON"));
+        EventoVueloDTO regenerado = vuelo(TipoEvento.VUELO_DESPEGA, 7, List.of("ENV-ANON"));
+
+        factory.fusionarEventoVuelo(existente, regenerado);
+
+        assertThat(existente.getCodigoEnvios()).containsExactly("ENV-ANON");
+        assertThat(existente.getCantidadMaletas()).isEqualTo(7);
+        assertThat(existente.getPorcentajeOcupacion()).isEqualTo(7.0);
+    }
+
+    @Test
+    void fotografiaMasRecienteReemplazaLaAnteriorSinMezclarAsignaciones() {
+        SimulacionEventosFactory factory = new SimulacionEventosFactory(null);
+        EventoVueloDTO existente = vuelo(TipoEvento.VUELO_DESPEGA, 7, List.of("ENV-ANTERIOR"));
+        EventoVueloDTO vigente = vuelo(TipoEvento.VUELO_DESPEGA, 5, List.of("ENV-VIGENTE"));
+
+        factory.fusionarEventoVuelo(existente, vigente);
+
+        assertThat(existente.getCodigoEnvios()).containsExactly("ENV-VIGENTE");
+        assertThat(existente.getCantidadMaletas()).isEqualTo(5);
+    }
+
+    @Test
+    void mismoEnvioPuedeEstarEnEventosDeTramosDistintos() {
+        EventoVueloDTO primerTramo = vuelo(TipoEvento.VUELO_DESPEGA, 3, List.of("ENV-ESCALA"));
+        primerTramo.setCodigoVuelo(10L);
+        EventoVueloDTO segundoTramo = vuelo(TipoEvento.VUELO_DESPEGA, 3, List.of("ENV-ESCALA"));
+        segundoTramo.setCodigoVuelo(20L);
+
+        assertThat(primerTramo.getCodigoEnvios()).containsExactly("ENV-ESCALA");
+        assertThat(segundoTramo.getCodigoEnvios()).containsExactly("ENV-ESCALA");
+        assertThat(primerTramo.claveInstanciaVuelo()).isNotEqualTo(segundoTramo.claveInstanciaVuelo());
+    }
+
+    private EventoVueloDTO vuelo(TipoEvento tipo, int maletas, List<String> envios) {
+        EventoVueloDTO evento = new EventoVueloDTO(
+                tipo, "2028-07-20T10:00:00Z", 1L, "AAA", "BBB", EstadoCapacidad.VERDE,
+                maletas, "2028-07-20T10:00", "2028-07-20T11:00",
+                "2028-07-20T10:00:00Z", "2028-07-20T11:00:00Z", new ArrayList<>(envios));
+        evento.setCapacidadMax(100);
+        evento.setPorcentajeOcupacion(maletas);
+        return evento;
     }
 }
