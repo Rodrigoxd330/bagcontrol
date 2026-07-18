@@ -297,9 +297,9 @@ public class EnvioDataStore {
             }
             //Empezar tarea de popular dias adelante
             if(spoolPath != null && !fechasCacheadas.containsKey(indexDate.plusDays(margenDiasCacheados).toString())){
-                populateEnvioThreads.execute(new EnvioAccessJob(this,
-                        indexDate.atTime(0,0,0),
-                        nextDate.plusDays(margenDiasCacheados).atTime(0,0,0)));
+                LocalDateTime inicioPrecarga = indexDate.atTime(0, 0, 0);
+                LocalDateTime finPrecarga = nextDate.plusDays(margenDiasCacheados).atTime(0, 0, 0);
+                populateEnvioThreads.execute(() -> populateEnvioMap(inicioPrecarga, finPrecarga));
             }
             //Seguir con la iteracion
             indexDate = nextDate;
@@ -691,21 +691,6 @@ public class EnvioDataStore {
                 .compile("_ENVIOS_([A-Z]{4})_")
                 .matcher(nombreArchivo.toUpperCase());
         return m.find() ? m.group(1) : "DESC";
-    }
-
-    private class EnvioAccessJob implements Runnable{
-        private final EnvioDataStore dataStore;
-        private final LocalDateTime inicio;
-        private final LocalDateTime fin;
-        public EnvioAccessJob(EnvioDataStore dataStore,LocalDateTime inicio,LocalDateTime fin){
-            this.dataStore = dataStore;
-            this.inicio = inicio;
-            this.fin = fin;
-        }
-
-        public void run(){
-            dataStore.populateEnvioMap(inicio,fin);
-        }
     }
 
     private record RangoDia(long inicio, long fin, int totalEnvios) {

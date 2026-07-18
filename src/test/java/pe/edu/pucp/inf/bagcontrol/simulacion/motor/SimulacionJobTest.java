@@ -101,22 +101,50 @@ class SimulacionJobTest {
     }
 
     @Test
+    void envioEnColaColapsaAlVencerSlaAunqueConserveRutaProgramada() throws Exception {
+        SimulacionState state = new SimulacionState("sim-sla-cola");
+        state.getAeropuertosSnapshot().put("LIM", crearAeropuerto("LIM", "AMERICA"));
+        state.getAeropuertosSnapshot().put("BOG", crearAeropuerto("BOG", "AMERICA"));
+        Envio envio = crearEnvio();
+        SolucionRuta sinRuta = new SolucionRuta();
+        sinRuta.agregarAsignacion(envio, null);
+        SimulacionJob job = crearJobPrueba(state);
+
+        Method registrar = SimulacionJob.class.getDeclaredMethod("registrarEnviosNuevos", SolucionRuta.class);
+        registrar.setAccessible(true);
+        registrar.invoke(job, sinRuta);
+        state.getEnviosEnSeguimiento().get(envio.getIdPedido()).setItinerario(
+                new Itinerario(List.of(crearVuelo()))
+        );
+
+        Method encontrar = SimulacionJob.class.getDeclaredMethod(
+                "encontrarPrimerIncumplimientoSla", Instant.class
+        );
+        encontrar.setAccessible(true);
+        Optional<?> incumplimiento = (Optional<?>) encontrar.invoke(
+                job, Instant.parse("2026-07-21T08:15:00Z")
+        );
+
+        assertThat(incumplimiento).isPresent();
+    }
+
+    @Test
     void saAumentaTrasDosBloquesConsecutivosEnElUmbral() throws Exception {
         SimulacionJob job = crearJobPrueba(new SimulacionState("sim-sa-adaptativo"));
         Method ajustar = SimulacionJob.class.getDeclaredMethod("ajustarSa", long.class, long.class);
         ajustar.setAccessible(true);
 
-        ajustar.invoke(job, 14_000L, 1L);
-        assertThat(job.getSaMs()).isEqualTo(15_000);
-        ajustar.invoke(job, 14_000L, 2L);
-        assertThat(job.getSaMs()).isEqualTo(16_000);
+        ajustar.invoke(job, 27_000L, 1L);
+        assertThat(job.getSaMs()).isEqualTo(28_000);
+        ajustar.invoke(job, 27_000L, 2L);
+        assertThat(job.getSaMs()).isEqualTo(29_000);
 
-        ajustar.invoke(job, 15_000L, 3L);
+        ajustar.invoke(job, 28_000L, 3L);
         ajustar.invoke(job, 8_000L, 4L);
-        ajustar.invoke(job, 15_000L, 5L);
-        assertThat(job.getSaMs()).isEqualTo(16_000);
-        ajustar.invoke(job, 15_000L, 6L);
-        assertThat(job.getSaMs()).isEqualTo(17_000);
+        ajustar.invoke(job, 28_000L, 5L);
+        assertThat(job.getSaMs()).isEqualTo(29_000);
+        ajustar.invoke(job, 28_000L, 6L);
+        assertThat(job.getSaMs()).isEqualTo(30_000);
     }
 
     @Test
@@ -176,6 +204,26 @@ class SimulacionJobTest {
 
         assertThat(colapso).isEmpty();
         assertThat(state.getInventarioSnapshot().get("LIM")).isEqualTo(100);
+    }
+
+    @Test
+    void asignacionFuturaMantieneMaletasEnAeropuertoHastaElDespegue() throws Exception {
+        Aeropuerto origen = crearAeropuerto("LIM", "AMERICA");
+        SimulacionState state = new SimulacionState("sim-espera-vuelo");
+        state.getAeropuertosSnapshot().put("LIM", origen);
+        state.getInventarioSnapshot().put("LIM", 0);
+        RutaAsignada asignacion = new RutaAsignada(
+                crearEnvio(), new Itinerario(List.of(crearVuelo())), false
+        );
+        SimulacionJob job = crearJobPrueba(state);
+        Method aplicar = SimulacionJob.class.getDeclaredMethod(
+                "aplicarFisicaHasta", List.class, Instant.class, Set.class, List.class
+        );
+        aplicar.setAccessible(true);
+
+        aplicar.invoke(job, new ArrayList<EventoBaseDTO>(), null, Set.of(), List.of(asignacion));
+
+        assertThat(state.getInventarioSnapshot().get("LIM")).isEqualTo(3);
     }
 
     @Test
@@ -387,14 +435,15 @@ class SimulacionJobTest {
         List<EventoBaseDTO> eventos = new ArrayList<>(List.of(despega, aterriza));
 
         Method aplicarFisicaHasta = SimulacionJob.class.getDeclaredMethod(
-                "aplicarFisicaHasta", List.class, Instant.class, Set.class
+                "aplicarFisicaHasta", List.class, Instant.class, Set.class, List.class
         );
         aplicarFisicaHasta.setAccessible(true);
         aplicarFisicaHasta.invoke(
                 job,
                 eventos,
                 null,
-                clavesEventosPostergadosEnBatch
+                clavesEventosPostergadosEnBatch,
+                List.of()
         );
 
         assertThat(despega.getCantidadMaletas()).isZero();
@@ -402,6 +451,16 @@ class SimulacionJobTest {
         assertThat(state.getInventarioSnapshot().get("LIM")).isZero();
         assertThat(state.getInventarioSnapshot().get("BOG")).isZero();
         assertThat(state.getEnviosEntregados()).isEmpty();
+        assertThat(state.getEnviosPendientes()).extracting(Envio::getIdPedido).containsExactly("PED-1");
+        assertThat(state.getEnviosEnSeguimiento().get("PED-1").getItinerario()).isNull();
+
+        Method actualizarPendientes = SimulacionJob.class.getDeclaredMethod(
+                "actualizarPendientesParaSiguienteCiclo", SolucionRuta.class
+        );
+        actualizarPendientes.setAccessible(true);
+        actualizarPendientes.invoke(job, new SolucionRuta());
+
+        assertThat(state.getEnviosPendientes()).extracting(Envio::getIdPedido).containsExactly("PED-1");
     }
 
     private Aeropuerto crearAeropuerto(String iata, String continente) {

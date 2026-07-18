@@ -9,6 +9,7 @@ import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.Itinerario;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 
+import java.lang.reflect.Method;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -156,6 +157,81 @@ class PlanificadorUtilsTest {
                         completa, aeropuertos, Map.of(), nuevos
                 ))
                 .isFalse();
+    }
+
+    @Test
+    void entregaFinalNoConsumeCapacidadDeAlmacenEnDestino() {
+        Envio envio = crearEnvio("PED-FINAL", "LIM", "BOG", LocalDateTime.of(2026, 7, 20, 8, 0));
+        envio.setCantidadMaletas(3);
+        Map<String, Aeropuerto> aeropuertos = Map.of(
+                "LIM", crearAeropuerto("LIM", "AMERICA", -5, 10),
+                "BOG", crearAeropuerto("BOG", "AMERICA", -5, 10)
+        );
+        Itinerario directo = new Itinerario(List.of(
+                crearVuelo("LIM", "BOG", "2026-07-20T09:00:00Z", "2026-07-20T10:00:00Z")
+        ));
+        SolucionRuta solucion = new SolucionRuta();
+        solucion.agregarAsignacion(envio, directo);
+
+        assertThat(PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
+                solucion, aeropuertos, Map.of("LIM", 3, "BOG", 10)
+        )).isTrue();
+    }
+
+    @Test
+    void reservaPreviaDeVueloEsParteDeLaRestriccionDura() {
+        Envio envio = crearEnvio("PED-RESERVA", "LIM", "BOG", LocalDateTime.of(2026, 7, 20, 8, 0));
+        envio.setCantidadMaletas(3);
+        VueloInstanciado vuelo = crearVuelo(
+                "LIM", "BOG", "2026-07-20T09:00:00Z", "2026-07-20T10:00:00Z"
+        );
+        vuelo.setOcupacionActual(8);
+        SolucionRuta solucion = new SolucionRuta();
+        solucion.agregarAsignacion(envio, new Itinerario(List.of(vuelo)));
+
+        assertThat(PlanificadorUtils.solucionRespetaCapacidadVuelos(solucion)).isFalse();
+    }
+
+    @Test
+    void envioNuevoSinItinerarioIgualConsumeCapacidadEnCheckIn() {
+        Envio envio = crearEnvio("PED-PENDIENTE", "LIM", "BOG", LocalDateTime.of(2026, 7, 20, 8, 0));
+        envio.setCantidadMaletas(3);
+        Map<String, Aeropuerto> aeropuertos = Map.of(
+                "LIM", crearAeropuerto("LIM", "AMERICA", -5, 2),
+                "BOG", crearAeropuerto("BOG", "AMERICA", -5, 10)
+        );
+        SolucionRuta solucion = new SolucionRuta();
+        solucion.agregarAsignacion(envio, null);
+
+        assertThat(PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
+                solucion, aeropuertos, Map.of(), Set.of(envio.getIdPedido())
+        )).isFalse();
+    }
+
+    @Test
+    void vecindarioReservaMitadDeCandidatosParaEscalas() throws Exception {
+        List<Itinerario> candidatas = new java.util.ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            candidatas.add(new Itinerario(List.of(crearVuelo(
+                    "LIM", "BOG", "2026-07-20T09:00:00Z", "2026-07-20T10:00:00Z"
+            ))));
+        }
+        for (int i = 0; i < 6; i++) {
+            candidatas.add(new Itinerario(List.of(
+                    crearVuelo("LIM", "UIO", "2026-07-20T09:00:00Z", "2026-07-20T10:00:00Z"),
+                    crearVuelo("UIO", "BOG", "2026-07-20T11:00:00Z", "2026-07-20T12:00:00Z")
+            )));
+        }
+        Method seleccionar = PlanificadorUtils.class.getDeclaredMethod(
+                "seleccionarAlternativasDirectasYConEscala", List.class, int.class
+        );
+        seleccionar.setAccessible(true);
+
+        @SuppressWarnings("unchecked")
+        List<Itinerario> seleccionadas = (List<Itinerario>) seleccionar.invoke(null, candidatas, 6);
+
+        assertThat(seleccionadas).filteredOn(itinerario -> itinerario.getCantidadVuelos() == 1).hasSize(3);
+        assertThat(seleccionadas).filteredOn(itinerario -> itinerario.getCantidadVuelos() == 2).hasSize(3);
     }
 
     private Envio crearEnvio(String id, String origen, String destino, LocalDateTime fechaHoraUtc) {

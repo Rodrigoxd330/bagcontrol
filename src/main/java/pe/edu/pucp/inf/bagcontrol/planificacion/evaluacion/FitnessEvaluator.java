@@ -11,20 +11,19 @@ import pe.edu.pucp.inf.bagcontrol.planificacion.utils.PlanificadorUtils;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.NavigableMap;
+import java.util.Set;
 import java.util.TreeMap;
 
 @Component
 public class FitnessEvaluator {
 
     // Penalizaciones robustas para forzar el cumplimiento de reglas
-    private static final double PENALIZACION_SIN_ITINERARIO = 10000.0;
-    private static final double PENALIZACION_EXCEDE_SLA = 5000.0;
+    private static final double PENALIZACION_SIN_ITINERARIO = 1_000_000.0;
+    private static final double PENALIZACION_EXCEDE_SLA = 1_000_000.0;
     private static final double PENALIZACION_SOBRECARGA_VUELO = 50.0;
     private static final double PENALIZACION_SOBRECARGA_AEROPUERTO = 1000000.0;
-    private static final double PENALIZACION_ESCALA = 10.0;
+    private static final double PENALIZACION_ESCALA = 5.0;
     private static final double PENALIZACION_VUELO_CANCELADO = 100000.0;
-    private static final double PENALIZACION_VUELO_SUBUTILIZADO = 25.0;
-    private static final double UMBRAL_SUBUTILIZACION_VUELO = 0.20;
 
     public double evaluar(SolucionRuta solucion, Map<String, Aeropuerto> mapaAeropuertos) {
         return evaluar(solucion, mapaAeropuertos, Map.of());
@@ -34,6 +33,15 @@ public class FitnessEvaluator {
             SolucionRuta solucion,
             Map<String, Aeropuerto> mapaAeropuertos,
             Map<String, Integer> inventarioInicial
+    ) {
+        return evaluar(solucion, mapaAeropuertos, inventarioInicial, Set.of());
+    }
+
+    public double evaluar(
+            SolucionRuta solucion,
+            Map<String, Aeropuerto> mapaAeropuertos,
+            Map<String, Integer> inventarioInicial,
+            Set<String> enviosNuevos
     ) {
         double fitness = 0.0;
         int sinItinerario = 0;
@@ -45,16 +53,34 @@ public class FitnessEvaluator {
 
         for (RutaAsignada asignacion : solucion.getAsignaciones()) {
             Itinerario itinerario = asignacion.getItinerario();
+            var envio = asignacion.getEnvio();
+            if (enviosNuevos.contains(envio.getIdPedido())) {
+                registrarMovimientoAeropuerto(
+                        movimientosPorAeropuerto,
+                        envio.getOrigenIata(),
+                        PlanificadorUtils.obtenerFechaIngresoUtc(envio),
+                        envio.getCantidadMaletas()
+                );
+            }
 
             if (itinerario == null) {
                 sinItinerario++;
-                fitness += PENALIZACION_SIN_ITINERARIO;
+                Aeropuerto origen = mapaAeropuertos.get(envio.getOrigenIata());
+                double presionOrigen = origen == null || origen.getCapacidadAlmacen() <= 0
+                        ? 0.0
+                        : inventarioInicial.getOrDefault(envio.getOrigenIata(), 0)
+                                / (double) origen.getCapacidadAlmacen();
+                fitness += PENALIZACION_SIN_ITINERARIO
+                        + envio.getCantidadMaletas() * 10_000.0
+                        + presionOrigen * 500_000.0;
                 asignacion.setExcedeSla(false); // No tiene itinerario, el SLA terrestre lo evalúa el motor
                 continue;
             }
 
-            var envio = asignacion.getEnvio();
-            fitness += PlanificadorUtils.calcularDuracionItinerarioHoras(itinerario);
+            double horasHastaEntrega = java.time.Duration.between(
+                    PlanificadorUtils.obtenerFechaIngresoUtc(envio), itinerario.getFechaHoraLlegadaUtc()
+            ).toMinutes() / 60.0;
+            fitness += Math.max(horasHastaEntrega, 0.0) * 20.0;
 
             if (itinerario.getCantidadVuelos() > 1) {
                 fitness += (itinerario.getCantidadVuelos() - 1) * PENALIZACION_ESCALA;
@@ -74,20 +100,27 @@ public class FitnessEvaluator {
                 asignacion.setExcedeSla(false);
             }
 
-            for (VueloInstanciado vuelo : itinerario.getVuelos()) {
-                cargaPorVuelo.merge(vuelo, envio.getCantidadMaletas(), Integer::sum);
+            for (int i = 0; i < itinerario.getVuelos().size(); i++) {
+                VueloInstanciado vuelo = itinerario.getVuelos().get(i);
+                cargaPorVuelo.compute(
+                        vuelo,
+                        (ignorado, actual) -> (actual == null ? vuelo.getOcupacionActual() : actual)
+                                + envio.getCantidadMaletas()
+                );
                 registrarMovimientoAeropuerto(
                         movimientosPorAeropuerto,
                         vuelo.getOrigenIata(),
                         vuelo.getFechaHoraSalidaUtc(),
                         -envio.getCantidadMaletas()
                 );
-                registrarMovimientoAeropuerto(
-                        movimientosPorAeropuerto,
-                        vuelo.getDestinoIata(),
-                        vuelo.getFechaHoraLlegadaUtc(),
-                        envio.getCantidadMaletas()
-                );
+                if (i < itinerario.getVuelos().size() - 1) {
+                    registrarMovimientoAeropuerto(
+                            movimientosPorAeropuerto,
+                            vuelo.getDestinoIata(),
+                            vuelo.getFechaHoraLlegadaUtc(),
+                            envio.getCantidadMaletas()
+                    );
+                }
             }
         }
 
@@ -101,10 +134,8 @@ public class FitnessEvaluator {
                 vuelosSobrecargados++;
                 int exceso = cargaActual - capacidadMax;
                 fitness += Math.pow(exceso, 2) * PENALIZACION_SOBRECARGA_VUELO;
-            } else if (sinItinerario > 0 && capacidadMax > 0
-                    && cargaActual < capacidadMax * UMBRAL_SUBUTILIZACION_VUELO) {
-                double deficit = capacidadMax * UMBRAL_SUBUTILIZACION_VUELO - cargaActual;
-                fitness += deficit * PENALIZACION_VUELO_SUBUTILIZADO;
+            } else if (capacidadMax > 0) {
+                fitness += calcularPenalizacionSaturacionVuelo(cargaActual / (double) capacidadMax);
             }
         }
 
@@ -137,6 +168,13 @@ public class FitnessEvaluator {
         solucion.setAeropuertosSaturadosCount(aeropuertosSaturados);
 
         return fitness;
+    }
+
+    private double calcularPenalizacionSaturacionVuelo(double ocupacion) {
+        if (ocupacion > 0.95) return 10_000.0 + (ocupacion - 0.95) * 100_000.0;
+        if (ocupacion > 0.90) return 1_000.0 + (ocupacion - 0.90) * 10_000.0;
+        if (ocupacion > 0.80) return 100.0 + (ocupacion - 0.80) * 1_000.0;
+        return 0.0;
     }
 
     private void registrarMovimientoAeropuerto(

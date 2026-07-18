@@ -7,11 +7,7 @@ import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 
-import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
-
-
 import java.util.*;
-import java.util.stream.Collectors;
 
 public class SimulacionStateMutator {
 
@@ -53,13 +49,15 @@ public class SimulacionStateMutator {
     private String claveInstanciaVuelo(Long codigoVuelo, String horaSalidaUtc) {
         return codigoVuelo + "|" + horaSalidaUtc;
     }
-    public void indexarEnviosPorVuelo(Map<String,Set<String>> enviosDespachadosPorVuelo) {
-        Map<String, List<EnvioDTO>> indice = new LinkedHashMap<>();
-        for (Map.Entry<String,Set<String>> entry : enviosDespachadosPorVuelo.entrySet()){
+    public void indexarEnviosPorVuelo(
+            Map<String, Set<String>> enviosDespachadosPorVuelo,
+            Set<String> vuelosActualizados
+    ) {
+        for (String claveVuelo : vuelosActualizados) {
             List<EnvioDTO> envios = new ArrayList<>();
-            for(String id_pedido : entry.getValue()){
-                RutaAsignada ruta = state.getEnviosEnSeguimiento().get(id_pedido);
-                if(ruta==null) {
+            for (String idPedido : enviosDespachadosPorVuelo.getOrDefault(claveVuelo, Set.of())) {
+                RutaAsignada ruta = state.getEnviosEnSeguimiento().get(idPedido);
+                if (ruta == null) {
                     continue;
                 }
                 Envio envio = ruta.getEnvio();
@@ -70,28 +68,8 @@ public class SimulacionStateMutator {
                 );
                 envios.add(envioDTO);
             }
-            List<EnvioDTO> l1 = new ArrayList<>(indice.computeIfAbsent(entry.getKey(),k -> List.of()));
-            l1.removeIf(_envio -> envios.stream().anyMatch(e -> e.getIdPedido() == _envio.getIdPedido()));
-            l1.addAll(envios);
-            indice.put(entry.getKey(),envios);
+            state.getEnviosPorVuelo().put(claveVuelo, envios);
         }
-        TreeMap<String,List<EnvioDTO>> newTree = new TreeMap<>(indice);
-        /*
-        for (String envioCode : solucion.getAsignaciones()) {
-            if (asignacion.getItinerario() == null) continue;
-
-            Envio envio = asignacion.getEnvio();
-            EnvioDTO envioDTO = new EnvioDTO(
-                    envio.getIdPedido(), envio.getOrigenIata(), envio.getDestinoIata(),
-                    envio.getFechaHora() != null ? envio.getFechaHora().toString() : null,
-                    envio.getCantidadMaletas(), envio.getIdCliente()
-            );
-
-            for (VueloInstanciado vuelo : asignacion.getItinerario().getVuelos()) {
-                indice.computeIfAbsent(vuelo.getCodigoBase(), key -> new ArrayList<>()).add(envioDTO);
-            }
-        }*/
-        state.setEnviosPorVuelo(newTree);
     }
 
     public boolean sumarMaletas(String aeropuertoIata, int cantidad) {

@@ -6,14 +6,16 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import pe.edu.pucp.inf.bagcontrol.auth.AuthService;
 import pe.edu.pucp.inf.bagcontrol.auth.UsuarioSesion;
-import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.CancelacionVueloRequestDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.CancelacionVueloResponseDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioAlmacenDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioPorVueloRequestDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioRutaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MaletaSimulacionDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionActivaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.VueloCancelableDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.*;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.out.RespuestaInicioSimulacionDTO;
 
@@ -22,10 +24,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
 @RestController
 @RequestMapping("/api/simulacion")
@@ -36,8 +36,6 @@ public class SimulacionController {
     private static final String MODO_NORMAL = "NORMAL";
     private static final String MODO_OPERACION_DIA = "OPERACION_DIA";
     private static final String MODO_BENCHMARK = "BENCHMARK";
-    private final WebSocketPublisher publisher;
-
     private final SimulacionManager simulacionManager;
     private final AuthService authService;
 
@@ -49,7 +47,7 @@ public class SimulacionController {
     public RespuestaInicioSimulacionDTO preparaSimulacion(
             @RequestParam("fechaInicio") String fechaInicio,
             @RequestParam(value = "fechaFin", required = false) String fechaFin,
-            @RequestParam(value = "k", defaultValue = "60") int k,
+            @RequestParam(value = "k", defaultValue = "120") int k,
             @RequestParam(value = "algoritmo", defaultValue = "TABU") String algoritmo,
             @RequestParam(value = "modo", required = false) String modo,
             @RequestHeader(value = "Authorization", required = false) String authorization
@@ -184,65 +182,39 @@ public class SimulacionController {
         return envios;
     }
 
-    @PostMapping("/{simulacionId}/vuelos/cancelar")
-    public Map<String,String> cancelarVuelo(
+    @GetMapping("/{simulacionId}/vuelos/cancelables")
+    public List<VueloCancelableDTO> listarVuelosCancelables(
             @PathVariable String simulacionId,
-            @RequestBody EnvioPorVueloRequestDTO request
-    ){
-        SimulacionState state = simulacionManager.obtenerState(simulacionId);
-        List<EnvioDTO> envios = simulacionManager.extraerEnviosPorVuelo(simulacionId, request.getFlight(), request.getTimestamp());
-        LoteEventosDTO ultimoLote = state.getUltimoLoteEmitido();
-        if (ultimoLote == null || request.getFlight() == null) {
-            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.NOT_FOUND, "Vuelo no encontrado");
-        }
+            @RequestParam("instanteSimulado") String instanteSimulado
+    ) {
+        return simulacionManager.listarVuelosCancelables(simulacionId, parseInstant(instanteSimulado));
+    }
 
-        List<EventoBaseDTO> eventos = ultimoLote.getEventos();
-        EventoVueloDTO cancelado = null;
-        for (int i = 0; i < eventos.size(); i++) {
-            EventoBaseDTO evento = eventos.get(i);
-            if (!(evento instanceof EventoVueloDTO vuelo)
-                    || (vuelo.getTipo() != TipoEvento.VUELO_DESPEGA && vuelo.getTipo() != TipoEvento.VUELO_ATERRIZA)
-                    || !Objects.equals(vuelo.claveInstanciaVuelo(), request.getFlight().claveInstanciaVuelo())) {
-                continue;
-            }
-            cancelado = new SimulacionEventosFactory(null)
-                    .crearEventoVuelo(vuelo.toVueloInstanciado(), TipoEvento.VUELO_CANCELADO);
-            cancelado.setCodigoEnvios(vuelo.getCodigoEnvios() == null ? List.of() : List.copyOf(vuelo.getCodigoEnvios()));
-            cancelado.setCantidadMaletas(vuelo.getCantidadMaletas());
-            cancelado.setCapacidadMax(vuelo.getCapacidadMax());
-            cancelado.setPorcentajeOcupacion(vuelo.getPorcentajeOcupacion());
-            eventos.set(i, cancelado);
-            break;
+    @PostMapping("/{simulacionId}/vuelos/{codigoVuelo}/cancelaciones")
+    public CancelacionVueloResponseDTO cancelarProximaOcurrencia(
+            @PathVariable String simulacionId,
+            @PathVariable Long codigoVuelo,
+            @RequestBody CancelacionVueloRequestDTO request
+    ) {
+        try {
+            return simulacionManager.cancelarProximaOcurrencia(
+                    simulacionId, codigoVuelo, parseInstant(request.getInstanteSimulado()), request.getMotivo()
+            );
+        } catch (IllegalArgumentException ex) {
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.NOT_FOUND, ex.getMessage());
+        } catch (IllegalStateException ex) {
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.CONFLICT, ex.getMessage());
         }
-        if (cancelado == null) {
-            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.NOT_FOUND, "Vuelo no encontrado");
+    }
+
+    private Instant parseInstant(String valor) {
+        try {
+            return Instant.parse(valor);
+        } catch (RuntimeException ex) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "El instante simulado debe usar formato ISO-8601 UTC"
+            );
         }
-
-        publisher.publicarLote(simulacionId, new LoteEventosDTO(
-                simulacionId,
-                state.siguienteLote(),
-                Instant.now().toString(),
-                Instant.now().toString(),
-                1,
-                List.of(cancelado),
-                List.of(),
-                0
-        ));
-
-        List<Envio> enviosPendientes = new ArrayList<>(state.getEnviosPendientes());
-        java.util.Set<String> idsPendientes = enviosPendientes.stream()
-                .map(Envio::getIdPedido)
-                .collect(java.util.stream.Collectors.toSet());
-        envios.stream()
-                .filter(dto -> idsPendientes.add(dto.getIdPedido()))
-                .map(dto -> new Envio(
-                        dto.getIdPedido(), dto.getOrigenIata(), dto.getDestinoIata(),
-                        LocalDateTime.parse(dto.getFechaHora()), dto.getCantidadMaletas(), dto.getIdCliente(),
-                        true, dto.isEsOperacionDia(), false
-                ))
-                .forEach(enviosPendientes::add);
-        state.setEnviosPendientes(enviosPendientes);
-        return Map.of("mensaje", "Vuelo cancelado");
     }
 
     @GetMapping("/{simulacionId}/envios/{idPedido}/ruta")

@@ -138,14 +138,14 @@ public class PlanificadorUtils {
                         (RutaAsignada asignacion) -> asignacion.getEnvio().getCantidadMaletas()
                 ).reversed()));
 
-        int maxEnviosEvaluados = Math.min(asignaciones.size(), Math.max(20, maxVecinos * 2));
-        int cuotaPorEnvio = 3;
+        int maxEnviosEvaluados = Math.min(asignaciones.size(), Math.max(50, maxVecinos * 4));
+        int cuotaPorEnvio = 6;
         List<CandidatoMovimiento> candidatos = new ArrayList<>();
         for (RutaAsignada asignacion : asignaciones.subList(0, maxEnviosEvaluados)) {
             var envio = asignacion.getEnvio();
             var itinerarioActual = asignacion.getItinerario();
 
-            List<Itinerario> alternativas = buscarItinerariosViablesParaEnvio(
+            List<Itinerario> candidatas = buscarItinerariosViablesParaEnvio(
                     envio,
                     itinerariosPorRuta,
                     mapaAeropuertos
@@ -156,8 +156,10 @@ public class PlanificadorUtils {
                             .comparingDouble((Itinerario itinerario) -> presionRuta(itinerario, presionAeropuertos))
                             .thenComparing(Itinerario::getFechaHoraLlegadaUtc)
                             .thenComparingInt(Itinerario::getCantidadVuelos))
-                    .limit(cuotaPorEnvio)
                     .toList();
+            List<Itinerario> alternativas = seleccionarAlternativasDirectasYConEscala(
+                    candidatas, cuotaPorEnvio
+            );
 
             for (Itinerario itinerarioNuevo : alternativas) {
                 Movimiento movimiento = new Movimiento(envio, itinerarioActual, itinerarioNuevo);
@@ -192,6 +194,36 @@ public class PlanificadorUtils {
                 .limit(maxVecinos - movimientos.size())
                 .forEach(movimientos::add);
         return movimientos;
+    }
+
+    private static List<Itinerario> seleccionarAlternativasDirectasYConEscala(
+            List<Itinerario> candidatas,
+            int limite
+    ) {
+        if (candidatas.size() <= limite) {
+            return candidatas;
+        }
+        int cupoPorTipo = limite / 2;
+        List<Itinerario> seleccionadas = new ArrayList<>(limite);
+        candidatas.stream()
+                .filter(itinerario -> itinerario.getCantidadVuelos() == 1)
+                .limit(cupoPorTipo)
+                .forEach(seleccionadas::add);
+        candidatas.stream()
+                .filter(itinerario -> itinerario.getCantidadVuelos() == 2)
+                .limit(cupoPorTipo)
+                .forEach(seleccionadas::add);
+
+        if (seleccionadas.size() < limite) {
+            Set<String> idsIncluidos = seleccionadas.stream()
+                    .map(Itinerario::getIdItinerario)
+                    .collect(java.util.stream.Collectors.toSet());
+            candidatas.stream()
+                    .filter(itinerario -> !idsIncluidos.contains(itinerario.getIdItinerario()))
+                    .limit(limite - seleccionadas.size())
+                    .forEach(seleccionadas::add);
+        }
+        return seleccionadas;
     }
 
     private static Map<String, Double> calcularPresionAeropuertos(
@@ -252,7 +284,7 @@ public class PlanificadorUtils {
             if (vuelo.isEstaCancelado()) {
                 return false;
             }
-            int cargaActual = cargaAcumulada.getOrDefault(vuelo, 0);
+            int cargaActual = cargaAcumulada.getOrDefault(vuelo, vuelo.getOcupacionActual());
             if (cargaActual + envio.getCantidadMaletas() > vuelo.getCapacidadMax()) {
                 return false;
             }
@@ -267,8 +299,32 @@ public class PlanificadorUtils {
             Map<VueloInstanciado, Integer> cargaAcumulada
     ) {
         for (VueloInstanciado vuelo : itinerario.getVuelos()) {
-            cargaAcumulada.merge(vuelo, envio.getCantidadMaletas(), Integer::sum);
+            cargaAcumulada.compute(
+                    vuelo,
+                    (ignorado, actual) -> (actual == null ? vuelo.getOcupacionActual() : actual)
+                            + envio.getCantidadMaletas()
+            );
         }
+    }
+
+    public static boolean solucionRespetaCapacidadVuelos(SolucionRuta solucion) {
+        Map<VueloInstanciado, Integer> cargaPorVuelo = new HashMap<>();
+        for (RutaAsignada asignacion : solucion.getAsignaciones()) {
+            if (asignacion.getItinerario() == null) {
+                continue;
+            }
+            for (VueloInstanciado vuelo : asignacion.getItinerario().getVuelos()) {
+                int carga = cargaPorVuelo.compute(
+                        vuelo,
+                        (ignorado, actual) -> (actual == null ? vuelo.getOcupacionActual() : actual)
+                                + asignacion.getEnvio().getCantidadMaletas()
+                );
+                if (vuelo.isEstaCancelado() || carga > vuelo.getCapacidadMax()) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     public static boolean solucionRespetaCapacidadAeropuertos(
@@ -331,9 +387,6 @@ public class PlanificadorUtils {
         Map<String, NavigableMap<Instant, Integer>> movimientosPorAeropuerto = new HashMap<>();
 
         for (RutaAsignada asignacion : solucion.getAsignaciones()) {
-            if (asignacion.getItinerario() == null) {
-                continue;
-            }
             if (enviosNuevos.contains(asignacion.getEnvio().getIdPedido())) {
                 registrarMovimiento(
                         movimientosPorAeropuerto,
@@ -341,6 +394,9 @@ public class PlanificadorUtils {
                         obtenerFechaIngresoUtc(asignacion.getEnvio()),
                         asignacion.getEnvio().getCantidadMaletas()
                 );
+            }
+            if (asignacion.getItinerario() == null) {
+                continue;
             }
             registrarMovimientosAeropuertos(
                     asignacion.getItinerario(),
@@ -435,11 +491,15 @@ public class PlanificadorUtils {
         }
 
         public void agregar(Envio envio, Itinerario itinerario) {
+            agregarCheckIn(envio);
+            registrarMovimientosAeropuertos(itinerario, envio.getCantidadMaletas(), movimientos);
+        }
+
+        public void agregarCheckIn(Envio envio) {
             if (enviosNuevos.contains(envio.getIdPedido())) {
                 registrarMovimiento(movimientos, envio.getOrigenIata(), obtenerFechaIngresoUtc(envio),
                         envio.getCantidadMaletas());
             }
-            registrarMovimientosAeropuertos(itinerario, envio.getCantidadMaletas(), movimientos);
         }
     }
 
@@ -570,14 +630,19 @@ public class PlanificadorUtils {
         MetricasRendimiento metricas = METRICAS.get();
         metricas.llamadasRegistrarMovimientosAeropuertos++;
         try {
-            for (VueloInstanciado vuelo : itinerario.getVuelos()) {
+            List<VueloInstanciado> vuelos = itinerario.getVuelos();
+            for (int i = 0; i < vuelos.size(); i++) {
+                VueloInstanciado vuelo = vuelos.get(i);
                 registrarMovimiento(
                         movimientosPorAeropuerto, vuelo.getOrigenIata(), vuelo.getFechaHoraSalidaUtc(), -cantidadMaletas
                 );
-                registrarMovimiento(
-                        movimientosPorAeropuerto, vuelo.getDestinoIata(), vuelo.getFechaHoraLlegadaUtc(), cantidadMaletas
-                );
-                metricas.movimientosAeropuertoGenerados += 2;
+                metricas.movimientosAeropuertoGenerados++;
+                if (i < vuelos.size() - 1) {
+                    registrarMovimiento(
+                            movimientosPorAeropuerto, vuelo.getDestinoIata(), vuelo.getFechaHoraLlegadaUtc(), cantidadMaletas
+                    );
+                    metricas.movimientosAeropuertoGenerados++;
+                }
             }
         } finally {
             metricas.tiempoRegistrarMovimientosAeropuertosNanos += System.nanoTime() - inicioNanos;

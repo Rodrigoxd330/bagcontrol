@@ -20,4 +20,11 @@ public class Movimiento {
 
         return idEnvio + "-" + anterior + "-" + nuevo;
     }
+
+    public String getIdMovimientoInversoTabu() {
+        String idEnvio = envio != null ? envio.getIdPedido() : "SIN_ENVIO";
+        String anterior = itinerarioAnterior != null ? itinerarioAnterior.getIdItinerario() : "SIN_ANTERIOR";
+        String nuevo = itinerarioNuevo != null ? itinerarioNuevo.getIdItinerario() : "SIN_NUEVO";
+        return idEnvio + "-" + nuevo + "-" + anterior;
+    }
 }

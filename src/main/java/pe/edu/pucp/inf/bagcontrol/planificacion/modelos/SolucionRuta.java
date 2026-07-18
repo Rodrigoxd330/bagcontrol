@@ -70,9 +70,10 @@ public class SolucionRuta {
             if (asignacion.getEnvio().getIdPedido().equals(movimiento.getEnvio().getIdPedido())) {
                 asignacion.setItinerario(movimiento.getItinerarioNuevo());
                 noRespeta = false;
-                if (!PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
-                        this, mapaAeropuertos, inventarioInicial, enviosNuevos
-                )) {
+                if (!PlanificadorUtils.solucionRespetaCapacidadVuelos(this)
+                        || !PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
+                                this, mapaAeropuertos, inventarioInicial, enviosNuevos
+                        )) {
                     noRespeta = true;
                 }
                 break;

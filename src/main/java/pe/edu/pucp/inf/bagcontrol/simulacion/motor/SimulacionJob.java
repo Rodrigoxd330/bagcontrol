@@ -5,6 +5,7 @@ import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 import pe.edu.pucp.inf.bagcontrol.auth.UsuarioSesion;
+import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.Vuelo;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloInstanciado;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
@@ -12,8 +13,10 @@ import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.service.PlanificadorService;
 import pe.edu.pucp.inf.bagcontrol.planificacion.utils.PlanificadorUtils;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.CancelacionVueloResponseDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.DetalleColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MetricasColapsoDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.VueloCancelableDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoAeropuertoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoBaseDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoColapsoDTO;
@@ -30,6 +33,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -67,14 +71,17 @@ public class SimulacionJob implements Runnable {
     @Getter
     private final SimulacionState state;
     private final SimulacionStateMutator simulacionStateMutator;
-    private final Map<String, Integer> maletasDespachadasPorVuelo = new LinkedHashMap<>();
-    private final Map<String, Set<String>> enviosDespachadosPorVuelo = new LinkedHashMap<>();
+    private final Map<String, Integer> maletasDespachadasPorVuelo = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, Set<String>> enviosDespachadosPorVuelo = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Set<String> vuelosDespachadosActualizados = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final Set<String> vuelosCanceladosManualmente = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final Set<String> enviosForzadosAReplanificar = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final Set<String> enviosConCheckIn = new HashSet<>();
     private long tiempoUltimoLoteMs = 0L;
     private long proximaPublicacionMs = 0L;
     private int bloquesConsecutivosCercaLimite = 0;
-    private static final int SA_INICIAL_MS = 15_000;
-    private static final int SA_MAXIMO_MS = 30_000;
+    private static final int SA_INICIAL_MS = 28_000;
+    private static final int SA_MAXIMO_MS = 45_000;
     private static final int MAX_EVENTOS_REPLANIFICACION_POR_BLOQUE = 50;
     private static final String MODO_OPERACION_DIA = "0";
     @Getter
@@ -260,9 +267,15 @@ public class SimulacionJob implements Runnable {
                     eventosBatch
             );
             agregarAlertasAeropuertosSaturados(eventosBatch);
+            eventosBatch.removeIf(evento -> evento instanceof EventoVueloDTO vuelo
+                    && (vuelo.getTipo() == TipoEvento.VUELO_DESPEGA
+                    || vuelo.getTipo() == TipoEvento.VUELO_ATERRIZA)
+                    && vuelosCanceladosManualmente.contains(claveInstanciaVuelo(vuelo)));
             eventosBatch.sort(comparadorEventos());
 
-            simulacionStateMutator.indexarEnviosPorVuelo(enviosDespachadosPorVuelo);
+            Set<String> vuelosParaIndexar = Set.copyOf(vuelosDespachadosActualizados);
+            simulacionStateMutator.indexarEnviosPorVuelo(enviosDespachadosPorVuelo, vuelosParaIndexar);
+            vuelosDespachadosActualizados.removeAll(vuelosParaIndexar);
 
             if (incumplimiento != null && colapsoCapacidad.isEmpty()) {
                 registrarColapsoSla(ciclo, ventanaInicio, ventanaFin, solucion, incumplimiento, eventosBatch);
@@ -346,15 +359,150 @@ public class SimulacionJob implements Runnable {
             if (enviosConCheckIn.add(envio.getIdPedido())) {
                 checkIns.add(asignacion);
             }
-            if (asignacion.getItinerario() == null) {
+            if (asignacion.getItinerario() == null
+                    || asignacion.getItinerario().contieneVueloCancelado()
+                    || asignacion.getItinerario().getVuelos().isEmpty()
+                    || asignacion.getItinerario().getVuelos().get(0).getFechaHoraSalidaUtc().isBefore(
+                            state.getTiempoActual().toInstant(ZoneOffset.UTC))) {
+                enviosForzadosAReplanificar.add(envio.getIdPedido());
                 continue;
             }
+            enviosForzadosAReplanificar.remove(envio.getIdPedido());
         }
         return checkIns;
     }
 
     public void refrescarContextoDatos(SimulacionContextoDatos contextoDatos) {
         this.contextoDatos = Objects.requireNonNull(contextoDatos, "El contexto de simulación es obligatorio.");
+    }
+
+    public List<VueloCancelableDTO> listarVuelosCancelables(Instant instanteRegistro) {
+        SimulacionContextoDatos contexto = Objects.requireNonNull(contextoDatos, "La simulacion no tiene catalogo de vuelos");
+        Map<String, Aeropuerto> aeropuertosPorCodigo = contexto.aeropuertos().stream()
+                .collect(java.util.stream.Collectors.toMap(Aeropuerto::getCodigoIata, aeropuerto -> aeropuerto));
+        Map<String, List<RutaAsignada>> asignacionesPorVuelo = new java.util.HashMap<>();
+        state.getEnviosEnSeguimiento().values().stream()
+                .filter(asignacion -> !state.getEnviosEntregados().contains(asignacion.getEnvio().getIdPedido()))
+                .filter(asignacion -> asignacion.getItinerario() != null)
+                .forEach(asignacion -> asignacion.getItinerario().getVuelos().forEach(vuelo ->
+                        asignacionesPorVuelo.computeIfAbsent(
+                                claveInstanciaVuelo(vuelo.getCodigoBase(), vuelo.getFechaHoraSalidaUtc().toString()),
+                                ignorado -> new ArrayList<>()
+                        ).add(asignacion)
+                ));
+        return contexto.vuelos().stream()
+                .map(vuelo -> crearVueloCancelable(
+                        vuelo, instanteRegistro, aeropuertosPorCodigo, asignacionesPorVuelo
+                ))
+                .filter(Objects::nonNull)
+                .filter(vuelo -> !vuelo.getEnviosAfectados().isEmpty())
+                .sorted(Comparator.comparing(VueloCancelableDTO::getHoraSalidaUtc))
+                .toList();
+    }
+
+    public synchronized CancelacionVueloResponseDTO cancelarProximaOcurrencia(
+            Long codigoVuelo,
+            Instant instanteRegistro,
+            String motivo
+    ) {
+        SimulacionContextoDatos contexto = Objects.requireNonNull(contextoDatos, "La simulacion no tiene catalogo de vuelos");
+        Vuelo vueloBase = contexto.vuelos().stream()
+                .filter(vuelo -> Objects.equals(vuelo.getCodigo(), codigoVuelo))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Vuelo no encontrado: " + codigoVuelo));
+        VueloInstanciado instancia = SelectorCancelacionVuelo.siguienteOcurrencia(
+                vueloBase, instanteRegistro, contexto.aeropuertos()
+        );
+        String clave = claveInstanciaVuelo(codigoVuelo, instancia.getFechaHoraSalidaUtc().toString());
+        if (!vuelosCanceladosManualmente.add(clave)) {
+            throw new IllegalStateException("La ocurrencia ya fue cancelada");
+        }
+        if (enviosDespachadosPorVuelo.containsKey(clave)) {
+            vuelosCanceladosManualmente.remove(clave);
+            throw new IllegalStateException("La ocurrencia ya fue despachada");
+        }
+
+        List<RutaAsignada> asignacionesAfectadas = asignacionesDeInstancia(clave);
+        List<String> idsAfectados = asignacionesAfectadas.stream()
+                .map(asignacion -> asignacion.getEnvio().getIdPedido())
+                .distinct()
+                .toList();
+        int maletasAfectadas = asignacionesAfectadas.stream()
+                .map(RutaAsignada::getEnvio)
+                .collect(java.util.stream.Collectors.toMap(
+                        Envio::getIdPedido, Envio::getCantidadMaletas, (actual, ignorado) -> actual
+                ))
+                .values().stream().mapToInt(Integer::intValue).sum();
+
+        for (RutaAsignada asignacion : asignacionesAfectadas) {
+            asignacion.getItinerario().getVuelos().stream()
+                    .filter(vuelo -> clave.equals(claveInstanciaVuelo(
+                            vuelo.getCodigoBase(), vuelo.getFechaHoraSalidaUtc().toString()
+                    )))
+                    .forEach(vuelo -> {
+                        vuelo.setCanceladoPorIncidencia(true);
+                        vuelo.setMotivoCancelacion("CANCELACION_MANUAL");
+                    });
+        }
+        marcarEnviosParaReplanificar(new LinkedHashSet<>(idsAfectados), "VUELO_CANCELADO");
+
+        EventoVueloDTO evento = simulacionEventosFactory.crearEventoVuelo(instancia, TipoEvento.VUELO_CANCELADO);
+        evento.setFechaHoraEvento(instanteRegistro.toString());
+        evento.setMotivo(motivo == null || motivo.isBlank() ? "CANCELACION_MANUAL" : motivo);
+        evento.setCodigoEnvios(idsAfectados);
+        evento.setCantidadMaletas(maletasAfectadas);
+        evento.setCapacidadMax(instancia.getCapacidadMax());
+        webSocketPublisher.publicarLote(simulacionId, new LoteEventosDTO(
+                simulacionId, state.siguienteLote(), instanteRegistro.toString(), instanteRegistro.toString(),
+                1, List.of(evento), List.of(), saMs
+        ));
+
+        return new CancelacionVueloResponseDTO(
+                codigoVuelo, instancia.getOrigenIata(), instancia.getDestinoIata(), instanteRegistro.toString(),
+                instancia.getFechaHoraSalida().toString(), instancia.getFechaHoraSalidaUtc().toString(),
+                idsAfectados, maletasAfectadas, "REGISTRADA"
+        );
+    }
+
+    private VueloCancelableDTO crearVueloCancelable(
+            Vuelo vuelo,
+            Instant instanteRegistro,
+            Map<String, Aeropuerto> aeropuertos,
+            Map<String, List<RutaAsignada>> asignacionesPorVuelo
+    ) {
+        VueloInstanciado instancia = SelectorCancelacionVuelo.siguienteOcurrencia(vuelo, instanteRegistro, aeropuertos);
+        if (horaFin != null && !instancia.getFechaHoraSalidaUtc().isBefore(horaFin.toInstant(ZoneOffset.UTC))) {
+            return null;
+        }
+        String clave = claveInstanciaVuelo(vuelo.getCodigo(), instancia.getFechaHoraSalidaUtc().toString());
+        if (vuelosCanceladosManualmente.contains(clave)) {
+            return null;
+        }
+        List<RutaAsignada> asignaciones = asignacionesPorVuelo.getOrDefault(clave, List.of());
+        List<String> ids = asignaciones.stream().map(a -> a.getEnvio().getIdPedido()).distinct().toList();
+        int maletas = asignaciones.stream()
+                .map(RutaAsignada::getEnvio)
+                .collect(java.util.stream.Collectors.toMap(
+                        Envio::getIdPedido, Envio::getCantidadMaletas, (actual, ignorado) -> actual
+                )).values().stream().mapToInt(Integer::intValue).sum();
+        return new VueloCancelableDTO(
+                vuelo.getCodigo(), vuelo.getOrigenIata(), vuelo.getDestinoIata(),
+                instancia.getFechaHoraSalida().toString(), instancia.getFechaHoraSalidaUtc().toString(),
+                instancia.getFechaHoraLlegada().toString(), instancia.getFechaHoraLlegadaUtc().toString(),
+                vuelo.getCapacidadMax(), ids, maletas
+        );
+    }
+
+    private List<RutaAsignada> asignacionesDeInstancia(String clave) {
+        return state.getEnviosEnSeguimiento().values().stream()
+                .filter(asignacion -> !state.getEnviosEntregados().contains(asignacion.getEnvio().getIdPedido()))
+                .filter(asignacion -> asignacion.getItinerario() != null)
+                .filter(asignacion -> asignacion.getItinerario().getVuelos().stream().anyMatch(vuelo ->
+                        clave.equals(claveInstanciaVuelo(
+                                vuelo.getCodigoBase(), vuelo.getFechaHoraSalidaUtc().toString()
+                        ))
+                ))
+                .toList();
     }
 
     private void registrarEventosReplanificacion(
@@ -519,7 +667,9 @@ public class SimulacionJob implements Runnable {
                         asignacion, PlanificadorUtils.calcularDeadlineSla(asignacion.getEnvio(), aeropuertos)
                 ))
                 .filter(incumplimiento -> !incumplimiento.deadline().isAfter(ventanaFinUtc))
-                .filter(incumplimiento -> incumplimiento.asignacion().getItinerario() == null
+                .filter(incumplimiento -> enviosForzadosAReplanificar.contains(
+                                incumplimiento.asignacion().getEnvio().getIdPedido())
+                        || incumplimiento.asignacion().getItinerario() == null
                         || incumplimiento.asignacion().getItinerario().getFechaHoraLlegadaUtc()
                         .isAfter(incumplimiento.deadline()))
                 .min(Comparator.comparing(IncumplimientoSla::deadline));
@@ -637,6 +787,10 @@ public class SimulacionJob implements Runnable {
         Iterator<Map.Entry<String, EventoVueloDTO>> iterator = eventosPostergados.entrySet().iterator();
         while (iterator.hasNext()) {
             EventoVueloDTO evento = iterator.next().getValue();
+            if (vuelosCanceladosManualmente.contains(claveInstanciaVuelo(evento))) {
+                iterator.remove();
+                continue;
+            }
             if (!Instant.parse(evento.getFechaHoraEvento()).isAfter(ventanaFinUtc)) {
                 iterator.remove();
                 eventosBatch.add(evento);
@@ -651,6 +805,9 @@ public class SimulacionJob implements Runnable {
     ) {
         for (EventoBaseDTO evento : eventosFuturos) {
             if (!(evento instanceof EventoVueloDTO eventoVuelo)) {
+                continue;
+            }
+            if (vuelosCanceladosManualmente.contains(claveInstanciaVuelo(eventoVuelo))) {
                 continue;
             }
             eventosPostergados.merge(
@@ -782,6 +939,7 @@ public class SimulacionJob implements Runnable {
                 .filter(EventoVueloDTO.class::isInstance)
                 .map(EventoVueloDTO.class::cast)
                 .filter(evento -> evento.getTipo() != TipoEvento.VUELO_CANCELADO)
+                .filter(evento -> !vuelosCanceladosManualmente.contains(claveInstanciaVuelo(evento)))
                 .filter(evento -> instanteColapso == null
                         || !Instant.parse(evento.getFechaHoraEvento()).isAfter(instanteColapso))
                 .toList();
@@ -854,7 +1012,7 @@ public class SimulacionJob implements Runnable {
                 ajustarCargaEvento(evento, inventarioDisponible);
             }
             int maletasCargadas = registrarCargaRealDespachada(evento, inventarioDisponible);
-            if (maletasCargadas < evento.getCantidadMaletas()) {
+            if (maletasCargadas != evento.getCantidadMaletas()) {
                 ajustarCargaEvento(evento, maletasCargadas);
             }
             simulacionStateMutator.descontarMaletasSalidaVuelo(
@@ -870,6 +1028,7 @@ public class SimulacionJob implements Runnable {
             aplicarCargaRealDespachada(evento);
             String destino = evento.getDestinoIata();
             int entregadasEnDestino = registrarEntregasDirectas(evento, horaEvento);
+            actualizarUbicacionTrasLlegada(evento);
             int maletasParaAlmacenar = evento.getCantidadMaletas() - entregadasEnDestino;
             if (maletasParaAlmacenar <= 0) {
                 agregarEventoInventario(destino, horaEvento, eventos);
@@ -916,8 +1075,13 @@ public class SimulacionJob implements Runnable {
     }
 
     private int registrarCargaRealDespachada(EventoVueloDTO evento, int inventarioDisponible) {
-        int cargaReal = Math.min(evento.getCantidadMaletas(), Math.max(inventarioDisponible, 0));
+        int limiteVuelo = evento.getCapacidadMax() > 0 ? evento.getCapacidadMax() : Integer.MAX_VALUE;
+        int cargaReal = Math.min(limiteVuelo, Math.max(inventarioDisponible, 0));
+        Set<String> enviosEsperados = obtenerEnviosEsperadosEnVuelo(evento);
         Set<String> enviosCargados = seleccionarEnviosCargados(evento, cargaReal);
+        Set<String> enviosNoCargados = new LinkedHashSet<>(enviosEsperados);
+        enviosNoCargados.removeAll(enviosCargados);
+        marcarEnviosParaReplanificar(enviosNoCargados, "NO_ABORDO_VUELO");
         int maletasCargadas = enviosCargados.stream()
                 .map(state.getEnviosEnSeguimiento()::get)
                 .filter(java.util.Objects::nonNull)
@@ -926,6 +1090,8 @@ public class SimulacionJob implements Runnable {
         String clave = claveInstanciaVuelo(evento);
         maletasDespachadasPorVuelo.put(clave, maletasCargadas);
         enviosDespachadosPorVuelo.put(clave, enviosCargados);
+        evento.setCodigoEnvios(new ArrayList<>(enviosCargados));
+        vuelosDespachadosActualizados.add(clave);
         return maletasCargadas;
     }
 
@@ -936,6 +1102,8 @@ public class SimulacionJob implements Runnable {
                 .filter(asignacion -> asignacion.getItinerario() != null)
                 .filter(asignacion -> !state.getEnviosEntregados().contains(asignacion.getEnvio().getIdPedido()))
                 .filter(asignacion -> contieneVuelo(asignacion, evento))
+                .filter(asignacion -> evento.getOrigenIata().equals(
+                        state.getUltimoAeropuertoPorEnvio().get(asignacion.getEnvio().getIdPedido())))
                 .sorted(Comparator.comparing(asignacion -> asignacion.getEnvio().getIdPedido()))
                 .toList();
         for (RutaAsignada asignacion : asignaciones) {
@@ -949,6 +1117,31 @@ public class SimulacionJob implements Runnable {
         return enviosCargados;
     }
 
+    private Set<String> obtenerEnviosEsperadosEnVuelo(EventoVueloDTO evento) {
+        return state.getEnviosEnSeguimiento().values().stream()
+                .filter(asignacion -> asignacion.getItinerario() != null)
+                .filter(asignacion -> !state.getEnviosEntregados().contains(asignacion.getEnvio().getIdPedido()))
+                .filter(asignacion -> contieneVuelo(asignacion, evento))
+                .map(asignacion -> asignacion.getEnvio().getIdPedido())
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private synchronized void marcarEnviosParaReplanificar(Set<String> idsPedidos, String motivo) {
+        if (idsPedidos.isEmpty()) return;
+        Map<String, Envio> pendientes = new LinkedHashMap<>();
+        state.getEnviosPendientes().forEach(envio -> pendientes.put(envio.getIdPedido(), envio));
+        for (String idPedido : idsPedidos) {
+            if (state.getEnviosEntregados().contains(idPedido)) continue;
+            RutaAsignada asignacion = state.getEnviosEnSeguimiento().get(idPedido);
+            if (asignacion == null) continue;
+            enviosForzadosAReplanificar.add(idPedido);
+            asignacion.setItinerario(null);
+            pendientes.put(idPedido, asignacion.getEnvio());
+            System.out.println("[REINTENTO-ENVIO] idPedido=" + idPedido + " motivo=" + motivo);
+        }
+        state.setEnviosPendientes(new ArrayList<>(pendientes.values()));
+    }
+
     private boolean contieneVuelo(RutaAsignada asignacion, EventoVueloDTO evento) {
         return asignacion.getItinerario().getVuelos().stream()
                 .anyMatch(vuelo -> vuelo.getCodigoBase().equals(evento.getCodigoVuelo())
@@ -957,7 +1150,11 @@ public class SimulacionJob implements Runnable {
 
     private void aplicarCargaRealDespachada(EventoVueloDTO evento) {
         Integer cargaReal = maletasDespachadasPorVuelo.get(claveInstanciaVuelo(evento));
-        if (cargaReal != null && cargaReal < evento.getCantidadMaletas()) {
+        Set<String> enviosDespachados = enviosDespachadosPorVuelo.getOrDefault(
+                claveInstanciaVuelo(evento), Set.of()
+        );
+        evento.setCodigoEnvios(new ArrayList<>(enviosDespachados));
+        if (cargaReal != null && cargaReal != evento.getCantidadMaletas()) {
             ajustarCargaEvento(evento, cargaReal);
         }
     }
@@ -993,6 +1190,15 @@ public class SimulacionJob implements Runnable {
             }
         }
         return entregadas;
+    }
+
+    private void actualizarUbicacionTrasLlegada(EventoVueloDTO evento) {
+        Set<String> enviosDespachados = enviosDespachadosPorVuelo.getOrDefault(
+                claveInstanciaVuelo(evento), Set.of()
+        );
+        enviosDespachados.forEach(idPedido ->
+                state.getUltimoAeropuertoPorEnvio().put(idPedido, evento.getDestinoIata())
+        );
     }
 
     private String claveInstanciaVuelo(EventoVueloDTO evento) {
@@ -1033,7 +1239,7 @@ public class SimulacionJob implements Runnable {
         Set<String> enviosDespachados = enviosDespachadosPorVuelo.get(claveInstanciaVuelo(
                 ultimoVuelo.getCodigoBase(), ultimoVuelo.getFechaHoraSalidaUtc().toString()
         ));
-        return enviosDespachados == null || enviosDespachados.contains(idPedido);
+        return enviosDespachados != null && enviosDespachados.contains(idPedido);
     }
 
     private String claveInstanciaVuelo(Long codigoVuelo, String horaSalidaUtc) {
@@ -1078,30 +1284,100 @@ public class SimulacionJob implements Runnable {
             Map<String, Integer> inventarioReservado,
             List<Envio> enviosOperacionDia
     ) {
+        Map<String, Envio> pendientesOriginales = state.getEnviosPendientes().stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        Envio::getIdPedido, envio -> envio, (actual, ignorado) -> actual, LinkedHashMap::new
+                ));
+        List<Envio> pendientesParaPlanificar = state.getEnviosPendientes().stream()
+                .map(this::copiarEnvioDesdeUbicacionActual)
+                .toList();
+        SolucionRuta solucion;
         if (contextoDatos == null) {
-            return esOperacionDia()
+            solucion = esOperacionDia()
                     ? planificadorService.calcularSolucionOperacionDia(
-                            algoritmo, ventanaInicio, ventanaFin, state.getEnviosPendientes(), inventarioReservado,
+                            algoritmo, ventanaInicio, ventanaFin, pendientesParaPlanificar, inventarioReservado,
                             enviosOperacionDia
                     )
                     : planificadorService.calcularSolucion(
-                            algoritmo, ventanaInicio, ventanaFin, state.getEnviosPendientes(), inventarioReservado
+                            algoritmo, ventanaInicio, ventanaFin, pendientesParaPlanificar, inventarioReservado
                     );
-        }
-        return esOperacionDia()
+        } else {
+            solucion = esOperacionDia()
                 ? planificadorService.calcularSolucionOperacionDia(
-                        algoritmo, ventanaInicio, ventanaFin, state.getEnviosPendientes(), inventarioReservado,
+                        algoritmo, ventanaInicio, ventanaFin, pendientesParaPlanificar, inventarioReservado,
                         enviosOperacionDia, contextoDatos.vuelos(), contextoDatos.aeropuertos(),
                         contextoDatos.incidencias()
                 )
                 : planificadorService.calcularSolucion(
-                        algoritmo, ventanaInicio, ventanaFin, state.getEnviosPendientes(), inventarioReservado,
-                        contextoDatos.vuelos(), contextoDatos.aeropuertos(), contextoDatos.incidencias()
+                        algoritmo, ventanaInicio, ventanaFin, pendientesParaPlanificar, inventarioReservado,
+                        contextoDatos.vuelos(), contextoDatos.aeropuertos(), contextoDatos.incidencias(),
+                        Set.copyOf(vuelosCanceladosManualmente),
+                        calcularCargaReservadaPorVuelo(ventanaInicio.toInstant(ZoneOffset.UTC))
                 );
+        }
+        solucion.getAsignaciones().forEach(asignacion -> {
+            Envio original = pendientesOriginales.get(asignacion.getEnvio().getIdPedido());
+            if (original != null) asignacion.setEnvio(original);
+        });
+        return solucion;
     }
 
-    private void actualizarPendientesParaSiguienteCiclo(SolucionRuta solucion) {
-        state.setEnviosPendientes(solucion.obtenerEnviosConConflictos());
+    private Envio copiarEnvioDesdeUbicacionActual(Envio original) {
+        Envio copia = new Envio();
+        copia.setIdPedido(original.getIdPedido());
+        copia.setOrigenIata(state.getUltimoAeropuertoPorEnvio().getOrDefault(
+                original.getIdPedido(), original.getOrigenIata()
+        ));
+        copia.setDestinoIata(original.getDestinoIata());
+        copia.setFechaHora(original.getFechaHora());
+        copia.setCantidadMaletas(original.getCantidadMaletas());
+        copia.setIdCliente(original.getIdCliente());
+        copia.setActivo(original.isActivo());
+        copia.setEsOperacionDia(original.isEsOperacionDia());
+        copia.setFromOperaciones(original.isFromOperaciones());
+        return copia;
+    }
+
+    private Map<String, Integer> calcularCargaReservadaPorVuelo(Instant referencia) {
+        Set<String> pendientes = state.getEnviosPendientes().stream()
+                .map(Envio::getIdPedido)
+                .collect(java.util.stream.Collectors.toSet());
+        Map<String, Integer> cargaReservada = new HashMap<>();
+        for (RutaAsignada asignacion : state.getEnviosEnSeguimiento().values()) {
+            String idPedido = asignacion.getEnvio().getIdPedido();
+            if (asignacion.getItinerario() == null
+                    || pendientes.contains(idPedido)
+                    || state.getEnviosEntregados().contains(idPedido)
+                    || asignacion.getItinerario().getVuelos().stream().anyMatch(vuelo ->
+                            vuelo.isEstaCancelado() || vuelosCanceladosManualmente.contains(claveInstanciaVuelo(
+                                    vuelo.getCodigoBase(), vuelo.getFechaHoraSalidaUtc().toString()
+                            )))) {
+                continue;
+            }
+            int cantidad = asignacion.getEnvio().getCantidadMaletas();
+            for (var vuelo : asignacion.getItinerario().getVuelos()) {
+                if (!vuelo.getFechaHoraSalidaUtc().isBefore(referencia)) {
+                    cargaReservada.merge(
+                            claveInstanciaVuelo(vuelo.getCodigoBase(), vuelo.getFechaHoraSalidaUtc().toString()),
+                            cantidad,
+                            Integer::sum
+                    );
+                }
+            }
+        }
+        return cargaReservada;
+    }
+
+    private synchronized void actualizarPendientesParaSiguienteCiclo(SolucionRuta solucion) {
+        Map<String, Envio> pendientes = new LinkedHashMap<>();
+        solucion.obtenerEnviosConConflictos().forEach(envio -> pendientes.put(envio.getIdPedido(), envio));
+        for (String idPedido : enviosForzadosAReplanificar) {
+            RutaAsignada asignacion = state.getEnviosEnSeguimiento().get(idPedido);
+            if (asignacion != null && !state.getEnviosEntregados().contains(idPedido)) {
+                pendientes.put(idPedido, asignacion.getEnvio());
+            }
+        }
+        state.setEnviosPendientes(new ArrayList<>(pendientes.values()));
         if (!state.getEnviosPendientes().isEmpty()) {
             System.out.println("[SIMULADOR] enviosPendientes=" + state.getEnviosPendientes().size());
         }

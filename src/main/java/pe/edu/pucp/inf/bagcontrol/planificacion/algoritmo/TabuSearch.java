@@ -99,7 +99,7 @@ public class TabuSearch {
             int tenure,
             int maxVecinos
     ) {
-        long budgetMs = 28_000L;
+        long budgetMs = 30_000L;
         return ejecutarConParametros(envios, itinerariosPorRuta, aeropuertos, inventarioInicial,
                 enviosNuevos, iteraciones, tenure, maxVecinos,
                 System.currentTimeMillis() + budgetMs, budgetMs);
@@ -138,7 +138,7 @@ public class TabuSearch {
                         enviosNuevos, deadlineMs);
         SolucionRuta actual = resultadoInicial.solucion();
         rutasDescartadasPorCapacidadAeropuerto += resultadoInicial.rutasDescartadasPorCapacidadAeropuerto();
-        double actualFitness = fitnessEvaluator.evaluar(actual, mapaAeropuertos, inventarioInicial);
+        double actualFitness = fitnessEvaluator.evaluar(actual, mapaAeropuertos, inventarioInicial, enviosNuevos);
 
         long inicioCopia = System.nanoTime();
         SolucionRuta mejor = actual.clonar();
@@ -179,16 +179,19 @@ public class TabuSearch {
                         .findFirst()
                         .orElseThrow()
                         .setItinerario(mov.getItinerarioNuevo());
-                double fitnessCandidato = fitnessEvaluator.evaluar(actual, mapaAeropuertos, inventarioInicial);
+                double fitnessCandidato = fitnessEvaluator.evaluar(
+                        actual, mapaAeropuertos, inventarioInicial, enviosNuevos
+                );
 
                 boolean esMejorGlobal = fitnessCandidato < mejorFitnessGlobal;
 
                 if ((!listaTabu.contains(id) || esMejorGlobal) && fitnessCandidato < mejorFitnessVecino) {
                     // La evaluación completa del fitness ya descarta la mayoría de candidatos.
                     // Validamos la capacidad solo para un candidato que podría ser seleccionado.
-                    boolean respetaCapacidad = PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
-                            actual, mapaAeropuertos, inventarioInicial, enviosNuevos
-                    );
+                    boolean respetaCapacidad = PlanificadorUtils.solucionRespetaCapacidadVuelos(actual)
+                            && PlanificadorUtils.solucionRespetaCapacidadAeropuertos(
+                                    actual, mapaAeropuertos, inventarioInicial, enviosNuevos
+                            );
                     if (respetaCapacidad) {
                         mejorFitnessVecino = fitnessCandidato;
                         mejorMovimiento = mov;
@@ -210,7 +213,7 @@ public class TabuSearch {
             if(noRespeta){actual.deshacerMovimiento(mejorMovimiento);break;}
 
             movimientosAceptados++;
-            actualFitness = fitnessEvaluator.evaluar(actual, mapaAeropuertos, inventarioInicial);
+            actualFitness = fitnessEvaluator.evaluar(actual, mapaAeropuertos, inventarioInicial, enviosNuevos);
 
             if (actualFitness < mejorFitnessGlobal) {
                 inicioCopia = System.nanoTime();
@@ -221,7 +224,7 @@ public class TabuSearch {
                 mejorasGlobales++;
             }
 
-            listaTabu.add(mejorMovimiento.getIdMovimientoTabu());
+            listaTabu.add(mejorMovimiento.getIdMovimientoInversoTabu());
 
             if (listaTabu.size() > tenure) {
                 Iterator<String> it = listaTabu.iterator();
@@ -258,11 +261,6 @@ public class TabuSearch {
                 .toList();
 
         for (Envio envio : enviosPriorizados) {
-            if (System.currentTimeMillis() >= deadlineMs) {
-                solucion.agregarAsignacion(envio, null);
-                enviosPendientesPorCapacidad++;
-                continue;
-            }
             List<Itinerario> posibles = PlanificadorUtils.buscarItinerariosViablesParaEnvio(
                             envio, itinerariosPorRuta, mapaAeropuertos)
                     .stream()
@@ -286,12 +284,13 @@ public class TabuSearch {
 
             if (viablesPorAeropuerto.isEmpty()) {
                 solucion.agregarAsignacion(envio, null);
+                evaluadorCapacidad.agregarCheckIn(envio);
                 if (!posibles.isEmpty()) {
                     enviosPendientesPorCapacidad++;
                 }
             } else {
                 Itinerario elegido = seleccionarItinerarioConsolidado(
-                        viablesPorAeropuerto, cargaAcumulada, mapaAeropuertos, inventarioAcumulado
+                        viablesPorAeropuerto, cargaAcumulada, mapaAeropuertos, inventarioAcumulado, envio
                 );
                 PlanificadorUtils.acumularCargaItinerario(elegido, envio, cargaAcumulada);
                 acumularInventarioItinerario(elegido, envio, inventarioAcumulado);
@@ -309,26 +308,36 @@ public class TabuSearch {
             List<Itinerario> itinerarios,
             Map<VueloInstanciado, Integer> cargaAcumulada,
             Map<String, Aeropuerto> mapaAeropuertos,
-            Map<String, Integer> inventarioAcumulado
+            Map<String, Integer> inventarioAcumulado,
+            Envio envio
     ) {
         return itinerarios.stream()
                 .min(Comparator
                         .comparingDouble((Itinerario itinerario) -> costoSaturacionItinerario(
                                 itinerario, mapaAeropuertos, inventarioAcumulado
                         ))
-                        .thenComparing(
-                                Comparator.comparingInt(
-                                        (Itinerario itinerario) -> cargaActualItinerario(itinerario, cargaAcumulada)
-                                ).reversed()
-                        )
-                        .thenComparing(Itinerario::getFechaHoraLlegadaUtc))
+                        .thenComparingDouble(itinerario -> costoSaturacionVuelos(
+                                itinerario, cargaAcumulada, envio.getCantidadMaletas()
+                        ))
+                        .thenComparing(Itinerario::getFechaHoraLlegadaUtc)
+                        .thenComparingInt(Itinerario::getCantidadVuelos))
                 .orElseThrow();
     }
 
-    private int cargaActualItinerario(Itinerario itinerario, Map<VueloInstanciado, Integer> cargaAcumulada) {
-        return itinerario.getVuelos().stream()
-                .mapToInt(vuelo -> cargaAcumulada.getOrDefault(vuelo, 0))
-                .sum();
+    private double costoSaturacionVuelos(
+            Itinerario itinerario,
+            Map<VueloInstanciado, Integer> cargaAcumulada,
+            int maletasNuevas
+    ) {
+        return itinerario.getVuelos().stream().mapToDouble(vuelo -> {
+            if (vuelo.getCapacidadMax() <= 0) return Double.MAX_VALUE;
+            int carga = cargaAcumulada.getOrDefault(vuelo, vuelo.getOcupacionActual()) + maletasNuevas;
+            double ocupacion = carga / (double) vuelo.getCapacidadMax();
+            if (ocupacion > 0.95) return 10_000.0 + (ocupacion - 0.95) * 100_000.0;
+            if (ocupacion > 0.90) return 1_000.0 + (ocupacion - 0.90) * 10_000.0;
+            if (ocupacion > 0.80) return 100.0 + (ocupacion - 0.80) * 1_000.0;
+            return 0.0;
+        }).sum();
     }
 
     private double costoSaturacionItinerario(
@@ -367,8 +376,9 @@ public class TabuSearch {
             Map<String, Integer> inventarioAcumulado
     ) {
         int cantidad = envio.getCantidadMaletas();
-        for (VueloInstanciado vuelo : itinerario.getVuelos()) {
-            inventarioAcumulado.merge(vuelo.getDestinoIata(), cantidad, Integer::sum);
+        List<VueloInstanciado> vuelos = itinerario.getVuelos();
+        for (int i = 0; i < vuelos.size() - 1; i++) {
+            inventarioAcumulado.merge(vuelos.get(i).getDestinoIata(), cantidad, Integer::sum);
         }
     }
 

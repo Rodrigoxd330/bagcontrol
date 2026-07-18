@@ -16,6 +16,7 @@ public class ItinerarioService {
     private static final int MAX_ESPERA_ESCALA_HORAS = 12;
     private static final int MAX_ITINERARIOS_POR_RUTA_POR_DIA = 200;
     private static final int MAX_ITINERARIOS_POR_RUTA_MIN = 500;
+    private static final double PROPORCION_ESCALAS_EN_RECORTE = 0.40;
 
     public Map<String, List<Itinerario>> generarItinerariosPorRuta(List<VueloInstanciado> vuelos) {
         long inicio = System.currentTimeMillis();
@@ -76,17 +77,88 @@ public class ItinerarioService {
                 diasInstanciados * MAX_ITINERARIOS_POR_RUTA_POR_DIA
         );
 
-        for (List<Itinerario> lista : itinerariosPorRuta.values()) {
-            lista.sort(Comparator.comparingDouble(PlanificadorUtils::calcularDuracionItinerarioHoras));
+        for (Map.Entry<String, List<Itinerario>> entry : itinerariosPorRuta.entrySet()) {
+            List<Itinerario> lista = entry.getValue();
+            lista.sort(Comparator
+                    .comparing(Itinerario::getFechaHoraSalidaUtc)
+                    .thenComparing(Itinerario::getFechaHoraLlegadaUtc)
+                    .thenComparingInt(Itinerario::getCantidadVuelos));
 
             if (lista.size() > maxItinerariosPorRuta) {
                 rutasRecortadas++;
                 itinerariosEliminadosPorRecorte += lista.size() - maxItinerariosPorRuta;
-                lista.subList(maxItinerariosPorRuta, lista.size()).clear();
+                entry.setValue(recortarConDiversidadTipoYTemporal(lista, maxItinerariosPorRuta));
             }
         }
 
         return itinerariosPorRuta;
+    }
+
+    private List<Itinerario> recortarConDiversidadTipoYTemporal(List<Itinerario> itinerarios, int limite) {
+        List<Itinerario> directos = itinerarios.stream()
+                .filter(itinerario -> itinerario.getCantidadVuelos() == 1)
+                .toList();
+        List<Itinerario> conEscala = itinerarios.stream()
+                .filter(itinerario -> itinerario.getCantidadVuelos() == 2)
+                .toList();
+
+        int cupoEscalas = Math.min(
+                conEscala.size(),
+                (int) Math.ceil(limite * PROPORCION_ESCALAS_EN_RECORTE)
+        );
+        int cupoDirectos = Math.min(directos.size(), limite - cupoEscalas);
+        List<Itinerario> seleccionados = new ArrayList<>(limite);
+        seleccionados.addAll(recortarConDiversidadTemporal(directos, cupoDirectos));
+        seleccionados.addAll(recortarConDiversidadTemporal(conEscala, cupoEscalas));
+
+        if (seleccionados.size() < limite) {
+            Set<Itinerario> incluidos = new HashSet<>(seleccionados);
+            List<Itinerario> restantes = itinerarios.stream()
+                    .filter(itinerario -> !incluidos.contains(itinerario))
+                    .toList();
+            seleccionados.addAll(recortarConDiversidadTemporal(restantes, limite - seleccionados.size()));
+        }
+        seleccionados.sort(Comparator
+                .comparing(Itinerario::getFechaHoraSalidaUtc)
+                .thenComparing(Itinerario::getFechaHoraLlegadaUtc)
+                .thenComparingInt(Itinerario::getCantidadVuelos));
+        return seleccionados;
+    }
+
+    private List<Itinerario> recortarConDiversidadTemporal(List<Itinerario> itinerarios, int limite) {
+        if (limite <= 0 || itinerarios.isEmpty()) {
+            return List.of();
+        }
+        Map<Instant, List<Itinerario>> porHoraSalida = new TreeMap<>();
+        for (Itinerario itinerario : itinerarios) {
+            Instant hora = itinerario.getFechaHoraSalidaUtc().truncatedTo(java.time.temporal.ChronoUnit.HOURS);
+            porHoraSalida.computeIfAbsent(hora, ignorado -> new ArrayList<>()).add(itinerario);
+        }
+        porHoraSalida.values().forEach(lista -> lista.sort(Comparator
+                .comparing(Itinerario::getFechaHoraLlegadaUtc)
+                .thenComparingInt(Itinerario::getCantidadVuelos)
+                .thenComparingDouble(PlanificadorUtils::calcularDuracionItinerarioHoras)));
+
+        List<Itinerario> seleccionados = new ArrayList<>(limite);
+        for (int ronda = 0; seleccionados.size() < limite; ronda++) {
+            boolean agrego = false;
+            for (List<Itinerario> hora : porHoraSalida.values()) {
+                if (ronda < hora.size()) {
+                    seleccionados.add(hora.get(ronda));
+                    agrego = true;
+                    if (seleccionados.size() == limite) {
+                        break;
+                    }
+                }
+            }
+            if (!agrego) {
+                break;
+            }
+        }
+        seleccionados.sort(Comparator
+                .comparing(Itinerario::getFechaHoraSalidaUtc)
+                .thenComparing(Itinerario::getFechaHoraLlegadaUtc));
+        return seleccionados;
     }
 
     private boolean conexionValida(VueloInstanciado primero, VueloInstanciado segundo) {

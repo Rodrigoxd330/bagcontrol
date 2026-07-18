@@ -16,12 +16,14 @@ import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.SolucionRuta;
 import pe.edu.pucp.inf.bagcontrol.planificacion.service.PlanificadorService;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.CancelacionVueloResponseDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioAlmacenDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioRutaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EscalaRutaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MaletaSimulacionDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionActivaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.VueloCancelableDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoVueloDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.LoteEventosDTO;
 
@@ -397,6 +399,19 @@ public class SimulacionManager {
         return obtenerJob(simulacionId).getState();
     }
 
+    public List<VueloCancelableDTO> listarVuelosCancelables(String simulacionId, Instant instanteSimulado) {
+        return obtenerJob(simulacionId).listarVuelosCancelables(instanteSimulado);
+    }
+
+    public CancelacionVueloResponseDTO cancelarProximaOcurrencia(
+            String simulacionId,
+            Long codigoVuelo,
+            Instant instanteSimulado,
+            String motivo
+    ) {
+        return obtenerJob(simulacionId).cancelarProximaOcurrencia(codigoVuelo, instanteSimulado, motivo);
+    }
+
     public List<EnvioDTO> extraerEnviosPorVuelo(String simulacionId, EventoVueloDTO vuelo, String timestamp) {
         SimulacionState state = obtenerState(simulacionId);
         long lote = calcularLoteSnapshot(state, timestamp);
@@ -437,12 +452,21 @@ public class SimulacionManager {
         }
 
         RutaAsignada asignacion = histSeguimiento.get(idPedido);
+        RutaAsignada asignacionVigente = state.getEnviosEnSeguimiento().get(idPedido);
+        boolean usarAsignacionVigente = asignacionVigente != null
+                && asignacionVigente.getItinerario() != null
+                && (asignacion == null || asignacion.getItinerario() == null);
+        if (usarAsignacionVigente) {
+            asignacion = asignacionVigente;
+        }
         if (asignacion == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND,
                     "No existe el envio en seguimiento: " + idPedido + " en el lote " + lote);
         }
 
-        boolean entregado = histEntregados != null && histEntregados.contains(idPedido);
+        boolean entregado = usarAsignacionVigente
+                ? state.getEnviosEntregados().contains(idPedido)
+                : histEntregados != null && histEntregados.contains(idPedido);
         String estado = entregado ? "ENTREGADO"
                 : asignacion.getItinerario() == null ? "SIN_ITINERARIO" : "EN_TRANSITO";
         List<EscalaRutaDTO> escalas = asignacion.getItinerario() == null
@@ -450,8 +474,9 @@ public class SimulacionManager {
                 : asignacion.getItinerario().getVuelos().stream()
                         .map(this::crearEscalaRuta)
                         .toList();
-        String aeropuertoActual = histUltimoAeropuerto != null
-                ? histUltimoAeropuerto.get(idPedido) : null;
+        String aeropuertoActual = usarAsignacionVigente
+                ? state.getUltimoAeropuertoPorEnvio().get(idPedido)
+                : histUltimoAeropuerto != null ? histUltimoAeropuerto.get(idPedido) : null;
 
         return new EnvioRutaDTO(
                 crearEnvioDTO(asignacion.getEnvio()),
@@ -495,6 +520,7 @@ public class SimulacionManager {
         if (histSeguimiento == null || histUltimoAeropuerto == null) return List.of();
 
         return histSeguimiento.values().stream()
+                .filter(asignacion -> !entregadosFinal.contains(asignacion.getEnvio().getIdPedido()))
                 .filter(asignacion -> codigoAeropuerto.equals(
                         histUltimoAeropuerto.get(asignacion.getEnvio().getIdPedido())
                 ))
