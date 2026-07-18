@@ -229,6 +229,7 @@ class SimulacionJobTest {
         state.getEnviosEnSeguimiento().put(
                 existente.getIdPedido(), new RutaAsignada(existente, new Itinerario(List.of(crearVuelo())), false)
         );
+        state.getUltimoAeropuertoPorEnvio().put(existente.getIdPedido(), "LIM");
         Envio nuevo = crearEnvio();
         nuevo.setIdPedido("NUEVO");
         nuevo.setFechaHora(LocalDateTime.of(2026, 7, 20, 9, 0));
@@ -485,6 +486,7 @@ class SimulacionJobTest {
         state.getEnviosEnSeguimiento().put(
                 envio.getIdPedido(), new RutaAsignada(envio, new Itinerario(List.of(vuelo)), false)
         );
+        state.getUltimoAeropuertoPorEnvio().put(envio.getIdPedido(), "LIM");
 
         SimulacionJob job = new SimulacionJob(
                 "sim-test",

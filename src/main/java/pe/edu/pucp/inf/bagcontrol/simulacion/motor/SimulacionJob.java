@@ -75,6 +75,7 @@ public class SimulacionJob implements Runnable {
     private final SimulacionStateMutator simulacionStateMutator;
     private final Map<String, Integer> maletasDespachadasPorVuelo = new java.util.concurrent.ConcurrentHashMap<>();
     private final Map<String, Set<String>> enviosDespachadosPorVuelo = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Set<String> aterrizajesProcesados = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final Set<String> vuelosDespachadosActualizados = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final Set<String> vuelosCanceladosManualmente = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final Set<String> enviosForzadosAReplanificar = java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -393,6 +394,7 @@ public class SimulacionJob implements Runnable {
             );
             state.getEnviosRegistrados().add(envio.getIdPedido());
             state.getUltimoAeropuertoPorEnvio().putIfAbsent(envio.getIdPedido(), envio.getOrigenIata());
+            state.getEnviosConUbicacionInconsistente().remove(envio.getIdPedido());
             if (enviosConCheckIn.add(envio.getIdPedido())) {
                 checkIns.add(asignacion);
             }
@@ -1030,6 +1032,8 @@ public class SimulacionJob implements Runnable {
             List<EventoBaseDTO> eventos
     ) {
         Envio envio = asignacion.getEnvio();
+        state.getUltimoAeropuertoPorEnvio().put(envio.getIdPedido(), envio.getOrigenIata());
+        state.getEnviosConUbicacionInconsistente().remove(envio.getIdPedido());
         return sumarInventarioYDetectarColapso(
                 envio.getOrigenIata(), envio.getCantidadMaletas(), horaEvento,
                 "ENTRADA", envio.getIdPedido(), null, eventos
@@ -1043,6 +1047,10 @@ public class SimulacionJob implements Runnable {
             boolean esPostergado
     ) {
         if (evento.getTipo() == TipoEvento.VUELO_DESPEGA) {
+            String claveVuelo = claveInstanciaVuelo(evento);
+            if (enviosDespachadosPorVuelo.containsKey(claveVuelo)) {
+                return Optional.empty();
+            }
             String origen = evento.getOrigenIata();
             int inventarioDisponible = state.getInventarioSnapshot().getOrDefault(origen, 0);
             if (evento.getCantidadMaletas() > inventarioDisponible) {
@@ -1062,6 +1070,10 @@ public class SimulacionJob implements Runnable {
             agregarEventoInventario(origen, horaEvento, eventos);
             return Optional.empty();
         } else if (evento.getTipo() == TipoEvento.VUELO_ATERRIZA) {
+            String claveVuelo = claveInstanciaVuelo(evento);
+            if (!aterrizajesProcesados.add(claveVuelo)) {
+                return Optional.empty();
+            }
             aplicarCargaRealDespachada(evento);
             String destino = evento.getDestinoIata();
             int entregadasEnDestino = registrarEntregasDirectas(evento, horaEvento);
@@ -1115,9 +1127,19 @@ public class SimulacionJob implements Runnable {
         int limiteVuelo = evento.getCapacidadMax() > 0 ? evento.getCapacidadMax() : Integer.MAX_VALUE;
         int cargaReal = Math.min(limiteVuelo, Math.max(inventarioDisponible, 0));
         Set<String> enviosEsperados = obtenerEnviosEsperadosEnVuelo(evento);
+        Set<String> enviosUbicacionDesconocida = enviosEsperados.stream()
+                .filter(id -> state.getUltimoAeropuertoPorEnvio().get(id) == null)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        if (!enviosUbicacionDesconocida.isEmpty()) {
+            state.getEnviosConUbicacionInconsistente().addAll(enviosUbicacionDesconocida);
+            conservarComoPendientesSinAlterarRuta(enviosUbicacionDesconocida);
+            System.err.println("[INCONSISTENCIA-UBICACION] envios=" + enviosUbicacionDesconocida.size()
+                    + " accion=NO_PROCESAR");
+        }
         Set<String> enviosCargados = seleccionarEnviosCargados(evento, cargaReal);
         Set<String> enviosNoCargados = new LinkedHashSet<>(enviosEsperados);
         enviosNoCargados.removeAll(enviosCargados);
+        enviosNoCargados.removeAll(enviosUbicacionDesconocida);
         marcarEnviosParaReplanificar(enviosNoCargados, "NO_ABORDO_VUELO");
         int maletasCargadas = enviosCargados.stream()
                 .map(state.getEnviosEnSeguimiento()::get)
@@ -1130,6 +1152,17 @@ public class SimulacionJob implements Runnable {
         evento.setCodigoEnvios(new ArrayList<>(enviosCargados));
         vuelosDespachadosActualizados.add(clave);
         return maletasCargadas;
+    }
+
+    private synchronized void conservarComoPendientesSinAlterarRuta(Set<String> idsPedidos) {
+        Map<String, Envio> pendientes = new LinkedHashMap<>();
+        state.getEnviosPendientes().forEach(envio -> pendientes.put(envio.getIdPedido(), envio));
+        idsPedidos.stream()
+                .map(state.getEnviosEnSeguimiento()::get)
+                .filter(Objects::nonNull)
+                .map(RutaAsignada::getEnvio)
+                .forEach(envio -> pendientes.put(envio.getIdPedido(), envio));
+        state.setEnviosPendientes(new ArrayList<>(pendientes.values()));
     }
 
     private Set<String> seleccionarEnviosCargados(EventoVueloDTO evento, int cargaMaxima) {
@@ -1327,6 +1360,7 @@ public class SimulacionJob implements Runnable {
                 ));
         List<Envio> pendientesParaPlanificar = state.getEnviosPendientes().stream()
                 .map(this::copiarEnvioDesdeUbicacionActual)
+                .filter(Objects::nonNull)
                 .toList();
         SolucionRuta solucion;
         if (contextoDatos == null) {
@@ -1362,9 +1396,13 @@ public class SimulacionJob implements Runnable {
     private Envio copiarEnvioDesdeUbicacionActual(Envio original) {
         Envio copia = new Envio();
         copia.setIdPedido(original.getIdPedido());
-        copia.setOrigenIata(state.getUltimoAeropuertoPorEnvio().getOrDefault(
-                original.getIdPedido(), original.getOrigenIata()
-        ));
+        String ubicacion = state.getUltimoAeropuertoPorEnvio().get(original.getIdPedido());
+        if (ubicacion == null) {
+            state.getEnviosConUbicacionInconsistente().add(original.getIdPedido());
+            System.err.println("[INCONSISTENCIA-UBICACION] envios=1 accion=OMITIR_REPLANIFICACION");
+            return null;
+        }
+        copia.setOrigenIata(ubicacion);
         copia.setDestinoIata(original.getDestinoIata());
         copia.setFechaHora(original.getFechaHora());
         copia.setCantidadMaletas(original.getCantidadMaletas());

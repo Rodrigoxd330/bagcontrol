@@ -42,6 +42,7 @@ public class SimulacionState {
     // ETA de la última ruta vigente por envío; permite comparar calidad entre tamaños de bloque.
     private Map<String, Long> minutosEntregaPlanificadaPorEnvio = new ConcurrentHashMap<>();
     private Map<String, String> ultimoAeropuertoPorEnvio = new ConcurrentHashMap<>();
+    private Set<String> enviosConUbicacionInconsistente = ConcurrentHashMap.newKeySet();
     private Map<String, AsignacionResumen> ultimaAsignacionPorEnvio = new ConcurrentHashMap<>();
     private long bloquesProcesados;
     private long tiempoPlanificacionBloquesMs;
@@ -123,6 +124,51 @@ public class SimulacionState {
             histUltimoAeropuertoPorEnvio.keySet().removeIf(k -> k <= umbral);
             histEnviosEnSeguimiento.keySet().removeIf(k -> k <= umbral);
         }
+    }
+
+    public synchronized void restaurarSnapshot(long lote) {
+        Map<String, RutaAsignada> seguimiento = histEnviosEnSeguimiento.get(lote);
+        Map<String, String> ubicaciones = histUltimoAeropuertoPorEnvio.get(lote);
+        Set<String> entregados = histEnviosEntregados.get(lote);
+        if (seguimiento == null || ubicaciones == null || entregados == null) {
+            throw new IllegalArgumentException("Snapshot inexistente: " + lote);
+        }
+        enviosEnSeguimiento = new ConcurrentHashMap<>(seguimiento);
+        ultimoAeropuertoPorEnvio = new ConcurrentHashMap<>(ubicaciones);
+        enviosEntregados = ConcurrentHashMap.newKeySet();
+        enviosEntregados.addAll(entregados);
+        reconstruirUbicacionesInequivocas();
+    }
+
+    public synchronized void reconstruirUbicacionesInequivocas() {
+        Instant referencia = tiempoActual == null ? null : tiempoActual.toInstant(java.time.ZoneOffset.UTC);
+        for (RutaAsignada asignacion : enviosEnSeguimiento.values()) {
+            Envio envio = asignacion.getEnvio();
+            String id = envio.getIdPedido();
+            if (ultimoAeropuertoPorEnvio.containsKey(id)) continue;
+            String inferida = inferirUbicacionInequivoca(asignacion, referencia);
+            if (inferida != null) {
+                ultimoAeropuertoPorEnvio.put(id, inferida);
+                enviosConUbicacionInconsistente.remove(id);
+            } else {
+                enviosConUbicacionInconsistente.add(id);
+            }
+        }
+    }
+
+    private String inferirUbicacionInequivoca(RutaAsignada asignacion, Instant referencia) {
+        Envio envio = asignacion.getEnvio();
+        if (enviosEntregados.contains(envio.getIdPedido())) return envio.getDestinoIata();
+        if (referencia == null || asignacion.getItinerario() == null
+                || asignacion.getItinerario().getVuelos().isEmpty()) return null;
+        var vuelos = asignacion.getItinerario().getVuelos();
+        if (referencia.isBefore(vuelos.get(0).getFechaHoraSalidaUtc())) return envio.getOrigenIata();
+        for (int i = vuelos.size() - 1; i >= 0; i--) {
+            var vuelo = vuelos.get(i);
+            if (!referencia.isBefore(vuelo.getFechaHoraLlegadaUtc())) return vuelo.getDestinoIata();
+            if (!referencia.isBefore(vuelo.getFechaHoraSalidaUtc())) return null; // en vuelo
+        }
+        return null;
     }
 
     public void registrarTiempoBloque(long planificacionMs, long totalMs, long saMs) {
