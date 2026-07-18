@@ -556,7 +556,7 @@ public class SimulacionJob implements Runnable {
         evento.setCapacidadMax(instancia.getCapacidadMax());
         webSocketPublisher.publicarLote(simulacionId, new LoteEventosDTO(
                 simulacionId, state.siguienteLote(), instanteRegistro.toString(), instanteRegistro.toString(),
-                1, List.of(evento), List.of(), saMs
+                1, List.of(evento), List.of(), saMs, versionPlan.get(), null
         ));
 
         return new CancelacionVueloResponseDTO(
@@ -1709,7 +1709,10 @@ public class SimulacionJob implements Runnable {
                 eventos.size(),
                 eventos,
                 envios,
-                saMs
+                saMs,
+                versionPlan.get(),
+                ventanaInicio != null && ventanaFin != null && !ventanaInicio.equals(ventanaFin)
+                        ? state.getBloquesProcesados() + 1L : null
         );
         state.setUltimoLoteEmitido(lote);
         webSocketPublisher.publicarLote(simulacionId, lote);
