@@ -6,6 +6,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import pe.edu.pucp.inf.bagcontrol.auth.AuthService;
 import pe.edu.pucp.inf.bagcontrol.auth.UsuarioSesion;
+import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioAlmacenDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioPorVueloRequestDTO;
@@ -13,8 +14,7 @@ import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.EnvioRutaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.MaletaSimulacionDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionActivaDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.SimulacionEstadoDTO;
-import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.LoteEventosDTO;
-import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoVueloDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.*;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.out.RespuestaInicioSimulacionDTO;
 
 import java.time.Instant;
@@ -22,8 +22,10 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 @RestController
 @RequestMapping("/api/simulacion")
@@ -33,6 +35,7 @@ public class SimulacionController {
     private static final String MODO_COLAPSO = "COLAPSO";
     private static final String MODO_NORMAL = "NORMAL";
     private static final String MODO_OPERACION_DIA = "OPERACION_DIA";
+    private final WebSocketPublisher publisher;
 
     private final SimulacionManager simulacionManager;
     private final AuthService authService;
@@ -176,6 +179,56 @@ public class SimulacionController {
             ) {
         List<EnvioDTO> envios = simulacionManager.extraerEnviosPorVuelo(simulacionId, request.getFlight(), request.getTimestamp());
         return envios;
+    }
+
+    @PostMapping("/{simulacionId}/vuelos/cancelar")
+    public Map<String,String> cancelarVuelo(
+            @PathVariable String simulacionId,
+            @RequestBody EnvioPorVueloRequestDTO request
+    ){
+        //NOTA: Vuelo cancelado ya se envio a front
+        SimulacionState state = simulacionManager.obtenerState(simulacionId);
+
+        List<EnvioDTO> envios = simulacionManager.extraerEnviosPorVuelo(simulacionId, request.getFlight(), request.getTimestamp());
+        //Encontrar vuelo y cancelarlo en historial de lotes (para otros clientes)
+        List<EventoBaseDTO> eventos = state.getUltimoLoteEmitido().getEventos();
+        for(EventoBaseDTO ev : eventos){
+            if(ev.getTipo() != TipoEvento.VUELO_DESPEGA && ev.getTipo() != TipoEvento.VUELO_ATERRIZA)continue;
+            EventoVueloDTO evVuelo = (EventoVueloDTO)ev;
+            boolean found = (Objects.equals(evVuelo.claveInstanciaVuelo(), request.getFlight().claveInstanciaVuelo()));
+            EventoVueloDTO cancelado = (new SimulacionEventosFactory(null))
+                    .crearEventoVuelo(evVuelo.toVueloInstanciado(),TipoEvento.VUELO_CANCELADO);
+            if(found) {
+                eventos.remove(ev);
+                System.out.println("Evento a cancelar encontrado: "+evVuelo.getCodigoVuelo());
+                eventos.add(cancelado);
+                publisher.publicarLote(simulacionId,new LoteEventosDTO(
+                        simulacionId,
+                        state.siguienteLote(),
+                        Instant.now().toString(),
+                        Instant.now().toString(),
+                        1,
+                        List.of(cancelado),
+                        List.of()
+                ));
+                break;
+            }
+        }
+        //Tomar envios de vuelo, reprogramarlos para inicio de siguiente ventana y reinsertarlos
+        List<Envio> enviosPendientes = new ArrayList<>(state.getEnviosPendientes());
+        enviosPendientes.addAll(envios.stream().map((dto)-> new Envio(
+                dto.getIdPedido(),
+                dto.getOrigenIata(),
+                dto.getDestinoIata(),
+                LocalDateTime.parse(dto.getFechaHora()),
+                dto.getCantidadMaletas(),
+                dto.getIdCliente(),
+                true,
+                dto.isEsOperacionDia()
+        )
+        ).toList());
+        state.setEnviosPendientes(enviosPendientes);
+        return Map.of("mensaje", "Vuelo cancelado");
     }
 
     @GetMapping("/{simulacionId}/envios/{idPedido}/ruta")
