@@ -51,6 +51,11 @@ public class MetricasPlanificacionBloque {
     private int enviosConDirectaQueUsaronEscala;
     private int enviosSinDirectaResueltosConEscala;
     private long generacionEscalasMs;
+    private int escalasDominadasEliminadas;
+    private int escalasConservadas;
+    private int candidatosAntesPoda;
+    private int candidatosDespuesPoda;
+    private long tiempoPodaEscalasMs;
     private boolean timeoutAlcanzado;
     private boolean deadlineAlcanzado;
     private String faseDeadline;
@@ -88,6 +93,13 @@ public class MetricasPlanificacionBloque {
     }
 
     public void sumarGeneracionEscalasMs(long valor) { generacionEscalasMs += Math.max(0, valor); }
+    public void registrarPodaEscalas(int eliminadas, int conservadas, int antes, int despues, long tiempoMs) {
+        escalasDominadasEliminadas = Math.max(0, eliminadas);
+        escalasConservadas = Math.max(0, conservadas);
+        candidatosAntesPoda = Math.max(0, antes);
+        candidatosDespuesPoda = Math.max(0, despues);
+        tiempoPodaEscalasMs = Math.max(0, tiempoMs);
+    }
     public void registrarDeadlineAlcanzado(String fase) {
         deadlineAlcanzado = true;
         timeoutAlcanzado = true;

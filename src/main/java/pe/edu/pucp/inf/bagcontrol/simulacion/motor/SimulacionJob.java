@@ -1705,7 +1705,8 @@ public class SimulacionJob implements Runnable {
                         + "directosAntesRecorte=%d escalasAntesRecorte=%d directosDescartados=%d "
                         + "escalasDescartadas=%d conDirectaUsaronEscala=%d sinDirectaResueltosEscala=%d "
                         + "generacionEscalasMs=%d timeout=%s deadlineAlcanzado=%s faseDeadline=%s "
-                        + "enviosNoProcesados=%d mejorFitness=%.4f%n",
+                        + "enviosNoProcesados=%d mejorFitness=%.4f escalasDominadas=%d escalasConservadas=%d "
+                        + "candidatosAntesPoda=%d candidatosDespuesPoda=%d tiempoPodaMs=%d%n",
                 metricas.getNumeroLote(), metricas.getK(), metricas.getSaMs(),
                 metricas.getTiempoSimuladoInicio(), metricas.getTiempoSimuladoFin(),
                 metricas.getInicioRealCalculo(), metricas.getFinRealCalculo(), metricas.getInicioEspera(),
@@ -1723,7 +1724,10 @@ public class SimulacionJob implements Runnable {
                 metricas.getEnviosConDirectaQueUsaronEscala(), metricas.getEnviosSinDirectaResueltosConEscala(),
                 metricas.getGeneracionEscalasMs(),
                 metricas.isTimeoutAlcanzado(), metricas.isDeadlineAlcanzado(), metricas.getFaseDeadline(),
-                metricas.getEnviosNoProcesados(), metricas.getMejorFitnessConocido()
+                metricas.getEnviosNoProcesados(), metricas.getMejorFitnessConocido(),
+                metricas.getEscalasDominadasEliminadas(), metricas.getEscalasConservadas(),
+                metricas.getCandidatosAntesPoda(), metricas.getCandidatosDespuesPoda(),
+                metricas.getTiempoPodaEscalasMs()
         );
             PlanificacionInstrumentacion.limpiar();
             DeadlinePlanificacion.limpiar();

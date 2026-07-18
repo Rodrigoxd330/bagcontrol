@@ -75,6 +75,11 @@ public class ItinerarioService {
         }
         long tiempoGeneracionEscalasMs = System.currentTimeMillis() - inicioGeneracionEscalas;
 
+        int candidatosAntesPoda = itinerariosPorRuta.values().stream().mapToInt(List::size).sum();
+        long inicioPoda = System.currentTimeMillis();
+        int escalasDominadasEliminadas = podarEscalasDominadas(itinerariosPorRuta);
+        long tiempoPodaMs = System.currentTimeMillis() - inicioPoda;
+
         int totalAntesRecorte = itinerariosPorRuta.values().stream().mapToInt(List::size).sum();
         int diasInstanciados = Math.max(1, (int) vuelos.stream()
                 .map(v -> v.getFechaHoraSalida().toLocalDate())
@@ -114,8 +119,52 @@ public class ItinerarioService {
             metricas.registrarRecorteCandidatos(
                     itinerariosDirectos, itinerariosConEscala, directosRetenidos, escalasRetenidas);
             metricas.sumarGeneracionEscalasMs(tiempoGeneracionEscalasMs);
+            metricas.registrarPodaEscalas(
+                    escalasDominadasEliminadas, escalasRetenidas, candidatosAntesPoda,
+                    directosRetenidos + escalasRetenidas, tiempoPodaMs);
         }
         return itinerariosPorRuta;
+    }
+
+    private int podarEscalasDominadas(Map<String, List<Itinerario>> itinerariosPorRuta) {
+        int eliminadas = 0;
+        for (Map.Entry<String, List<Itinerario>> entry : itinerariosPorRuta.entrySet()) {
+            List<Itinerario> todos = entry.getValue();
+            List<Itinerario> directos = todos.stream()
+                    .filter(itinerario -> itinerario.getCantidadVuelos() == 1)
+                    .filter(this::tieneCapacidadResidual)
+                    .filter(itinerario -> !itinerario.contieneVueloCancelado())
+                    .toList();
+            if (directos.isEmpty()) continue;
+            List<Itinerario> conservados = new ArrayList<>(todos.size());
+            for (Itinerario candidato : todos) {
+                boolean dominada = candidato.getCantidadVuelos() > 1 && directos.stream()
+                        .anyMatch(directa -> domina(directa, candidato));
+                if (dominada) eliminadas++; else conservados.add(candidato);
+            }
+            conservados.sort(ordenCalidadCandidatos());
+            entry.setValue(conservados);
+        }
+        return eliminadas;
+    }
+
+    private boolean domina(Itinerario directa, Itinerario escala) {
+        return directa.getOrigenIata().equals(escala.getOrigenIata())
+                && directa.getDestinoIata().equals(escala.getDestinoIata())
+                && !directa.getFechaHoraSalidaUtc().isBefore(escala.getFechaHoraSalidaUtc())
+                && !directa.getFechaHoraLlegadaUtc().isAfter(escala.getFechaHoraLlegadaUtc());
+    }
+
+    private boolean tieneCapacidadResidual(Itinerario itinerario) {
+        VueloInstanciado vuelo = itinerario.getVuelos().get(0);
+        return vuelo.getOcupacionActual() < vuelo.getCapacidadMax();
+    }
+
+    private Comparator<Itinerario> ordenCalidadCandidatos() {
+        return Comparator.comparing(Itinerario::getFechaHoraLlegadaUtc)
+                .thenComparingInt(Itinerario::getCantidadVuelos)
+                .thenComparingDouble(PlanificadorUtils::calcularDuracionItinerarioHoras)
+                .thenComparing(Itinerario::getFechaHoraSalidaUtc);
     }
 
     private List<Itinerario> recortarConDiversidadTipoYTemporal(List<Itinerario> itinerarios, int limite) {
