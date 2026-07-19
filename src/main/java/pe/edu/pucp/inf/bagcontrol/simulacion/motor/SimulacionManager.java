@@ -512,19 +512,36 @@ public class SimulacionManager {
     public List<EnvioAlmacenDTO> obtenerEnviosPorAlmacen(String simulacionId, String codigoAeropuerto, String timestamp) {
         SimulacionState state = obtenerState(simulacionId);
         long lote = calcularLoteSnapshot(state, timestamp);
+        boolean usarEstadoVigente = esLoteEnCurso(state, timestamp);
 
-        Map<String, RutaAsignada> histSeguimiento = state.getHistEnviosEnSeguimiento().get(lote);
-        Map<String, String> histUltimoAeropuerto = state.getHistUltimoAeropuertoPorEnvio().get(lote);
-        Set<String> histEntregados = state.getHistEnviosEntregados().get(lote);
-        final Set<String> entregadosFinal = histEntregados != null ? histEntregados : Set.of();
+        Map<String, RutaAsignada> seguimiento;
+        Map<String, String> ultimoAeropuerto;
+        Set<String> entregados;
 
-        if (histSeguimiento == null || histUltimoAeropuerto == null) return List.of();
+        if (usarEstadoVigente) {
+            // El lote solicitado aun no fue cerrado/publicado: usamos las estructuras
+            // en vivo (las mismas que alimentan el estado que se emite por websocket)
+            // para que esta tabla coincida con la capacidad de almacen mostrada en vivo.
+            seguimiento = state.getEnviosEnSeguimiento();
+            ultimoAeropuerto = state.getUltimoAeropuertoPorEnvio();
+            entregados = state.getEnviosEntregados();
+        } else {
+            seguimiento = state.getHistEnviosEnSeguimiento().get(lote);
+            ultimoAeropuerto = state.getHistUltimoAeropuertoPorEnvio().get(lote);
+            Set<String> histEntregados = state.getHistEnviosEntregados().get(lote);
+            entregados = histEntregados != null ? histEntregados : Set.of();
+        }
 
-        return histSeguimiento.values().stream()
+        if (seguimiento == null || ultimoAeropuerto == null) return List.of();
+        final Set<String> entregadosFinal = entregados;
+        final Instant referencia = Instant.parse(timestamp);
+
+        return seguimiento.values().stream()
                 .filter(asignacion -> !entregadosFinal.contains(asignacion.getEnvio().getIdPedido()))
                 .filter(asignacion -> codigoAeropuerto.equals(
-                        histUltimoAeropuerto.get(asignacion.getEnvio().getIdPedido())
+                        ultimoAeropuerto.get(asignacion.getEnvio().getIdPedido())
                 ))
+                .filter(asignacion -> !estaEnVueloAhora(asignacion, referencia))
                 .sorted(Comparator.comparing(asignacion -> asignacion.getEnvio().getIdPedido()))
                 .map(asignacion -> {
                     Envio envio = asignacion.getEnvio();
@@ -535,6 +552,37 @@ public class SimulacionManager {
                     return new EnvioAlmacenDTO(crearEnvioDTO(envio), codigoAeropuerto, tipoAlmacen, estado);
                 })
                 .toList();
+    }
+
+    // El 'ultimoAeropuertoPorEnvio' solo se actualiza al ATERRIZAR, no al despegar.
+    // Mientras un envio esta en pleno vuelo, sigue figurando como si estuviera en
+    // el aeropuerto de origen de ese tramo. Aqui detectamos ese caso puntual para
+    // no contarlo como 'en almacen' (ya no esta fisicamente ahi).
+    private boolean estaEnVueloAhora(RutaAsignada asignacion, Instant referencia) {
+        if (referencia == null || asignacion.getItinerario() == null) return false;
+        for (var vuelo : asignacion.getItinerario().getVuelos()) {
+            Instant salida = vuelo.getFechaHoraSalidaUtc();
+            Instant llegada = vuelo.getFechaHoraLlegadaUtc();
+            if (salida != null && llegada != null
+                    && !referencia.isBefore(salida) && referencia.isBefore(llegada)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // El lote calculado (sin recortar al ultimo publicado) es el lote "real" al que
+    // pertenece el timestamp pedido. Si ese lote todavia no fue publicado como
+    // snapshot historico, significa que estamos consultando el presente (o el
+    // tramo del lote en curso), y ahi corresponde usar el estado en vivo.
+    private boolean esLoteEnCurso(SimulacionState state, String timestampIso) {
+        Instant ts = Instant.parse(timestampIso);
+        long minutos = Duration.between(
+                state.getFechaInicioSimulacion().toInstant(ZoneOffset.UTC), ts
+        ).toMinutes();
+        if (minutos < 0) return false;
+        long loteCalculado = (minutos / state.getKMinutos()) + 1;
+        return loteCalculado > state.getUltimoLoteSnapshot();
     }
 
     private EnvioAlmacenDTO crearEnvioAlmacenDTO(
