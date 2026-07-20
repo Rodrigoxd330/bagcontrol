@@ -37,6 +37,7 @@ class SimulacionManagerRutaTest {
                 envio.getIdPedido(), new RutaAsignada(envio, new Itinerario(List.of(crearVuelo(10L))), false)
         );
         state.getUltimoAeropuertoPorEnvio().put(envio.getIdPedido(), "LIM");
+        state.registrarEnvioEnAlmacen("LIM", envio.getIdPedido());
         state.guardarSnapshot();
         state.getEnviosEnSeguimiento().put(
                 envio.getIdPedido(),
@@ -54,6 +55,10 @@ class SimulacionManagerRutaTest {
         assertThat(ruta.getEscalas()).hasSize(1);
         assertThat(ruta.getEscalas().get(0).getCodigoVuelo()).isEqualTo(20L);
         assertThat(ruta.getAeropuertoActual()).isEqualTo("LIM");
+        assertThat(manager.obtenerEnviosPorAlmacen(
+                state.getSimulacionId(), "LIM", "2026-07-20T08:30:00Z"
+        )).singleElement().extracting(envioAlmacen -> envioAlmacen.getEnvio().getIdPedido())
+                .isEqualTo(envio.getIdPedido());
     }
 
     @SuppressWarnings("unchecked")

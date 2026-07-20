@@ -1100,6 +1100,7 @@ public class SimulacionJob implements Runnable {
         Envio envio = asignacion.getEnvio();
         state.getUltimoAeropuertoPorEnvio().put(envio.getIdPedido(), envio.getOrigenIata());
         state.getEnviosConUbicacionInconsistente().remove(envio.getIdPedido());
+        state.registrarEnvioEnAlmacen(envio.getOrigenIata(), envio.getIdPedido());
         return sumarInventarioYDetectarColapso(
                 envio.getOrigenIata(), envio.getCantidadMaletas(), horaEvento,
                 "ENTRADA", envio.getIdPedido(), null, eventos
@@ -1144,6 +1145,7 @@ public class SimulacionJob implements Runnable {
             String destino = evento.getDestinoIata();
             int entregadasEnDestino = registrarEntregasDirectas(evento, horaEvento);
             actualizarUbicacionTrasLlegada(evento);
+            registrarLlegadasEnAlmacen(evento, destino);
             int maletasParaAlmacenar = evento.getCantidadMaletas() - entregadasEnDestino;
             if (maletasParaAlmacenar <= 0) {
                 agregarEventoInventario(destino, horaEvento, eventos);
@@ -1215,6 +1217,12 @@ public class SimulacionJob implements Runnable {
         String clave = claveInstanciaVuelo(evento);
         maletasDespachadasPorVuelo.put(clave, maletasCargadas);
         enviosDespachadosPorVuelo.put(clave, enviosCargados);
+        enviosCargados.forEach(idPedido -> {
+            RutaAsignada asignacion = state.getEnviosEnSeguimiento().get(idPedido);
+            if (asignacion != null) {
+                state.retirarEnvioDeAlmacen(evento.getOrigenIata(), idPedido);
+            }
+        });
         evento.setCodigoEnvios(new ArrayList<>(enviosCargados));
         vuelosDespachadosActualizados.add(clave);
         return maletasCargadas;
@@ -1337,6 +1345,19 @@ public class SimulacionJob implements Runnable {
         );
     }
 
+    private void registrarLlegadasEnAlmacen(EventoVueloDTO evento, String destino) {
+        Set<String> enviosDespachados = enviosDespachadosPorVuelo.getOrDefault(
+                claveInstanciaVuelo(evento), Set.of()
+        );
+        for (String idPedido : enviosDespachados) {
+            if (state.getEnviosEntregados().contains(idPedido)) continue;
+            RutaAsignada asignacion = state.getEnviosEnSeguimiento().get(idPedido);
+            if (asignacion != null) {
+                state.registrarEnvioEnAlmacen(destino, idPedido);
+            }
+        }
+    }
+
     private static String claveInstanciaVuelo(EventoVueloDTO evento) {
         return claveInstanciaVuelo(evento.getCodigoVuelo(), evento.getHoraSalidaUtc());
     }
@@ -1360,6 +1381,7 @@ public class SimulacionJob implements Runnable {
                 }
                 String destino = asignacion.getEnvio().getDestinoIata();
                 simulacionStateMutator.restarMaletas(destino, asignacion.getEnvio().getCantidadMaletas());
+                state.retirarEnvioDeAlmacen(destino, idPedido);
                 agregarEventoInventario(destino, asignacion.getItinerario().getFechaHoraLlegadaUtc(), eventos);
                 state.getUltimoAeropuertoPorEnvio().put(idPedido, asignacion.getEnvio().getDestinoIata());
             }

@@ -415,20 +415,16 @@ public class SimulacionManager {
 
     public List<EnvioDTO> extraerEnviosPorVuelo(String simulacionId, EventoVueloDTO vuelo, String timestamp) {
         SimulacionState state = obtenerState(simulacionId);
-        long lote = calcularLoteSnapshot(state, timestamp);
-        Map<String, List<EnvioDTO>> enviosEnLote = state.getHistEnviosPorVuelo().get(lote);
-        if (enviosEnLote == null) return List.of();
         String key = vuelo.claveInstanciaVuelo();
-        if (!enviosEnLote.containsKey(key) && vuelo.getCantidadMaletas() > 0) {
+        if (!state.getEnviosPorVuelo().containsKey(key) && vuelo.getCantidadMaletas() > 0) {
             System.out.println("[MAP-KEY-MISSING] mapa=enviosPorVuelo key=" + key
                     + " idSimulacion=" + simulacionId
-                    + " lote=" + lote
                     + " vuelo=" + vuelo.getCodigoVuelo()
                     + " origen=" + vuelo.getOrigenIata()
                     + " destino=" + vuelo.getDestinoIata()
                     + " cantidadMaletas=" + vuelo.getCantidadMaletas());
         }
-        return enviosEnLote.getOrDefault(key, List.of());
+        return state.getEnviosPorVuelo().getOrDefault(key, List.of());
     }
 
     public SolucionRuta obtenerPlanCompleto(String simulacionId) {
@@ -515,39 +511,30 @@ public class SimulacionManager {
         boolean usarEstadoVigente = esLoteEnCurso(state, timestamp);
 
         Map<String, RutaAsignada> seguimiento;
-        Map<String, String> ultimoAeropuerto;
-        Set<String> entregados;
+        Map<String, String> aeropuertoFisicoPorEnvio;
 
         if (usarEstadoVigente) {
             // El lote solicitado aun no fue cerrado/publicado: usamos las estructuras
             // en vivo (las mismas que alimentan el estado que se emite por websocket)
             // para que esta tabla coincida con la capacidad de almacen mostrada en vivo.
             seguimiento = state.getEnviosEnSeguimiento();
-            ultimoAeropuerto = state.getUltimoAeropuertoPorEnvio();
-            entregados = state.getEnviosEntregados();
+            aeropuertoFisicoPorEnvio = state.getAeropuertoFisicoPorEnvio();
         } else {
             seguimiento = state.getHistEnviosEnSeguimiento().get(lote);
-            ultimoAeropuerto = state.getHistUltimoAeropuertoPorEnvio().get(lote);
-            Set<String> histEntregados = state.getHistEnviosEntregados().get(lote);
-            entregados = histEntregados != null ? histEntregados : Set.of();
+            aeropuertoFisicoPorEnvio = state.getHistAeropuertoFisicoPorEnvio().get(lote);
         }
 
-        if (seguimiento == null || ultimoAeropuerto == null) return List.of();
-        final Set<String> entregadosFinal = entregados;
-        final Instant referencia = Instant.parse(timestamp);
+        if (seguimiento == null || aeropuertoFisicoPorEnvio == null) return List.of();
 
-        return seguimiento.values().stream()
-                .filter(asignacion -> !entregadosFinal.contains(asignacion.getEnvio().getIdPedido()))
-                .filter(asignacion -> codigoAeropuerto.equals(
-                        ultimoAeropuerto.get(asignacion.getEnvio().getIdPedido())
-                ))
-                .filter(asignacion -> !estaEnVueloAhora(asignacion, referencia))
+        return aeropuertoFisicoPorEnvio.entrySet().stream()
+                .filter(entry -> codigoAeropuerto.equals(entry.getValue()))
+                .map(Map.Entry::getKey)
+                .map(seguimiento::get)
+                .filter(Objects::nonNull)
                 .sorted(Comparator.comparing(asignacion -> asignacion.getEnvio().getIdPedido()))
                 .map(asignacion -> {
                     Envio envio = asignacion.getEnvio();
-                    String estado = entregadosFinal.contains(envio.getIdPedido())
-                            ? "ENTREGADO"
-                            : asignacion.getItinerario() == null ? "SIN_ITINERARIO" : "EN_ALMACEN";
+                    String estado = asignacion.getItinerario() == null ? "SIN_ITINERARIO" : "EN_ALMACEN";
                     String tipoAlmacen = codigoAeropuerto.equals(envio.getDestinoIata()) ? "DESTINO_FINAL" : "TRANSITO";
                     return new EnvioAlmacenDTO(crearEnvioDTO(envio), codigoAeropuerto, tipoAlmacen, estado);
                 })

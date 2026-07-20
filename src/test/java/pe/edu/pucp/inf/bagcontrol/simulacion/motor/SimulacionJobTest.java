@@ -202,18 +202,18 @@ class SimulacionJobTest {
     }
 
     @Test
-    void conservaSoloLosCuatroSnapshotsMasRecientes() {
+    void conservaSoloLosTresSnapshotsMasRecientes() {
         SimulacionState state = new SimulacionState("sim-snapshots");
 
         for (int i = 0; i < 6; i++) {
             state.guardarSnapshot();
         }
 
-        assertThat(state.getHistEnviosEnSeguimiento()).hasSize(4);
-        assertThat(state.getHistEnviosEnSeguimiento().keySet()).containsExactlyInAnyOrder(3L, 4L, 5L, 6L);
-        assertThat(state.getHistEnviosPorVuelo()).hasSize(4);
-        assertThat(state.getHistEnviosEntregados()).hasSize(4);
-        assertThat(state.getHistUltimoAeropuertoPorEnvio()).hasSize(4);
+        assertThat(state.getHistEnviosEnSeguimiento()).hasSize(3);
+        assertThat(state.getHistEnviosEnSeguimiento().keySet()).containsExactlyInAnyOrder(4L, 5L, 6L);
+        assertThat(state.getHistEnviosEntregados()).hasSize(3);
+        assertThat(state.getHistUltimoAeropuertoPorEnvio()).hasSize(3);
+        assertThat(state.getHistAeropuertoFisicoPorEnvio()).hasSize(3);
     }
 
     @Test

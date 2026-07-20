@@ -26,6 +26,8 @@ public class SimulacionState {
 
     //Parece que se confunde con aeropuertosSnpashot -> revisar
     private Map<String, Integer> inventarioSnapshot = new ConcurrentHashMap<>();
+    // Cada envío completo se encuentra en un único aeropuerto o en vuelo.
+    private Map<String, String> aeropuertoFisicoPorEnvio = new ConcurrentHashMap<>();
     private SolucionRuta solucionActual;
 
     //Envíos de cada vuelo (generada a partir de la solución del planificador)
@@ -74,10 +76,10 @@ public class SimulacionState {
     private DetalleColapsoDTO detalleColapso;
 
     // --- Historial por lote ---
-    private final Map<Long, Map<String, List<EnvioDTO>>> histEnviosPorVuelo = new ConcurrentHashMap<>();
     private final Map<Long, Set<String>> histEnviosEntregados = new ConcurrentHashMap<>();
     private final Map<Long, Map<String, String>> histUltimoAeropuertoPorEnvio = new ConcurrentHashMap<>();
     private final Map<Long, Map<String, RutaAsignada>> histEnviosEnSeguimiento = new ConcurrentHashMap<>();
+    private final Map<Long, Map<String, String>> histAeropuertoFisicoPorEnvio = new ConcurrentHashMap<>();
     private final AtomicLong ultimoLoteSnapshot = new AtomicLong(0);
 
     public SimulacionState(String simulacionId) {
@@ -111,19 +113,29 @@ public class SimulacionState {
     public void guardarSnapshot() {
         long loteNum = siguienteLoteSnapshot();
 
-        histEnviosPorVuelo.put(loteNum, new TreeMap<>(enviosPorVuelo));
         histEnviosEntregados.put(loteNum, new HashSet<>(enviosEntregados));
         histUltimoAeropuertoPorEnvio.put(loteNum, new HashMap<>(ultimoAeropuertoPorEnvio));
         histEnviosEnSeguimiento.put(loteNum, new HashMap<>(enviosEnSeguimiento));
+        histAeropuertoFisicoPorEnvio.put(loteNum, new HashMap<>(aeropuertoFisicoPorEnvio));
 
-        // Mantener el lote visible, el preparado y dos lotes de margen para reconexión.
-        long umbral = loteNum - 4;
+        // Mantener el lote visible, el preparado y un lote de margen para reconexión.
+        long umbral = loteNum - 3;
         if (umbral > 0) {
-            histEnviosPorVuelo.keySet().removeIf(k -> k <= umbral);
             histEnviosEntregados.keySet().removeIf(k -> k <= umbral);
             histUltimoAeropuertoPorEnvio.keySet().removeIf(k -> k <= umbral);
             histEnviosEnSeguimiento.keySet().removeIf(k -> k <= umbral);
+            histAeropuertoFisicoPorEnvio.keySet().removeIf(k -> k <= umbral);
         }
+    }
+
+    public void registrarEnvioEnAlmacen(String codigoAeropuerto, String idPedido) {
+        if (codigoAeropuerto == null || idPedido == null) return;
+        aeropuertoFisicoPorEnvio.put(idPedido, codigoAeropuerto);
+    }
+
+    public void retirarEnvioDeAlmacen(String codigoAeropuerto, String idPedido) {
+        if (codigoAeropuerto == null || idPedido == null) return;
+        aeropuertoFisicoPorEnvio.remove(idPedido, codigoAeropuerto);
     }
 
     public synchronized void restaurarSnapshot(long lote) {
@@ -137,6 +149,9 @@ public class SimulacionState {
         ultimoAeropuertoPorEnvio = new ConcurrentHashMap<>(ubicaciones);
         enviosEntregados = ConcurrentHashMap.newKeySet();
         enviosEntregados.addAll(entregados);
+        aeropuertoFisicoPorEnvio = new ConcurrentHashMap<>(
+                histAeropuertoFisicoPorEnvio.getOrDefault(lote, Map.of())
+        );
         reconstruirUbicacionesInequivocas();
     }
 
