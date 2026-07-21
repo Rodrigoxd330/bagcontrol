@@ -284,6 +284,7 @@ public class SimulacionJob implements Runnable {
             registrarEventosReplanificacion(solucion, eventosBatch, ventanaInicio, ciclo);
 
             long planMs = finPlanificacion - inicioPlanificacion;
+            planificacionActiva.set(false);
             // --- FASE 4: MUTACIÓN FÍSICA E INDEXACIÓN DEL ESTADO ---
             long inicioAlistamientoEventos = System.currentTimeMillis();
             List<RutaAsignada> checkInsPendientes = registrarEnviosNuevos(solucion);
@@ -312,10 +313,10 @@ public class SimulacionJob implements Runnable {
                         ciclo, ventanaInicio, ventanaFin, solucion, colapsoCapacidad.get(), eventosBatch
                 );
             }
-            marcarEnviosEntregadosHasta(
+            /*marcarEnviosEntregadosHasta(
                     instanteColapso != null ? instanteColapso : ventanaFinUtc,
                     eventosBatch
-            );
+            );*/
             agregarAlertasAeropuertosSaturados(eventosBatch);
             eventosBatch.removeIf(evento -> evento instanceof EventoVueloDTO vuelo
                     && (vuelo.getTipo() == TipoEvento.VUELO_DESPEGA
@@ -352,7 +353,7 @@ public class SimulacionJob implements Runnable {
                 planificacionActiva.set(false);
                 throw new IllegalStateException("Ya existe un bloque preparado para " + simulacionId);
             }
-            planificacionActiva.set(false);
+            //planificacionActiva.set(false);
 
             if (cancelacionCooperativaSolicitada.get() || versionCalculo != versionPlan.get()) {
                 invalidarYDescartarPreparado(preparado, "VERSION_PLAN_CAMBIO_DURANTE_CALCULO");
@@ -1258,6 +1259,11 @@ public class SimulacionJob implements Runnable {
             enviosCargados.add(asignacion.getEnvio().getIdPedido());
             restante -= cantidad;
         }
+        if(asignaciones.size()!=enviosCargados.size()){
+            System.out.println("[REPLANIF-VUELO] asignaciones = "+asignaciones.size()
+                    +", enviosCargados = "+enviosCargados.size()
+                    + "");
+        }
         return enviosCargados;
     }
 
@@ -1380,7 +1386,7 @@ public class SimulacionJob implements Runnable {
                     continue;
                 }
                 String destino = asignacion.getEnvio().getDestinoIata();
-                simulacionStateMutator.restarMaletas(destino, asignacion.getEnvio().getCantidadMaletas());
+                //simulacionStateMutator.restarMaletas(destino, asignacion.getEnvio().getCantidadMaletas());
                 state.retirarEnvioDeAlmacen(destino, idPedido);
                 agregarEventoInventario(destino, asignacion.getItinerario().getFechaHoraLlegadaUtc(), eventos);
                 state.getUltimoAeropuertoPorEnvio().put(idPedido, asignacion.getEnvio().getDestinoIata());

@@ -161,6 +161,7 @@ public class PlanificadorUtils {
                     candidatas, cuotaPorEnvio
             );
 
+
             for (Itinerario itinerarioNuevo : alternativas) {
                 Movimiento movimiento = new Movimiento(envio, itinerarioActual, itinerarioNuevo);
                 double alivio = presionRuta(itinerarioActual, presionAeropuertos)

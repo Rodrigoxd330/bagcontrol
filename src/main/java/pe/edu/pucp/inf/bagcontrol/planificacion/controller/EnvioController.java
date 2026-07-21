@@ -43,18 +43,25 @@ public class EnvioController {
             @RequestBody NuevoEnvioDTO dto,
             @RequestHeader(value = "Authorization", required = false) String authorization
     ) {
-        String origenIata = resolverOrigenDesdeSesion(authorization);
-        if (origenIata == null) {
-            return ResponseEntity.badRequest().build();
-        }
-        dto.setOrigenIata(origenIata);
+        try{
+            String origenIata = resolverOrigenDesdeSesion(authorization);
+            if (origenIata == null) {
+                System.out.println("ERROR: Origen no encontrado");
+                return ResponseEntity.badRequest().build();
+            }
+            dto.setOrigenIata(origenIata);
 
-        ResponseEntity<EnvioDTO> error = validar(dto);
-        if (error != null) {
-            return error;
+            ResponseEntity<EnvioDTO> error = validar(dto);
+            if (error != null) {
+                System.out.println(error.toString());
+                return error;
+            }
+            return ResponseEntity.status(HttpStatus.CREATED).body(toDto(envioCrudService.crear(dto)));
         }
-
-        return ResponseEntity.status(HttpStatus.CREATED).body(toDto(envioCrudService.crear(dto)));
+        catch(Exception e){
+            System.out.println(e.getMessage());
+            throw new RuntimeException(e);
+        }
     }
 
     @PutMapping("/api/envios/{idPedido}")

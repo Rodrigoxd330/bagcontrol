@@ -89,15 +89,20 @@ public class SimulacionController {
     public RespuestaInicioSimulacionDTO iniciarOperacionDia(
             @RequestHeader(value = "Authorization", required = false) String authorization
     ) {
-        // El reloj global de la simulacion trabaja en UTC; el frontend se encarga
-        // de convertir a la zona horaria del usuario para mostrar la hora local.
-        LocalDateTime ahora = LocalDateTime.now(java.time.ZoneOffset.UTC);
-        UsuarioSesion propietario = authService.resolverBearer(authorization);
-        String simulacionId = simulacionManager.crearYArrancarJob(
-                ahora, null, 1, "TABU", "0", propietario
-        );
-        String topic = "/topic/simulacion/" + simulacionId + "/eventos";
-        return new RespuestaInicioSimulacionDTO(simulacionId, topic, MODO_OPERACION_DIA);
+        try{
+            // El reloj global de la simulacion trabaja en UTC; el frontend se encarga
+            // de convertir a la zona horaria del usuario para mostrar la hora local.
+            LocalDateTime ahora = LocalDateTime.now(java.time.ZoneOffset.UTC);
+            UsuarioSesion propietario = authService.resolverBearer(authorization);
+            String simulacionId = simulacionManager.crearYArrancarJob(
+                    ahora, null, 1, "TABU", "0", propietario
+            );
+            String topic = "/topic/simulacion/" + simulacionId + "/eventos";
+            return new RespuestaInicioSimulacionDTO(simulacionId, topic, MODO_OPERACION_DIA);
+        } catch (Exception e) {
+            System.out.println(e.getMessage());
+            throw new RuntimeException(e);
+        }
     }
 
     private LocalDateTime parseFechaHoraFlexible(String valor) {

@@ -66,7 +66,7 @@ public class SimulacionManager {
         if (fechaInicio == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La fecha inicio es obligatoria.");
         }
-        if (k != 60 && k != 120 && k != 180) {
+        if (k != 1 && k != 60 && k != 120 && k != 180) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "K debe ser uno de los valores permitidos: 60, 120 o 180 minutos.");
         }
