@@ -81,12 +81,19 @@ public class SimulacionEventosFactory {
 
     public void fusionarEventoVuelo(EventoVueloDTO existente, EventoVueloDTO nuevo) {
         // Ambos eventos representan fotografias completas del mismo vuelo fisico. El evento
-        // futuro se regenera en cada bloque; sumarlo como delta duplicaba carga y envios.
+        // futuro se regenera en cada bloque; sumar maletas/estado como delta duplicaba carga.
+        // PERO codigoEnvios no puede reemplazarse: un envio que ya despacho su primer tramo y
+        // no necesita replanificacion deja de aparecer en la solucion de los bloques siguientes,
+        // asi que 'nuevo' solo trae los envios tocados en este bloque. Reemplazar la lista hacia
+        // que esos envios ya en viaje desaparecieran silenciosamente del evento de aterrizaje
+        // pospuesto, y el frontend nunca los marcaba como ENTREGADO aunque el backend si lo sabia.
         existente.setCantidadMaletas(nuevo.getCantidadMaletas());
         existente.setCapacidadMax(nuevo.getCapacidadMax());
         existente.setPorcentajeOcupacion(nuevo.getPorcentajeOcupacion());
         existente.setEstado(nuevo.getEstado());
-        existente.setCodigoEnvios(new ArrayList<>(nuevo.getCodigoEnvios()));
+        java.util.Set<String> enviosUnidos = new java.util.LinkedHashSet<>(existente.getCodigoEnvios());
+        enviosUnidos.addAll(nuevo.getCodigoEnvios());
+        existente.setCodigoEnvios(new ArrayList<>(enviosUnidos));
     }
 
     public EventoVueloDTO crearEventoVuelo(VueloInstanciado vuelo, TipoEvento tipoEvento) {

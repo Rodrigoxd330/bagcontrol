@@ -541,23 +541,6 @@ public class SimulacionManager {
                 .toList();
     }
 
-    // El 'ultimoAeropuertoPorEnvio' solo se actualiza al ATERRIZAR, no al despegar.
-    // Mientras un envio esta en pleno vuelo, sigue figurando como si estuviera en
-    // el aeropuerto de origen de ese tramo. Aqui detectamos ese caso puntual para
-    // no contarlo como 'en almacen' (ya no esta fisicamente ahi).
-    private boolean estaEnVueloAhora(RutaAsignada asignacion, Instant referencia) {
-        if (referencia == null || asignacion.getItinerario() == null) return false;
-        for (var vuelo : asignacion.getItinerario().getVuelos()) {
-            Instant salida = vuelo.getFechaHoraSalidaUtc();
-            Instant llegada = vuelo.getFechaHoraLlegadaUtc();
-            if (salida != null && llegada != null
-                    && !referencia.isBefore(salida) && referencia.isBefore(llegada)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     // El lote calculado (sin recortar al ultimo publicado) es el lote "real" al que
     // pertenece el timestamp pedido. Si ese lote todavia no fue publicado como
     // snapshot historico, significa que estamos consultando el presente (o el
