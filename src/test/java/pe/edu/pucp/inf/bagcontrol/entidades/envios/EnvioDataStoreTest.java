@@ -11,6 +11,52 @@ import static org.assertj.core.api.Assertions.assertThat;
 class EnvioDataStoreTest {
 
     @Test
+    void inventarioOperativoAislaAeropuertosSimulacionYDuplicados() {
+        EnvioDataStore store = new EnvioDataStore();
+        Envio spimA = envioOperativo("A", "SPIM", 2);
+        Envio spimB = envioOperativo("B", "SPIM", 1);
+        Envio sabe = envioOperativo("C", "SABE", 4);
+        Envio ekch = envioOperativo("D", "EKCH", 3);
+        Envio simulado = envioOperativo("SIM", "SPIM", 99);
+        simulado.setEsOperacionDia(false);
+
+        store.upsert(spimA);
+        store.upsert(spimB);
+        store.upsert(sabe);
+        store.upsert(ekch);
+        store.upsert(simulado);
+        store.upsert(spimA);
+
+        assertThat(store.obtenerEnviosOperativosEnAeropuerto("SPIM"))
+                .extracting(Envio::getIdPedido).containsExactly("A", "B");
+        assertThat(store.obtenerEnviosOperativosEnAeropuerto("SABE"))
+                .extracting(Envio::getIdPedido).containsExactly("C");
+        assertThat(store.obtenerEnviosOperativosEnAeropuerto("EKCH"))
+                .extracting(Envio::getIdPedido).containsExactly("D");
+        assertThat(store.obtenerEnviosOperativosEnAeropuerto("VACIO")).isEmpty();
+        assertThat(store.obtenerInventarioOperativoPorAeropuerto())
+                .doesNotContainKey("VACIO")
+                .allSatisfy((iata, envios) -> assertThat(envios)
+                        .allMatch(Envio::isEsOperacionDia));
+        assertThat(store.obtenerEnviosOperativosEnAeropuerto("SPIM").stream()
+                .mapToInt(Envio::getCantidadMaletas).sum()).isEqualTo(3);
+    }
+
+    @Test
+    void movimientoOperativoSoloCambiaLaProyeccionOperativa() {
+        EnvioDataStore store = new EnvioDataStore();
+        Envio envio = envioOperativo("A", "SPIM", 2);
+        store.upsert(envio);
+
+        store.moverEnvioOperativo("A", "SABE");
+
+        assertThat(store.obtenerEnviosOperativosEnAeropuerto("SPIM")).isEmpty();
+        assertThat(store.obtenerEnviosOperativosEnAeropuerto("SABE"))
+                .extracting(Envio::getIdPedido).containsExactly("A");
+        assertThat(envio.getOrigenIata()).isEqualTo("SPIM");
+    }
+
+    @Test
     void consumeSoloEnviosDesdeElInicioIncluidoHastaElFinExcluido() {
         EnvioDataStore store = new EnvioDataStore();
         Aeropuerto aeropuerto = new Aeropuerto();
@@ -86,6 +132,16 @@ class EnvioDataStoreTest {
         Envio envio = new Envio();
         envio.setIdPedido(id);
         envio.setFechaHora(fechaHora);
+        return envio;
+    }
+
+    private Envio envioOperativo(String id, String origen, int maletas) {
+        Envio envio = crearEnvio(id, LocalDateTime.of(2026, 7, 21, 17, 0));
+        envio.setOrigenIata(origen);
+        envio.setDestinoIata("DEST");
+        envio.setCantidadMaletas(maletas);
+        envio.setActivo(true);
+        envio.setEsOperacionDia(true);
         return envio;
     }
 }

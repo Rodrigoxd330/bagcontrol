@@ -42,6 +42,7 @@ public class EnvioDataStore {
     private final NavigableMap<LocalDate, RangoDia> indicePorDia = new TreeMap<>();
     private final Map<String, AtomicInteger> contadorManualPorOrigen = new ConcurrentHashMap<>();
     private final Map<String, Envio> enviosCrudPorId = new ConcurrentHashMap<>();
+    private final Map<String, String> aeropuertoOperativoPorEnvio = new ConcurrentHashMap<>();
     private final Map<String,LocalDateTime> fechasCacheadas = new ConcurrentHashMap<>(); //Value = ultima fecha de acceso
     private final Set<String> enviosEliminados = ConcurrentHashMap.newKeySet();
     private EnvioRepository envioRepository;
@@ -85,9 +86,13 @@ public class EnvioDataStore {
         enviosCrudPorId.put(envio.getIdPedido(), envio);
         enviosOperacionDiaProcesados.remove(envio.getIdPedido());
         if (envio.isEsOperacionDia()) {
+            aeropuertoOperativoPorEnvio.put(envio.getIdPedido(), envio.getOrigenIata());
             enviosOperacionDiaPorTiempo
                     .computeIfAbsent(envio.getFechaHora(), k -> new ArrayList<>())
                     .add(envio);
+        }
+        else {
+            aeropuertoOperativoPorEnvio.remove(envio.getIdPedido());
         }
         actualizarContadorManual(envio.getIdPedido(), envio.getOrigenIata());
         System.out.println("[ENVIO-DATASTORE] upsert id=" + envio.getIdPedido()
@@ -98,6 +103,7 @@ public class EnvioDataStore {
         boolean existia = buscarPorId(idPedido).isPresent();
         Envio removido = enviosCrudPorId.remove(idPedido);
         if (removido != null && removido.isEsOperacionDia()) {
+            aeropuertoOperativoPorEnvio.remove(idPedido);
             List<Envio> lista = enviosOperacionDiaPorTiempo.get(removido.getFechaHora());
             if (lista != null) {
                 lista.removeIf(e -> idPedido.equals(e.getIdPedido()));
@@ -172,6 +178,44 @@ public class EnvioDataStore {
         envios.forEach(envio -> enviosOperacionDiaProcesados.add(envio.getIdPedido()));
     }
 
+    public synchronized List<Envio> obtenerEnviosOperativosEnAeropuerto(String codigoIata) {
+        String iata = normalizarIata(codigoIata);
+        if (iata == null) return List.of();
+        return aeropuertoOperativoPorEnvio.entrySet().stream()
+                .filter(entry -> iata.equals(entry.getValue()))
+                .map(Map.Entry::getKey)
+                .map(enviosCrudPorId::get)
+                .filter(Objects::nonNull)
+                .filter(Envio::isActivo)
+                .filter(Envio::isEsOperacionDia)
+                .filter(envio -> !enviosEliminados.contains(envio.getIdPedido()))
+                .sorted(Comparator.comparing(Envio::getFechaHora).thenComparing(Envio::getIdPedido))
+                .toList();
+    }
+
+    public synchronized Map<String, List<Envio>> obtenerInventarioOperativoPorAeropuerto() {
+        Map<String, List<Envio>> resultado = new TreeMap<>();
+        aeropuertoOperativoPorEnvio.values().stream().distinct().sorted().forEach(iata ->
+                resultado.put(iata, obtenerEnviosOperativosEnAeropuerto(iata))
+        );
+        resultado.entrySet().removeIf(entry -> entry.getValue().isEmpty());
+        return Collections.unmodifiableMap(resultado);
+    }
+
+    public synchronized void moverEnvioOperativo(String idPedido, String codigoIataDestino) {
+        Envio envio = enviosCrudPorId.get(idPedido);
+        String destino = normalizarIata(codigoIataDestino);
+        if (envio == null || !envio.isActivo() || !envio.isEsOperacionDia() || destino == null) {
+            throw new IllegalArgumentException("Envio operativo o aeropuerto invalido.");
+        }
+        aeropuertoOperativoPorEnvio.put(idPedido, destino);
+    }
+
+    private String normalizarIata(String codigoIata) {
+        return codigoIata == null || codigoIata.isBlank()
+                ? null : codigoIata.trim().toUpperCase(Locale.ROOT);
+    }
+
     public static LocalDateTime parsearFechaHoraUtc(String fechaHora) {
         try {
             return LocalDateTime.ofInstant(Instant.parse(fechaHora), ZoneOffset.UTC);
@@ -227,6 +271,7 @@ public class EnvioDataStore {
         enviosOperacionDiaPorTiempo.clear();
         indicePorDia.clear();
         enviosCrudPorId.clear();
+        aeropuertoOperativoPorEnvio.clear();
         enviosEliminados.clear();
         contadorManualPorOrigen.clear();
         totalEnviosIndexados = 0;
