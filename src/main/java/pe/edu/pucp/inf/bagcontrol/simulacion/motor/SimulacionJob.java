@@ -1648,7 +1648,7 @@ public class SimulacionJob implements Runnable {
                 simulacionId,
                 horaInicio.toString(),
                 "EN_EJECUCION",
-                "Operacion activa. Registra envios para iniciar la planificacion."
+                "Operacion activa"
         );
         long numeroLotePublicado = publicarLote(
                 List.of(eventoActivo),
