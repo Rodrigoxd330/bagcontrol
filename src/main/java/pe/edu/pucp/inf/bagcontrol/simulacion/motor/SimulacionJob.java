@@ -263,6 +263,7 @@ public class SimulacionJob implements Runnable {
             }
             if (debeSaltarPlanificacionOperacionDia(enviosOperacionDia, eventosBatch, eventosVueloPostergados)) {
                 procesarBloqueOperacionSinEnvios(ventanaInicio, ventanaFin, inicioCronometroTa);
+                planificacionActiva.set(false);
                 continue;
             }
             agregarEventosVuelosCancelados(ventanaInicio, ventanaFin, eventosBatch);
@@ -384,6 +385,7 @@ public class SimulacionJob implements Runnable {
                 publicarMetricasCapacidad(solucion);
                 break;
             }
+            System.out.println("planificacionActiva = "+planificacionActiva.get());
 
             actualizarPendientesParaSiguienteCiclo(solucion);
 
@@ -438,7 +440,6 @@ public class SimulacionJob implements Runnable {
             registrarMetricasPreparacion(preparado, inicioPublicacion);
             publicarMetricasCapacidad(solucion);
         }
-
         if (!esTerminal()) {
             state.setEstado("FINALIZADA");
             state.registrarFinReal();
