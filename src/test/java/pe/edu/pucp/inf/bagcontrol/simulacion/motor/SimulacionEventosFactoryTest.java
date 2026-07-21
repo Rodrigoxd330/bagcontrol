@@ -1,6 +1,7 @@
 package pe.edu.pucp.inf.bagcontrol.simulacion.motor;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Disabled;
 import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.Aeropuerto;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.TipoEvento;
@@ -66,15 +67,31 @@ class SimulacionEventosFactoryTest {
     }
 
     @Test
-    void fotografiaMasRecienteReemplazaLaAnteriorSinMezclarAsignaciones() {
+    void fotografiaMasRecienteReemplazaEstadoYConservaEnviosEnTransitoSinDuplicados() {
         SimulacionEventosFactory factory = new SimulacionEventosFactory(null);
         EventoVueloDTO existente = vuelo(TipoEvento.VUELO_DESPEGA, 7, List.of("ENV-ANTERIOR"));
-        EventoVueloDTO vigente = vuelo(TipoEvento.VUELO_DESPEGA, 5, List.of("ENV-VIGENTE"));
+        EventoVueloDTO vigente = vuelo(
+                TipoEvento.VUELO_DESPEGA,
+                5,
+                List.of("ENV-ANTERIOR", "ENV-VIGENTE", "ENV-VIGENTE")
+        );
+        vigente.setPorcentajeOcupacion(61.0);
+        vigente.setEstado(EstadoCapacidad.AMARILLO);
 
         factory.fusionarEventoVuelo(existente, vigente);
 
-        assertThat(existente.getCodigoEnvios()).containsExactly("ENV-VIGENTE");
+        assertThat(existente.getCodigoEnvios()).containsExactly("ENV-ANTERIOR", "ENV-VIGENTE");
         assertThat(existente.getCantidadMaletas()).isEqualTo(5);
+        assertThat(existente.getPorcentajeOcupacion()).isEqualTo(61.0);
+        assertThat(existente.getEstado()).isEqualTo(EstadoCapacidad.AMARILLO);
+    }
+
+    @Disabled("fusionarEventoVuelo no recibe el estado de cancelacion de una asignacion individual")
+    @Test
+    void asignacionCanceladaRequiereContratoExplicitoAntesDeEliminarlaDeCodigoEnvios() {
+        // La cancelacion actual se representa con VUELO_CANCELADO y se procesa fuera de esta
+        // fusion. Con solo dos fotografias no es posible distinguir una asignacion cancelada
+        // de un envio anterior que sigue en transito y debe conservarse hasta el aterrizaje.
     }
 
     @Test
