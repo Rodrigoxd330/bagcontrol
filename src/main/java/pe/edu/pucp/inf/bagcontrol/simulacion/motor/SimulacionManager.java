@@ -443,19 +443,14 @@ public class SimulacionManager {
         Set<String> histEntregados = state.getHistEnviosEntregados().get(lote);
         Map<String, String> histUltimoAeropuerto = state.getHistUltimoAeropuertoPorEnvio().get(lote);
 
-        if (histSeguimiento == null) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND,
-                    "No hay datos historicos para el lote " + lote + " de la simulacion " + simulacionId);
-        }
-
-        RutaAsignada asignacion = histSeguimiento.get(idPedido);
         RutaAsignada asignacionVigente = state.getEnviosEnSeguimiento().get(idPedido);
         // Una cancelación puede sustituir una ruta ya presente en el snapshot. La
-        // consulta de seguimiento debe mostrar siempre el itinerario vigente.
+        // consulta de seguimiento debe mostrar siempre el itinerario vigente, incluso
+        // si el snapshot solicitado aun no existe o ya fue descartado.
         boolean usarAsignacionVigente = asignacionVigente != null;
-        if (usarAsignacionVigente) {
-            asignacion = asignacionVigente;
-        }
+        RutaAsignada asignacion = usarAsignacionVigente
+                ? asignacionVigente
+                : histSeguimiento != null ? histSeguimiento.get(idPedido) : null;
         if (asignacion == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND,
                     "No existe el envio en seguimiento: " + idPedido + " en el lote " + lote);

@@ -61,6 +61,35 @@ class SimulacionManagerRutaTest {
                 .isEqualTo(envio.getIdPedido());
     }
 
+    @Test
+    void muestraRutaVigenteAunqueTodaviaNoExistaSnapshot() throws Exception {
+        SimulacionManager manager = new SimulacionManager(
+                mock(PlanificadorService.class),
+                mock(AeropuertoRepository.class),
+                mock(WebSocketPublisher.class)
+        );
+        SimulacionState state = new SimulacionState("sim-ruta-replanificada");
+        state.setFechaInicioSimulacion(LocalDateTime.of(2026, 7, 20, 8, 0));
+        state.setKMinutos(120);
+        Envio envio = crearEnvio();
+        state.getEnviosEnSeguimiento().put(
+                envio.getIdPedido(), new RutaAsignada(envio, new Itinerario(List.of(crearVuelo(30L))), false)
+        );
+        state.getUltimoAeropuertoPorEnvio().put(envio.getIdPedido(), "LIM");
+        SimulacionJob job = mock(SimulacionJob.class);
+        when(job.getState()).thenReturn(state);
+        registrarJob(manager, job);
+
+        var ruta = manager.obtenerRutaEnvio(
+                state.getSimulacionId(), envio.getIdPedido(), "2026-07-20T08:30:00Z"
+        );
+
+        assertThat(ruta.getEscalas()).singleElement()
+                .extracting(escala -> escala.getCodigoVuelo())
+                .isEqualTo(30L);
+        assertThat(ruta.getAeropuertoActual()).isEqualTo("LIM");
+    }
+
     @SuppressWarnings("unchecked")
     private void registrarJob(SimulacionManager manager, SimulacionJob job) throws Exception {
         Field field = SimulacionManager.class.getDeclaredField("trabajosActivos");
