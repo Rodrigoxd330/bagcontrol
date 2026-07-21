@@ -44,6 +44,7 @@ public class EnvioController {
             @RequestHeader(value = "Authorization", required = false) String authorization
     ) {
         try{
+            System.out.println("[AUTHORIZATION] "+authorization);
             String origenIata = resolverOrigenDesdeSesion(authorization);
             if (origenIata == null) {
                 System.out.println("ERROR: Origen no encontrado");
