@@ -38,6 +38,7 @@ public class EnvioDataStore {
 
     private final TreeMap<LocalDateTime, List<Envio>> enviosPorTiempo = new TreeMap<>();
     private final TreeMap<LocalDateTime, List<Envio>> enviosOperacionDiaPorTiempo = new TreeMap<>();
+    private final Set<String> enviosOperacionDiaProcesados = ConcurrentHashMap.newKeySet();
     private final NavigableMap<LocalDate, RangoDia> indicePorDia = new TreeMap<>();
     private final Map<String, AtomicInteger> contadorManualPorOrigen = new ConcurrentHashMap<>();
     private final Map<String, Envio> enviosCrudPorId = new ConcurrentHashMap<>();
@@ -60,7 +61,9 @@ public class EnvioDataStore {
     }
 
     public synchronized Envio agregarEnvio(NuevoEnvioDTO dto, Aeropuerto aeropuertoOrigen) {
-        String idPedido = generarIdPedidoManual(dto.getOrigenIata());
+        String idPedido = dto.isEsOperacionDia()
+                ? generarIdPedidoOperacionDia()
+                : generarIdPedidoManual(dto.getOrigenIata());
 
         Envio envio = new Envio();
         envio.setIdPedido(idPedido);
@@ -80,6 +83,7 @@ public class EnvioDataStore {
         envio.setActivo(true);
         enviosEliminados.remove(envio.getIdPedido());
         enviosCrudPorId.put(envio.getIdPedido(), envio);
+        enviosOperacionDiaProcesados.remove(envio.getIdPedido());
         if (envio.isEsOperacionDia()) {
             enviosOperacionDiaPorTiempo
                     .computeIfAbsent(envio.getFechaHora(), k -> new ArrayList<>())
@@ -149,6 +153,25 @@ public class EnvioDataStore {
                 .toList();
     }
 
+    /**
+     * La operación diaria no consume por la hora declarada del envío: un registro
+     * puede llegar mientras se está calculando un lote. Se entrega una sola vez al
+     * coordinador y los envíos sin ruta permanecen en el estado de la simulación.
+     */
+    public synchronized List<Envio> obtenerEnviosOperacionDiaPendientes() {
+        return enviosOperacionDiaPorTiempo.values().stream()
+                .flatMap(List::stream)
+                .filter(Envio::isActivo)
+                .filter(envio -> !enviosEliminados.contains(envio.getIdPedido()))
+                .filter(envio -> !enviosOperacionDiaProcesados.contains(envio.getIdPedido()))
+                .sorted(Comparator.comparing(Envio::getFechaHora))
+                .toList();
+    }
+
+    public synchronized void marcarEnviosOperacionDiaProcesados(Collection<Envio> envios) {
+        envios.forEach(envio -> enviosOperacionDiaProcesados.add(envio.getIdPedido()));
+    }
+
     public static LocalDateTime parsearFechaHoraUtc(String fechaHora) {
         try {
             return LocalDateTime.ofInstant(Instant.parse(fechaHora), ZoneOffset.UTC);
@@ -163,6 +186,19 @@ public class EnvioDataStore {
         String candidato;
         do {
             candidato = origenIata + "-M" + String.format("%06d", contador.incrementAndGet());
+        } while (buscarPorId(candidato).isPresent());
+        return candidato;
+    }
+
+    private String generarIdPedidoOperacionDia() {
+        int siguiente = enviosCrudPorId.keySet().stream()
+                .filter(id -> id.matches("\\d{8}"))
+                .mapToInt(Integer::parseInt)
+                .max()
+                .orElse(0) + 1;
+        String candidato;
+        do {
+            candidato = String.format("%08d", siguiente++);
         } while (buscarPorId(candidato).isPresent());
         return candidato;
     }

@@ -99,6 +99,8 @@ public class SimulacionJob implements Runnable {
     private final String modo;
     @Getter
     private final UsuarioSesion propietario;
+    private final Object esperaOperacionLock = new Object();
+    private volatile long primeraSolicitudOperacionMs = -1L;
     private volatile SimulacionContextoDatos contextoDatos;
 
     private volatile Thread hilo;
@@ -203,6 +205,11 @@ public class SimulacionJob implements Runnable {
         publicarConfiguracionRendimiento();
 
         while (state.getTiempoActual().isBefore(tiempoFin)) {
+            if (esOperacionDia()) {
+                // El estado operativo y las rutas nuevas siempre parten del presente,
+                // nunca de una ventana simulada adelantada.
+                state.setTiempoActual(LocalDateTime.now(ZoneOffset.UTC));
+            }
             // --- FASE 1: INICIO DE MEDICIÓN DE TA ---
             Instant inicioRealCalculo = Instant.now();
             long inicioCronometroTa = inicioRealCalculo.toEpochMilli();
@@ -256,7 +263,7 @@ public class SimulacionJob implements Runnable {
             );
             long inicioCargaEnvios = System.currentTimeMillis();
             List<Envio> enviosOperacionDia = esOperacionDia()
-                    ? planificadorService.obtenerEnviosOperacionDiaEnVentana(ventanaInicio, ventanaFin)
+                    ? planificadorService.obtenerEnviosOperacionDiaPendientes()
                     : List.of();
             if (esOperacionDia()) {
                 metricasBloque.sumarCargaEnviosMs(System.currentTimeMillis() - inicioCargaEnvios);
@@ -277,6 +284,9 @@ public class SimulacionJob implements Runnable {
             // --- FASE 3: PLANIFICACIÓN (el paso más lento) ---
             long inicioPlanificacion = System.currentTimeMillis();
             SolucionRuta solucion = calcularSolucion(ventanaInicio, ventanaFin, inventarioReservado, enviosOperacionDia);
+            if (esOperacionDia()) {
+                planificadorService.marcarEnviosOperacionDiaProcesados(enviosOperacionDia);
+            }
             long finPlanificacion = System.currentTimeMillis();
             long inicioPostprocesamiento = finPlanificacion;
             preservarAsignacionesVigentes(solucion);
@@ -403,7 +413,7 @@ public class SimulacionJob implements Runnable {
             } else if (esSimulacionCincoDias()) {
                 metricasBloque.setInicioEspera(Instant.now());
                 esperarHastaFronteraProgramada();
-            } else if (state.getTiempoActual().isBefore(tiempoFin)) {
+            } else if (!esOperacionDia() && state.getTiempoActual().isBefore(tiempoFin)) {
                 metricasBloque.setInicioEspera(Instant.now());
                 esperarConControl();
             }
@@ -1658,9 +1668,7 @@ public class SimulacionJob implements Runnable {
         System.out.printf("[LOTE-ENVIADO] numero=%d | eventos=1 | ventana=%s -> %s | taTotal=%dms | sa=%dms | operacionSinEnvios=true%n",
                 state.getUltimoLoteEmitidoNumero().get(), ventanaInicio, ventanaFin, taCalculadoMs, saMs);
 
-        if (state.getTiempoActual().isBefore(horaFin)) {
-            esperarConControl();
-        }
+        if (state.getTiempoActual().isBefore(horaFin)) esperarConControl();
     }
 
     private void publicarMetricasCapacidad(SolucionRuta solucion) {
@@ -1826,6 +1834,10 @@ public class SimulacionJob implements Runnable {
     }
 
     private void esperarConControl() {
+        if (esOperacionDia()) {
+            esperarSolicitudOperacionAgrupada();
+            return;
+        }
         long tiempoRestante = Math.max(0, saMs - tiempoUltimoLoteMs);
         long acumulado = 0L;
         long paso = 200L;
@@ -1834,6 +1846,41 @@ public class SimulacionJob implements Runnable {
             long dormirMs = Math.min(paso, tiempoRestante - acumulado);
             dormir(dormirMs);
             acumulado += dormirMs;
+        }
+    }
+
+    /** Agrupa registros cercanos sin retrasar el reloj ni permitir planificaciones paralelas. */
+    public void solicitarPlanificacionOperacion() {
+        synchronized (esperaOperacionLock) {
+            if (primeraSolicitudOperacionMs < 0) {
+                primeraSolicitudOperacionMs = System.currentTimeMillis();
+            }
+            esperaOperacionLock.notifyAll();
+        }
+    }
+
+    private void esperarSolicitudOperacionAgrupada() {
+        synchronized (esperaOperacionLock) {
+            while (primeraSolicitudOperacionMs < 0) {
+                verificarDetencion();
+                esperarSiPausadaODetenida();
+                try {
+                    esperaOperacionLock.wait(250L);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new SimulacionDetenidaException();
+                }
+            }
+            long limite = primeraSolicitudOperacionMs + 5_000L;
+            while (System.currentTimeMillis() < limite) {
+                try {
+                    esperaOperacionLock.wait(Math.min(250L, limite - System.currentTimeMillis()));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new SimulacionDetenidaException();
+                }
+            }
+            primeraSolicitudOperacionMs = -1L;
         }
     }
 

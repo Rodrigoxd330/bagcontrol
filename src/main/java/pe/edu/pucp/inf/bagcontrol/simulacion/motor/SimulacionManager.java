@@ -51,6 +51,11 @@ public class SimulacionManager {
 
     private final ConcurrentHashMap<String, SimulacionJob> trabajosActivos = new ConcurrentHashMap<>();
 
+    /** Despierta la única operación activa cuando llega un envío operativo nuevo. */
+    public void solicitarPlanificacionOperacionDia() {
+        obtenerOperacionDiaActiva().ifPresent(SimulacionJob::solicitarPlanificacionOperacion);
+    }
+
     public String crearJob(LocalDateTime fechaInicio, LocalDateTime fechaFin, int k, String algoritmo, String modo) {
         return crearJob(fechaInicio, fechaFin, k, algoritmo, modo, null);
     }

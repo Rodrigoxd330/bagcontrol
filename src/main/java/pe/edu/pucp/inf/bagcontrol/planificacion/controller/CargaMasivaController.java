@@ -15,6 +15,7 @@ import pe.edu.pucp.inf.bagcontrol.entidades.envios.EnvioDataStore;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.Vuelo;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloRepository;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.NuevoEnvioDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.motor.SimulacionManager;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -33,6 +34,7 @@ public class CargaMasivaController {
     private final VueloRepository vueloRepository;
     private final EnvioDataStore envioDataStore;
     private final AuthService authService;
+    private final SimulacionManager simulacionManager;
 
     private enum FormatoEnvioImportacion {
         ORIGEN_USUARIO,
@@ -187,6 +189,9 @@ public class CargaMasivaController {
                     .body(Map.of("error", "No se pudo leer el archivo: " + e.getMessage()));
         }
 
+        if (insertados > 0) {
+            simulacionManager.solicitarPlanificacionOperacionDia();
+        }
         return ResponseEntity.ok(Map.of("insertados", insertados, "errores", errores, "totalFilas", fila));
     }
 
@@ -224,7 +229,7 @@ public class CargaMasivaController {
         }
         if (!fechaStr.matches("^\\d{8}$") || !horaStr.matches("^\\d{2}$")
                 || !minStr.matches("^\\d{2}$") || !cantidadStr.matches("^\\d{1,3}$")
-                || idCliente.isBlank()) {
+                || !"0007729".equals(idCliente)) {
             throw new IllegalArgumentException("campos obligatorios incompletos o mal formados");
         }
 
@@ -260,6 +265,7 @@ public class CargaMasivaController {
         envio.setIdCliente(idCliente);
         envio.setFechaHora(fechaHoraUtc);
         envio.setActivo(true);
+        envio.setEsOperacionDia(true);
         envioDataStore.upsert(envio);
         System.out.println("[ENVIO-IMPORT-PARSE] id=" + idPedido
                 + " fecha=" + fechaStr + " hora=" + horaStr + " minuto=" + minStr
@@ -281,9 +287,9 @@ public class CargaMasivaController {
                 origenIata,
                 p[1].trim().toUpperCase(),
                 Integer.parseInt(p[2].trim()),
-                p[3].trim(),
+                "0007729",
                 p[4].trim(),
-                false
+                true
         );
         envioDataStore.agregarEnvio(dto, aeropuertoOrigen);
     }

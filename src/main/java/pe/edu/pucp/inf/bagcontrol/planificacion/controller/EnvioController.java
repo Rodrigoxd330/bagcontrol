@@ -22,6 +22,7 @@ import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.EnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.NuevoEnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.planificacion.service.EnvioCrudService;
 import pe.edu.pucp.inf.bagcontrol.planificacion.utils.ZonaHorariaUtils;
+import pe.edu.pucp.inf.bagcontrol.simulacion.motor.SimulacionManager;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -37,6 +38,7 @@ public class EnvioController {
     private final AeropuertoRepository aeropuertoRepository;
     private final EnvioCrudService envioCrudService;
     private final AuthService authService;
+    private final SimulacionManager simulacionManager;
 
     @PostMapping("/api/envios")
     public ResponseEntity<EnvioDTO> registrarEnvio(
@@ -51,13 +53,23 @@ public class EnvioController {
                 return ResponseEntity.badRequest().build();
             }
             dto.setOrigenIata(origenIata);
+            if (dto.isEsOperacionDia()) {
+                // La recepción operativa se sella en el servidor para no depender
+                // de un reloj manipulable del navegador.
+                dto.setIdCliente("0007729");
+                dto.setFechaHora(Instant.now().toString());
+            }
 
             ResponseEntity<EnvioDTO> error = validar(dto);
             if (error != null) {
                 System.out.println(error.toString());
                 return error;
             }
-            return ResponseEntity.status(HttpStatus.CREATED).body(toDto(envioCrudService.crear(dto)));
+            Envio creado = envioCrudService.crear(dto);
+            if (creado.isEsOperacionDia()) {
+                simulacionManager.solicitarPlanificacionOperacionDia();
+            }
+            return ResponseEntity.status(HttpStatus.CREATED).body(toDto(creado));
         }
         catch(Exception e){
             System.out.println(e.getMessage());

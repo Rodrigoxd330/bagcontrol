@@ -13,6 +13,7 @@ import pe.edu.pucp.inf.bagcontrol.entidades.envios.Envio;
 import pe.edu.pucp.inf.bagcontrol.entidades.envios.EnvioDataStore;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloRepository;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.NuevoEnvioDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.motor.SimulacionManager;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
@@ -41,7 +42,8 @@ class CargaMasivaControllerTest {
                 aeropuertoRepository,
                 mock(VueloRepository.class),
                 envioDataStore,
-                authService
+                authService,
+                mock(SimulacionManager.class)
         );
     }
 
@@ -54,7 +56,7 @@ class CargaMasivaControllerTest {
         when(aeropuertoRepository.existsById("SUAA")).thenReturn(true);
 
         ResponseEntity<Map<String, Object>> respuesta = controller.cargarEnviosCsv(
-                archivo("000000001-20260102-00-47-SUAA-002-0032535\n"),
+                archivo("000000001-20260102-00-47-SUAA-002-0007729\n"),
                 "Bearer token-spim"
         );
 
@@ -67,7 +69,7 @@ class CargaMasivaControllerTest {
         assertThat(envio.getOrigenIata()).isEqualTo("SPIM");
         assertThat(envio.getDestinoIata()).isEqualTo("SUAA");
         assertThat(envio.getCantidadMaletas()).isEqualTo(2);
-        assertThat(envio.getIdCliente()).isEqualTo("0032535");
+        assertThat(envio.getIdCliente()).isEqualTo("0007729");
         assertThat(envio.getFechaHora().toString()).isEqualTo("2026-01-02T05:47");
     }
 
@@ -77,7 +79,7 @@ class CargaMasivaControllerTest {
                 .thenReturn(new UsuarioSesion("admin@bagcontrol.com", "Admin", "ADMINISTRADOR", ""));
 
         ResponseEntity<Map<String, Object>> respuesta = controller.cargarEnviosCsv(
-                archivo("000000001-20260102-00-47-SUAA-002-0032535\n"),
+                archivo("000000001-20260102-00-47-SUAA-002-0007729\n"),
                 "Bearer token"
         );
 
@@ -97,7 +99,7 @@ class CargaMasivaControllerTest {
         when(aeropuertoRepository.existsById("SUAA")).thenReturn(false);
 
         ResponseEntity<Map<String, Object>> respuesta = controller.cargarEnviosCsv(
-                archivo("000000001-20260102-00-47-SUAA-002-0032535\n"),
+                archivo("000000001-20260102-00-47-SUAA-002-0007729\n"),
                 "Bearer token"
         );
 

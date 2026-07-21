@@ -315,6 +315,14 @@ public class PlanificadorService {
         return envioDataStore.obtenerEnviosCrudEnVentana(inicio, fin);
     }
 
+    public List<Envio> obtenerEnviosOperacionDiaPendientes() {
+        return envioDataStore.obtenerEnviosOperacionDiaPendientes();
+    }
+
+    public void marcarEnviosOperacionDiaProcesados(List<Envio> envios) {
+        envioDataStore.marcarEnviosOperacionDiaProcesados(envios);
+    }
+
     public SolucionRuta calcularSolucionOperacionDia(
             String algoritmo,
             LocalDateTime inicio,
