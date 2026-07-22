@@ -351,6 +351,25 @@ public class PlanificadorService {
             List<Envio> enviosVentana,
             List<Vuelo> vuelosBaseSnapshot,
             List<Aeropuerto> aeropuertosSnapshot,
+            List<Incidencia> incidenciasSnapshot,
+            Set<String> vuelosCancelados
+    ) {
+        return calcularSolucionDesdeFuente(
+                algoritmo, inicio, fin, pendientes, inventarioActual, enviosVentana,
+                "CRUD_OPERATIVO", vuelosBaseSnapshot, aeropuertosSnapshot, incidenciasSnapshot,
+                planificacionTimeoutMs, vuelosCancelados, Map.of()
+        );
+    }
+
+    public SolucionRuta calcularSolucionOperacionDia(
+            String algoritmo,
+            LocalDateTime inicio,
+            LocalDateTime fin,
+            List<Envio> pendientes,
+            Map<String, Integer> inventarioActual,
+            List<Envio> enviosVentana,
+            List<Vuelo> vuelosBaseSnapshot,
+            List<Aeropuerto> aeropuertosSnapshot,
             List<Incidencia> incidenciasSnapshot
     ) {
         return calcularSolucionDesdeFuente(

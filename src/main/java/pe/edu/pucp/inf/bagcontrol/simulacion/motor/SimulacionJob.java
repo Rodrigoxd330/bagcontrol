@@ -526,6 +526,50 @@ public class SimulacionJob implements Runnable {
         VueloInstanciado instancia = SelectorCancelacionVuelo.siguienteOcurrencia(
                 vueloBase, instanteRegistro, contexto.aeropuertos()
         );
+        return cancelarOcurrenciaResuelta(instancia, instanteRegistro, motivo, false);
+    }
+
+    public synchronized CancelacionVueloResponseDTO cancelarOcurrenciaOperacionDia(
+            Long codigoVuelo,
+            Instant salidaUtc,
+            Instant instanteRegistro,
+            String motivo
+    ) {
+        if (!esOperacionDia()) {
+            throw new IllegalStateException("El job indicado no corresponde a la operación día a día");
+        }
+        SimulacionContextoDatos contexto = Objects.requireNonNull(contextoDatos, "La operación no tiene catálogo de vuelos");
+        Vuelo vueloBase = contexto.vuelos().stream()
+                .filter(vuelo -> Objects.equals(vuelo.getCodigo(), codigoVuelo))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Vuelo no encontrado: " + codigoVuelo));
+        VueloInstanciado instancia = SelectorCancelacionVuelo.siguienteOcurrencia(
+                vueloBase, instanteRegistro, contexto.aeropuertos()
+        );
+        if (!instancia.getFechaHoraSalidaUtc().equals(salidaUtc)) {
+            throw new IllegalStateException("La ocurrencia ya no está dentro del margen cancelable");
+        }
+        String clave = claveInstanciaVuelo(codigoVuelo, salidaUtc.toString());
+        if (vuelosCanceladosManualmente.contains(clave)) {
+            throw new IllegalStateException("La ocurrencia ya fue cancelada");
+        }
+        if (vueloYaDespachadoAlInstante(
+                enviosDespachadosPorVuelo.containsKey(clave), salidaUtc, instanteRegistro)) {
+            throw new IllegalStateException("La ocurrencia ya fue despachada");
+        }
+        if (asignacionesDeInstancia(clave).isEmpty()) {
+            throw new IllegalStateException("La ocurrencia no tiene envíos asignados afectados");
+        }
+        return cancelarOcurrenciaResuelta(instancia, instanteRegistro, motivo, true);
+    }
+
+    private CancelacionVueloResponseDTO cancelarOcurrenciaResuelta(
+            VueloInstanciado instancia,
+            Instant instanteRegistro,
+            String motivo,
+            boolean despertarOperacion
+    ) {
+        Long codigoVuelo = instancia.getCodigoBase();
         String clave = claveInstanciaVuelo(codigoVuelo, instancia.getFechaHoraSalidaUtc().toString());
         if (!vuelosCanceladosManualmente.add(clave)) {
             throw new IllegalStateException("La ocurrencia ya fue cancelada");
@@ -561,7 +605,7 @@ public class SimulacionJob implements Runnable {
                     });
         }
         marcarEnviosParaReplanificar(new LinkedHashSet<>(idsAfectados), "VUELO_CANCELADO");
-        invalidarPreparacionSiCorresponde(clave, idsAfectados);
+        boolean preparacionInvalidada = invalidarPreparacionSiCorresponde(clave, idsAfectados);
 
         EventoVueloDTO evento = simulacionEventosFactory.crearEventoVuelo(instancia, TipoEvento.VUELO_CANCELADO);
         evento.setFechaHoraEvento(instanteRegistro.toString());
@@ -573,11 +617,14 @@ public class SimulacionJob implements Runnable {
                 simulacionId, state.siguienteLote(), instanteRegistro.toString(), instanteRegistro.toString(),
                 1, List.of(evento), List.of(), saMs, versionPlan.get(), null
         ));
+        if (despertarOperacion) {
+            solicitarPlanificacionOperacion();
+        }
 
         return new CancelacionVueloResponseDTO(
-                codigoVuelo, instancia.getOrigenIata(), instancia.getDestinoIata(), instanteRegistro.toString(),
+                clave, codigoVuelo, instancia.getOrigenIata(), instancia.getDestinoIata(), instanteRegistro.toString(),
                 instancia.getFechaHoraSalida().toString(), instancia.getFechaHoraSalidaUtc().toString(),
-                idsAfectados, maletasAfectadas, "REGISTRADA"
+                idsAfectados, maletasAfectadas, preparacionInvalidada, versionPlan.get(), "REGISTRADA"
         );
     }
 
@@ -603,7 +650,7 @@ public class SimulacionJob implements Runnable {
                         Envio::getIdPedido, Envio::getCantidadMaletas, (actual, ignorado) -> actual
                 )).values().stream().mapToInt(Integer::intValue).sum();
         return new VueloCancelableDTO(
-                vuelo.getCodigo(), vuelo.getOrigenIata(), vuelo.getDestinoIata(),
+                clave, vuelo.getCodigo(), vuelo.getOrigenIata(), vuelo.getDestinoIata(),
                 instancia.getFechaHoraSalida().toString(), instancia.getFechaHoraSalidaUtc().toString(),
                 instancia.getFechaHoraLlegada().toString(), instancia.getFechaHoraLlegadaUtc().toString(),
                 vuelo.getCapacidadMax(), ids, maletas
@@ -1482,7 +1529,7 @@ public class SimulacionJob implements Runnable {
                 ? planificadorService.calcularSolucionOperacionDia(
                         algoritmo, ventanaInicio, ventanaFin, pendientesParaPlanificar, inventarioReservado,
                         enviosOperacionDia, contextoDatos.vuelos(), contextoDatos.aeropuertos(),
-                        contextoDatos.incidencias()
+                        contextoDatos.incidencias(), Set.copyOf(vuelosCanceladosManualmente)
                 )
                 : planificadorService.calcularSolucion(
                         algoritmo, ventanaInicio, ventanaFin, pendientesParaPlanificar, inventarioReservado,
@@ -1942,11 +1989,11 @@ public class SimulacionJob implements Runnable {
         return Set.copyOf(claves);
     }
 
-    private void invalidarPreparacionSiCorresponde(String claveVuelo, List<String> idsAfectados) {
+    private boolean invalidarPreparacionSiCorresponde(String claveVuelo, List<String> idsAfectados) {
         BloquePreparado preparado = bloquePreparado.get();
         boolean relevantePreparado = cancelacionAfecta(preparado, claveVuelo, idsAfectados);
         boolean relevanteEnCalculo = preparado == null && planificacionActiva.get() && !idsAfectados.isEmpty();
-        if (!relevantePreparado && !relevanteEnCalculo) return;
+        if (!relevantePreparado && !relevanteEnCalculo) return false;
 
         long nuevaVersion = versionPlan.incrementAndGet();
         cancelacionCooperativaSolicitada.set(true);
@@ -1956,6 +2003,7 @@ public class SimulacionJob implements Runnable {
         }
         System.out.printf("[BLOQUE-INVALIDADO] versionNueva=%d preparado=%s calculoActivo=%s causa=CANCELACION_RELEVANTE%n",
                 nuevaVersion, preparado != null, planificacionActiva.get());
+        return true;
     }
 
     static boolean cancelacionAfecta(

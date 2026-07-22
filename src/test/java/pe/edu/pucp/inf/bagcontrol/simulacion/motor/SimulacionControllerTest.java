@@ -23,9 +23,9 @@ class SimulacionControllerTest {
         request.setInstanteSimulado("2026-06-19T22:25:00Z");
         request.setMotivo("PRUEBA");
         CancelacionVueloResponseDTO esperado = new CancelacionVueloResponseDTO(
-                24L, "SPIM", "SKBO", request.getInstanteSimulado(),
+                "24|2026-06-19T23:25:00Z", 24L, "SPIM", "SKBO", request.getInstanteSimulado(),
                 "2026-06-19T18:25", "2026-06-19T23:25:00Z",
-                List.of("PED-1"), 2, "REGISTRADA"
+                List.of("PED-1"), 2, false, 1L, "REGISTRADA"
         );
         when(manager.cancelarProximaOcurrencia(
                 "sim-cancelacion", 24L, Instant.parse(request.getInstanteSimulado()), "PRUEBA"

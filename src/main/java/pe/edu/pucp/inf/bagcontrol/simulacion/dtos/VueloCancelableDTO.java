@@ -8,6 +8,7 @@ import java.util.List;
 @Data
 @AllArgsConstructor
 public class VueloCancelableDTO {
+    private String claveOcurrencia;
     private Long codigoVuelo;
     private String origenIata;
     private String destinoIata;

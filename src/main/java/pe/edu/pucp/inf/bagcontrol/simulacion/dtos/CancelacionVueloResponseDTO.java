@@ -8,6 +8,7 @@ import java.util.List;
 @Data
 @AllArgsConstructor
 public class CancelacionVueloResponseDTO {
+    private String claveOcurrencia;
     private Long codigoVuelo;
     private String origenIata;
     private String destinoIata;
@@ -16,5 +17,7 @@ public class CancelacionVueloResponseDTO {
     private String horaSalidaUtcObjetivo;
     private List<String> enviosAfectados;
     private int cantidadMaletas;
+    private boolean preparacionInvalidada;
+    private long versionPlan;
     private String estado;
 }

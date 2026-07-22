@@ -56,6 +56,21 @@ public class SimulacionManager {
         obtenerOperacionDiaActiva().ifPresent(SimulacionJob::solicitarPlanificacionOperacion);
     }
 
+    public List<VueloCancelableDTO> listarVuelosCancelablesOperacionDia(Instant instanteReal) {
+        SimulacionJob job = obtenerOperacionDiaActiva()
+                .orElseThrow(() -> new java.util.NoSuchElementException("No existe una operación día a día activa"));
+        return job.listarVuelosCancelables(instanteReal);
+    }
+
+    public CancelacionVueloResponseDTO cancelarOcurrenciaOperacionDia(
+            Long codigoVuelo, Instant salidaUtc, Instant instanteReal) {
+        SimulacionJob job = obtenerOperacionDiaActiva()
+                .orElseThrow(() -> new java.util.NoSuchElementException("No existe una operación día a día activa"));
+        return job.cancelarOcurrenciaOperacionDia(
+                codigoVuelo, salidaUtc, instanteReal, "CANCELACION_MANUAL"
+        );
+    }
+
     public String crearJob(LocalDateTime fechaInicio, LocalDateTime fechaFin, int k, String algoritmo, String modo) {
         return crearJob(fechaInicio, fechaFin, k, algoritmo, modo, null);
     }
