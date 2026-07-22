@@ -14,6 +14,7 @@ import pe.edu.pucp.inf.bagcontrol.entidades.envios.EnvioDataStore;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloRepository;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.NuevoEnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.motor.SimulacionManager;
+import pe.edu.pucp.inf.bagcontrol.planificacion.service.VueloTxtImportService;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
@@ -43,7 +44,8 @@ class CargaMasivaControllerTest {
                 mock(VueloRepository.class),
                 envioDataStore,
                 authService,
-                mock(SimulacionManager.class)
+                mock(SimulacionManager.class),
+                mock(VueloTxtImportService.class)
         );
     }
 

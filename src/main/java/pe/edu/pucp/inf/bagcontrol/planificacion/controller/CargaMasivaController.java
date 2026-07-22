@@ -16,6 +16,7 @@ import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.Vuelo;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloRepository;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.NuevoEnvioDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.motor.SimulacionManager;
+import pe.edu.pucp.inf.bagcontrol.planificacion.service.VueloTxtImportService;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -35,6 +36,7 @@ public class CargaMasivaController {
     private final EnvioDataStore envioDataStore;
     private final AuthService authService;
     private final SimulacionManager simulacionManager;
+    private final VueloTxtImportService vueloTxtImportService;
 
     private enum FormatoEnvioImportacion {
         ORIGEN_USUARIO,
@@ -86,48 +88,16 @@ public class CargaMasivaController {
         return ResponseEntity.ok(Map.of("insertados", insertados, "errores", errores, "totalFilas", fila));
     }
 
-    @PostMapping("/api/vuelos/cargar-csv")
-    public ResponseEntity<Map<String, Object>> cargarVuelosCsv(
+    @PostMapping({"/api/vuelos/cargar-txt", "/api/vuelos/cargar-csv"})
+    public ResponseEntity<Map<String, Object>> cargarVuelosTxt(
             @RequestParam("archivo") MultipartFile archivo) {
-
-        int insertados = 0;
-        List<String> errores = new ArrayList<>();
-        int fila = 0;
-
-        try (BufferedReader br = new BufferedReader(
-                new InputStreamReader(archivo.getInputStream(), StandardCharsets.UTF_8))) {
-            String linea;
-            while ((linea = br.readLine()) != null) {
-                fila++;
-                linea = linea.trim();
-                if (linea.isEmpty() || linea.startsWith("#")) {
-                    continue;
-                }
-                try {
-                    String[] p = linea.split("-");
-                    if (p.length < 5) {
-                        throw new IllegalArgumentException("Se esperan 5 campos separados por '-'");
-                    }
-                    Vuelo v = new Vuelo(
-                            p[0].trim().toUpperCase(),
-                            p[1].trim().toUpperCase(),
-                            java.time.LocalTime.parse(p[2].trim()),
-                            java.time.LocalTime.parse(p[3].trim()),
-                            Integer.parseInt(p[4].trim())
-                    );
-                    v.setCreadoPorCrud(true);
-                    vueloRepository.save(v);
-                    insertados++;
-                } catch (Exception e) {
-                    errores.add("Fila " + fila + ": " + e.getMessage());
-                }
-            }
-        } catch (Exception e) {
-            return ResponseEntity.badRequest()
-                    .body(Map.of("error", "No se pudo leer el archivo: " + e.getMessage()));
-        }
-
-        return ResponseEntity.ok(Map.of("insertados", insertados, "errores", errores, "totalFilas", fila));
+        var resultado = vueloTxtImportService.importar(archivo);
+        return ResponseEntity.ok(Map.of(
+                "insertados", resultado.insertados(),
+                "errores", resultado.errores(),
+                "totalFilas", resultado.totalLineas(),
+                "duplicadosDetectados", resultado.duplicadosDetectados()
+        ));
     }
 
     @PostMapping("/api/envios/cargar-csv")
