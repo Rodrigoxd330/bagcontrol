@@ -162,7 +162,9 @@ public class SimulacionEventosFactory {
                     return new EnvioAeropuertoDTO(
                             new EnvioDTO(
                                     e.getIdPedido(), e.getOrigenIata(), e.getDestinoIata(),
-                                    e.getFechaHora() != null ? e.getFechaHora().toString() : null,
+                                    e.getFechaHora() != null
+                                            ? e.getFechaHora().toInstant(java.time.ZoneOffset.UTC).toString()
+                                            : null,
                                     e.getCantidadMaletas(), e.getIdCliente(), e.isEsOperacionDia()
                             ),
                             itinerario != null ? itinerario.getFechaHoraSalidaUtc() : null,

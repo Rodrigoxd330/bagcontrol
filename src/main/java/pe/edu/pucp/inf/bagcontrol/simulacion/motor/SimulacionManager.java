@@ -56,6 +56,10 @@ public class SimulacionManager {
         obtenerOperacionDiaActiva().ifPresent(SimulacionJob::solicitarPlanificacionOperacion);
     }
 
+    public void refrescarCatalogoOperacionDia() {
+        obtenerOperacionDiaActiva().ifPresent(this::refrescarCatalogosMaestros);
+    }
+
     public List<VueloCancelableDTO> listarVuelosCancelablesOperacionDia(Instant instanteReal) {
         SimulacionJob job = obtenerOperacionDiaActiva()
                 .orElseThrow(() -> new java.util.NoSuchElementException("No existe una operación día a día activa"));
@@ -479,8 +483,16 @@ public class SimulacionManager {
         boolean entregado = usarAsignacionVigente
                 ? state.getEnviosEntregados().contains(idPedido)
                 : histEntregados != null && histEntregados.contains(idPedido);
-        String estado = entregado ? "ENTREGADO"
-                : asignacion.getItinerario() == null ? "SIN_ITINERARIO" : "EN_TRANSITO";
+        Instant instanteConsulta = Instant.parse(timestamp);
+        String estado;
+        if (entregado) {
+            estado = "ENTREGADO";
+        } else if (asignacion.getItinerario() == null) {
+            estado = "SIN_ITINERARIO";
+        } else {
+            Instant primeraSalida = asignacion.getItinerario().getFechaHoraSalidaUtc();
+            estado = instanteConsulta.isBefore(primeraSalida) ? "PLANIFICADO" : "EN_TRANSITO";
+        }
         List<EscalaRutaDTO> escalas = asignacion.getItinerario() == null
                 ? List.of()
                 : asignacion.getItinerario().getVuelos().stream()
@@ -603,7 +615,9 @@ public class SimulacionManager {
                 envio.getIdPedido(),
                 envio.getOrigenIata(),
                 envio.getDestinoIata(),
-                envio.getFechaHora() != null ? envio.getFechaHora().toString() : null,
+                envio.getFechaHora() != null
+                        ? envio.getFechaHora().toInstant(ZoneOffset.UTC).toString()
+                        : null,
                 envio.getCantidadMaletas(),
                 envio.getIdCliente(),
                 envio.isEsOperacionDia()

@@ -88,6 +88,34 @@ class SimulacionManagerRutaTest {
                 .extracting(escala -> escala.getCodigoVuelo())
                 .isEqualTo(30L);
         assertThat(ruta.getAeropuertoActual()).isEqualTo("LIM");
+        assertThat(ruta.getEstado()).isEqualTo("PLANIFICADO");
+        assertThat(ruta.getEnvio().getFechaHora()).isEqualTo("2026-07-20T08:00:00Z");
+    }
+
+    @Test
+    void cambiaAEnTransitoCuandoElPrimerVueloYaPartio() throws Exception {
+        SimulacionManager manager = new SimulacionManager(
+                mock(PlanificadorService.class),
+                mock(AeropuertoRepository.class),
+                mock(WebSocketPublisher.class)
+        );
+        SimulacionState state = new SimulacionState("sim-ruta-replanificada");
+        state.setFechaInicioSimulacion(LocalDateTime.of(2026, 7, 20, 8, 0));
+        state.setKMinutos(120);
+        Envio envio = crearEnvio();
+        state.getEnviosEnSeguimiento().put(
+                envio.getIdPedido(), new RutaAsignada(envio, new Itinerario(List.of(crearVuelo(40L))), false)
+        );
+        SimulacionJob job = mock(SimulacionJob.class);
+        when(job.getState()).thenReturn(state);
+        registrarJob(manager, job);
+
+        var ruta = manager.obtenerRutaEnvio(
+                state.getSimulacionId(), envio.getIdPedido(), "2026-07-20T10:00:00Z"
+        );
+
+        assertThat(ruta.getEstado()).isEqualTo("EN_TRANSITO");
+        assertThat(ruta.getEscalas()).hasSize(1);
     }
 
     @SuppressWarnings("unchecked")

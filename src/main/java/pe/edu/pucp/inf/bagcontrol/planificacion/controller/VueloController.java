@@ -15,6 +15,7 @@ import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.Vuelo;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloRepository;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.VueloDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.motor.SimulacionManager;
 
 import java.util.List;
 import java.util.Map;
@@ -25,6 +26,7 @@ public class VueloController {
 
     private final VueloRepository vueloRepository;
     private final AeropuertoRepository aeropuertoRepository;
+    private final SimulacionManager simulacionManager;
 
     @GetMapping("/api/vuelos")
     public List<VueloDTO> listarVuelos() {
@@ -44,6 +46,7 @@ public class VueloController {
         aplicarCampos(vuelo, dto);
         vuelo.setCreadoPorCrud(true);
         Vuelo guardado = vueloRepository.save(vuelo);
+        simulacionManager.refrescarCatalogoOperacionDia();
         System.out.println("[CRUD-VUELO] creado id=" + guardado.getCodigo()
                 + " origen=" + guardado.getOrigenIata()
                 + " destino=" + guardado.getDestinoIata());
@@ -61,6 +64,7 @@ public class VueloController {
                     aplicarCampos(vuelo, dto);
                     vuelo.setCreadoPorCrud(true);
                     Vuelo guardado = vueloRepository.save(vuelo);
+                    simulacionManager.refrescarCatalogoOperacionDia();
                     System.out.println("[CRUD-VUELO] actualizado id=" + guardado.getCodigo());
                     return ResponseEntity.ok(toDto(guardado));
                 })
@@ -73,6 +77,7 @@ public class VueloController {
             return ResponseEntity.notFound().build();
         }
         vueloRepository.deleteById(id);
+        simulacionManager.refrescarCatalogoOperacionDia();
         System.out.println("[CRUD-VUELO] eliminado id=" + id);
         return ResponseEntity.noContent().build();
     }
@@ -83,6 +88,7 @@ public class VueloController {
                 .map(vuelo -> {
                     vuelo.setEstaCancelado(true);
                     Vuelo guardado = vueloRepository.save(vuelo);
+                    simulacionManager.refrescarCatalogoOperacionDia();
                     System.out.println("[CRUD-VUELO] actualizado id=" + guardado.getCodigo());
                     return ResponseEntity.ok(toDto(guardado));
                 })

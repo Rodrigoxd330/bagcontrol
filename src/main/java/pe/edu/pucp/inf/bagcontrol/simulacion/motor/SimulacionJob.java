@@ -348,7 +348,8 @@ public class SimulacionJob implements Runnable {
             consolidarEventosVuelo(eventosBatch);
 
             List<EnvioDTO> enviosBatch = solucion.getAsignaciones().stream().map(e -> new EnvioDTO(e.getEnvio().getIdPedido(),
-                    e.getEnvio().getOrigenIata(),e.getEnvio().getDestinoIata(),e.getEnvio().getFechaHora().toString(),
+                    e.getEnvio().getOrigenIata(),e.getEnvio().getDestinoIata(),
+                    e.getEnvio().getFechaHora().toInstant(ZoneOffset.UTC).toString(),
                     e.getEnvio().getCantidadMaletas(),e.getEnvio().getIdCliente(), e.getEnvio().isEsOperacionDia())).toList();
             metricasBloque.sumarPostprocesamientoMs(System.currentTimeMillis() - inicioPostprocesamientoFinal);
             long alistamientoEventosMs = System.currentTimeMillis() - inicioAlistamientoEventos;
@@ -508,7 +509,6 @@ public class SimulacionJob implements Runnable {
                         vuelo, instanteRegistro, aeropuertosPorCodigo, asignacionesPorVuelo
                 ))
                 .filter(Objects::nonNull)
-                .filter(vuelo -> !vuelo.getEnviosAfectados().isEmpty())
                 .sorted(Comparator.comparing(VueloCancelableDTO::getHoraSalidaUtc))
                 .toList();
     }
@@ -543,8 +543,10 @@ public class SimulacionJob implements Runnable {
                 .filter(vuelo -> Objects.equals(vuelo.getCodigo(), codigoVuelo))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Vuelo no encontrado: " + codigoVuelo));
+        Map<String, Aeropuerto> aeropuertosPorCodigo = contexto.aeropuertos().stream()
+                .collect(java.util.stream.Collectors.toMap(Aeropuerto::getCodigoIata, aeropuerto -> aeropuerto));
         VueloInstanciado instancia = SelectorCancelacionVuelo.siguienteOcurrencia(
-                vueloBase, instanteRegistro, contexto.aeropuertos()
+                vueloBase, instanteRegistro, aeropuertosPorCodigo, java.time.Duration.ZERO
         );
         if (!instancia.getFechaHoraSalidaUtc().equals(salidaUtc)) {
             throw new IllegalStateException("La ocurrencia ya no está dentro del margen cancelable");
@@ -556,9 +558,6 @@ public class SimulacionJob implements Runnable {
         if (vueloYaDespachadoAlInstante(
                 enviosDespachadosPorVuelo.containsKey(clave), salidaUtc, instanteRegistro)) {
             throw new IllegalStateException("La ocurrencia ya fue despachada");
-        }
-        if (asignacionesDeInstancia(clave).isEmpty()) {
-            throw new IllegalStateException("La ocurrencia no tiene envíos asignados afectados");
         }
         return cancelarOcurrenciaResuelta(instancia, instanteRegistro, motivo, true);
     }
@@ -634,7 +633,12 @@ public class SimulacionJob implements Runnable {
             Map<String, Aeropuerto> aeropuertos,
             Map<String, List<RutaAsignada>> asignacionesPorVuelo
     ) {
-        VueloInstanciado instancia = SelectorCancelacionVuelo.siguienteOcurrencia(vuelo, instanteRegistro, aeropuertos);
+        VueloInstanciado instancia = SelectorCancelacionVuelo.siguienteOcurrencia(
+                vuelo,
+                instanteRegistro,
+                aeropuertos,
+                esOperacionDia() ? java.time.Duration.ZERO : java.time.Duration.ofHours(1)
+        );
         if (horaFin != null && !instancia.getFechaHoraSalidaUtc().isBefore(horaFin.toInstant(ZoneOffset.UTC))) {
             return null;
         }
@@ -979,6 +983,7 @@ public class SimulacionJob implements Runnable {
                     eventoVuelo,
                     (existente, nuevo) -> {
                         simulacionEventosFactory.fusionarEventoVuelo(existente, nuevo);
+                        recalcularCargaEventoDesdeSeguimiento(existente);
                         return existente;
                     }
             );
@@ -1000,10 +1005,25 @@ public class SimulacionJob implements Runnable {
                 consolidados.add(eventoVuelo);
             } else {
                 simulacionEventosFactory.fusionarEventoVuelo(existente, eventoVuelo);
+                recalcularCargaEventoDesdeSeguimiento(existente);
             }
         }
         eventos.clear();
         eventos.addAll(consolidados);
+    }
+
+    void recalcularCargaEventoDesdeSeguimiento(EventoVueloDTO evento) {
+        if (evento.getCodigoEnvios() == null) {
+            ajustarCargaEvento(evento, 0);
+            return;
+        }
+        int totalMaletas = evento.getCodigoEnvios().stream()
+                .distinct()
+                .map(state.getEnviosEnSeguimiento()::get)
+                .filter(Objects::nonNull)
+                .mapToInt(asignacion -> asignacion.getEnvio().getCantidadMaletas())
+                .sum();
+        ajustarCargaEvento(evento, totalMaletas);
     }
 
     private String claveEventoVuelo(EventoVueloDTO evento) {

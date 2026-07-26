@@ -8,6 +8,7 @@ import pe.edu.pucp.inf.bagcontrol.entidades.aeropuerto.AeropuertoRepository;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.Vuelo;
 import pe.edu.pucp.inf.bagcontrol.entidades.vuelo.VueloRepository;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.VueloDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.motor.SimulacionManager;
 
 import java.time.LocalTime;
 import java.util.Map;
@@ -24,13 +25,15 @@ class VueloControllerTest {
 
     private VueloRepository vueloRepository;
     private AeropuertoRepository aeropuertoRepository;
+    private SimulacionManager simulacionManager;
     private VueloController controller;
 
     @BeforeEach
     void setUp() {
         vueloRepository = mock(VueloRepository.class);
         aeropuertoRepository = mock(AeropuertoRepository.class);
-        controller = new VueloController(vueloRepository, aeropuertoRepository);
+        simulacionManager = mock(SimulacionManager.class);
+        controller = new VueloController(vueloRepository, aeropuertoRepository, simulacionManager);
     }
 
     @Test
@@ -52,6 +55,7 @@ class VueloControllerTest {
         VueloDTO cuerpo = (VueloDTO) respuesta.getBody();
         assertThat(cuerpo.getOrigenIata()).isEqualTo("SPIM");
         assertThat(cuerpo.getDestinoIata()).isEqualTo("SPZO");
+        verify(simulacionManager).refrescarCatalogoOperacionDia();
     }
 
     @Test

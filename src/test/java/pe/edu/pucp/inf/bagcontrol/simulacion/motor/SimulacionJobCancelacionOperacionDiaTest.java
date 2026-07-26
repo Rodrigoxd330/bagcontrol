@@ -11,6 +11,8 @@ import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.Itinerario;
 import pe.edu.pucp.inf.bagcontrol.planificacion.modelos.RutaAsignada;
 import pe.edu.pucp.inf.bagcontrol.planificacion.service.PlanificadorService;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.ConfiguracionColapsoDTO;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EstadoCapacidad;
+import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.EventoVueloDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.LoteEventosDTO;
 import pe.edu.pucp.inf.bagcontrol.simulacion.dtos.eventos.TipoEvento;
 
@@ -19,6 +21,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -83,7 +86,7 @@ class SimulacionJobCancelacionOperacionDiaTest {
     }
 
     @Test
-    void respetaMargenYRechazaOcurrenciaQueDejoDeSerCancelable() {
+    void operacionDiaPermiteLaSiguienteOcurrenciaAunqueFalteMenosDeUnaHora() {
         Instant solicitud = Instant.parse("2026-07-20T08:30:00Z");
         Aeropuerto origen = aeropuerto("SPIM");
         Aeropuerto destino = aeropuerto("SCEL");
@@ -91,9 +94,83 @@ class SimulacionJobCancelacionOperacionDiaTest {
         plan.setCodigo(24L);
         SimulacionJob job = jobOperativo(new SimulacionState("operacion"), mock(WebSocketPublisher.class), plan, origen, destino);
 
-        assertThatThrownBy(() -> job.cancelarOcurrenciaOperacionDia(
+        var respuesta = job.cancelarOcurrenciaOperacionDia(
                 24L, Instant.parse("2026-07-20T09:00:00Z"), solicitud, "CANCELACION_MANUAL"
-        )).isInstanceOf(IllegalStateException.class).hasMessageContaining("margen");
+        );
+
+        assertThat(respuesta.getHoraSalidaUtcObjetivo()).isEqualTo("2026-07-20T09:00:00Z");
+        assertThat(respuesta.getEstado()).isEqualTo("REGISTRADA");
+    }
+
+    @Test
+    void listaYPermiteCancelarVueloVacio() {
+        Instant solicitud = Instant.parse("2026-07-20T07:00:00Z");
+        Aeropuerto origen = aeropuerto("SPIM");
+        Aeropuerto destino = aeropuerto("SCEL");
+        Vuelo plan = new Vuelo("SPIM", "SCEL", LocalTime.of(9, 0), LocalTime.of(12, 0), 100);
+        plan.setCodigo(24L);
+        SimulacionJob job = jobOperativo(
+                new SimulacionState("operacion-vuelo-vacio"),
+                mock(WebSocketPublisher.class),
+                plan,
+                origen,
+                destino
+        );
+
+        var vueloVacio = job.listarVuelosCancelables(solicitud).get(0);
+
+        assertThat(vueloVacio.getEnviosAfectados()).isEmpty();
+        assertThat(vueloVacio.getCantidadMaletas()).isZero();
+
+        var respuesta = job.cancelarOcurrenciaOperacionDia(
+                vueloVacio.getCodigoVuelo(),
+                Instant.parse(vueloVacio.getHoraSalidaUtc()),
+                solicitud,
+                "CANCELACION_MANUAL"
+        );
+
+        assertThat(respuesta.getEstado()).isEqualTo("REGISTRADA");
+        assertThat(respuesta.getEnviosAfectados()).isEmpty();
+        assertThat(respuesta.getCantidadMaletas()).isZero();
+    }
+
+    @Test
+    void acumulaDosEnviosOperativosDelMismoVueloAunqueLleguenEnBloquesSeparados() {
+        Aeropuerto origen = aeropuerto("SPIM");
+        Aeropuerto destino = aeropuerto("SVMI");
+        Vuelo plan = new Vuelo("SPIM", "SVMI", LocalTime.of(9, 0), LocalTime.of(12, 0), 100);
+        plan.setCodigo(24L);
+        SimulacionState state = new SimulacionState("operacion-dos-envios");
+        Envio primero = envio("OP-1", 10);
+        Envio segundo = envio("OP-2", 10);
+        state.getEnviosEnSeguimiento().put(
+                primero.getIdPedido(), new RutaAsignada(primero, new Itinerario(List.of()), false)
+        );
+        state.getEnviosEnSeguimiento().put(
+                segundo.getIdPedido(), new RutaAsignada(segundo, new Itinerario(List.of()), false)
+        );
+        SimulacionJob job = jobOperativo(state, mock(WebSocketPublisher.class), plan, origen, destino);
+        EventoVueloDTO eventoFusionado = new EventoVueloDTO(
+                TipoEvento.VUELO_DESPEGA,
+                "2026-07-20T09:00:00Z",
+                24L,
+                "SPIM",
+                "SVMI",
+                EstadoCapacidad.VERDE,
+                10,
+                "2026-07-20T09:00",
+                "2026-07-20T12:00",
+                "2026-07-20T09:00:00Z",
+                "2026-07-20T12:00:00Z",
+                new ArrayList<>(List.of("OP-1", "OP-2"))
+        );
+        eventoFusionado.setCapacidadMax(100);
+
+        job.recalcularCargaEventoDesdeSeguimiento(eventoFusionado);
+
+        assertThat(eventoFusionado.getCodigoEnvios()).containsExactly("OP-1", "OP-2");
+        assertThat(eventoFusionado.getCantidadMaletas()).isEqualTo(20);
+        assertThat(eventoFusionado.getPorcentajeOcupacion()).isEqualTo(20.0);
     }
 
     @Test
@@ -142,5 +219,14 @@ class SimulacionJobCancelacionOperacionDiaTest {
         aeropuerto.setGmt(0);
         aeropuerto.setCapacidadAlmacen(1000);
         return aeropuerto;
+    }
+
+    private Envio envio(String idPedido, int cantidadMaletas) {
+        Envio envio = new Envio();
+        envio.setIdPedido(idPedido);
+        envio.setOrigenIata("SPIM");
+        envio.setDestinoIata("SVMI");
+        envio.setCantidadMaletas(cantidadMaletas);
+        return envio;
     }
 }

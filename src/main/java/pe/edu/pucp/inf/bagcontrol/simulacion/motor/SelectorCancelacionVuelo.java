@@ -33,12 +33,21 @@ final class SelectorCancelacionVuelo {
             Instant instanteRegistro,
             Map<String, Aeropuerto> porCodigo
     ) {
+        return siguienteOcurrencia(vuelo, instanteRegistro, porCodigo, Duration.ofHours(1));
+    }
+
+    static VueloInstanciado siguienteOcurrencia(
+            Vuelo vuelo,
+            Instant instanteRegistro,
+            Map<String, Aeropuerto> porCodigo,
+            Duration anticipacion
+    ) {
         Aeropuerto origen = porCodigo.get(vuelo.getOrigenIata());
         if (origen == null) {
             throw new IllegalArgumentException("No existe el aeropuerto de origen " + vuelo.getOrigenIata());
         }
 
-        Instant umbral = instanteRegistro.plus(Duration.ofHours(1));
+        Instant umbral = instanteRegistro.plus(anticipacion);
         LocalDate fechaLocal = ZonaHorariaUtils.convertirInstantALocal(umbral, origen).toLocalDate();
         VueloFactory factory = new VueloFactory();
         VueloInstanciado candidato = factory.crearInstanciasDelDia(List.of(vuelo), fechaLocal, porCodigo).get(0);

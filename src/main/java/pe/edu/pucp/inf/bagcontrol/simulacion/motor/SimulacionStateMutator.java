@@ -63,7 +63,9 @@ public class SimulacionStateMutator {
                 Envio envio = ruta.getEnvio();
                 EnvioDTO envioDTO = new EnvioDTO(
                         envio.getIdPedido(), envio.getOrigenIata(), envio.getDestinoIata(),
-                        envio.getFechaHora() != null ? envio.getFechaHora().toString() : null,
+                        envio.getFechaHora() != null
+                                ? envio.getFechaHora().toInstant(java.time.ZoneOffset.UTC).toString()
+                                : null,
                         envio.getCantidadMaletas(), envio.getIdCliente(), envio.isEsOperacionDia()
                 );
                 envios.add(envioDTO);
